@@ -1,0 +1,11 @@
+{
+  "id": "vaultore",
+  "name": "VaultOre",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "main": "main.js",
+  "description": "Markdown-native AI workflow engine for Obsidian",
+  "author": "CronAI UG",
+  "authorUrl": "https://cronai.de",
+  "isDesktopOnly": true
+}
