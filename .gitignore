@@ -1,3 +1,6 @@
 node_modules
+dist
 .turbo
 .DS_Store
+*.map
+packages/obsidian/package
