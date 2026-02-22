@@ -1,31 +1,76 @@
+/**
+ * Version bump script for VaultOre.
+ *
+ * Syncs the version across all manifests and updates versions.json.
+ *
+ * Usage:
+ *   node version-bump.mjs <version>        # explicit version
+ *   npm version patch                       # via npm lifecycle (reads npm_package_version)
+ *
+ * This is a fallback for manual releases. The primary flow is release-please,
+ * which updates versions via its extra-files config and the release-please.yml
+ * workflow handles versions.json separately.
+ */
 import { readFileSync, writeFileSync } from "fs";
 
-const targetVersion = process.env.npm_package_version;
+const targetVersion = process.argv[2] || process.env.npm_package_version;
 
 if (!targetVersion) {
-  console.error("No version found. Run via: bun version <newversion>");
+  console.error("Usage: node version-bump.mjs <version>");
+  console.error("  e.g. node version-bump.mjs 0.2.0");
   process.exit(1);
 }
 
-// Update root manifest.json
+if (!/^\d+\.\d+\.\d+$/.test(targetVersion)) {
+  console.error(`Invalid semver: "${targetVersion}". Expected format: X.Y.Z`);
+  process.exit(1);
+}
+
+function updateJson(filePath, updater) {
+  const content = JSON.parse(readFileSync(filePath, "utf8"));
+  updater(content);
+  writeFileSync(filePath, JSON.stringify(content, null, "\t") + "\n");
+  console.log(`  updated ${filePath}`);
+}
+
+console.log(`Bumping to ${targetVersion}...\n`);
+
+// 1. Root package.json
+updateJson("package.json", (pkg) => {
+  pkg.version = targetVersion;
+});
+
+// 2. Root manifest.json (Obsidian reads this)
+updateJson("manifest.json", (manifest) => {
+  manifest.version = targetVersion;
+});
+
+// 3. packages/obsidian/manifest.json
+updateJson("packages/obsidian/manifest.json", (manifest) => {
+  manifest.version = targetVersion;
+});
+
+// 4. packages/core/package.json
+updateJson("packages/core/package.json", (pkg) => {
+  pkg.version = targetVersion;
+});
+
+// 5. packages/obsidian/package.json
+updateJson("packages/obsidian/package.json", (pkg) => {
+  pkg.version = targetVersion;
+});
+
+// 6. versions.json (additive — maps plugin version to minAppVersion)
 const rootManifest = JSON.parse(readFileSync("manifest.json", "utf8"));
 const { minAppVersion } = rootManifest;
-rootManifest.version = targetVersion;
-writeFileSync("manifest.json", JSON.stringify(rootManifest, null, "\t") + "\n");
 
-// Update packages/obsidian/manifest.json
-const pkgManifest = JSON.parse(
-  readFileSync("packages/obsidian/manifest.json", "utf8")
-);
-pkgManifest.version = targetVersion;
-writeFileSync(
-  "packages/obsidian/manifest.json",
-  JSON.stringify(pkgManifest, null, "\t") + "\n"
-);
+updateJson("versions.json", (versions) => {
+  versions[targetVersion] = minAppVersion;
+});
 
-// Update versions.json
-const versions = JSON.parse(readFileSync("versions.json", "utf8"));
-versions[targetVersion] = minAppVersion;
-writeFileSync("versions.json", JSON.stringify(versions, null, "\t") + "\n");
+// 7. .release-please-manifest.json
+updateJson(".release-please-manifest.json", (manifest) => {
+  manifest["."] = targetVersion;
+});
 
-console.log(`Bumped to ${targetVersion} (minAppVersion: ${minAppVersion})`);
+console.log(`\nDone. Version ${targetVersion} (minAppVersion: ${minAppVersion})`);

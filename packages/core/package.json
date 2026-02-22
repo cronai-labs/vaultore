@@ -1,76 +1,76 @@
 {
-  "name": "@vaultore/core",
-  "version": "0.1.0",
-  "description": "Core engine for VaultOre - workflow parsing, execution, and scheduling",
-  "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./parser": {
-      "import": "./dist/parser/index.mjs",
-      "require": "./dist/parser/index.js",
-      "types": "./dist/parser/index.d.ts"
-    },
-    "./executor": {
-      "import": "./dist/executor/index.mjs",
-      "require": "./dist/executor/index.js",
-      "types": "./dist/executor/index.d.ts"
-    },
-    "./runtime": {
-      "import": "./dist/runtime/index.mjs",
-      "require": "./dist/runtime/index.js",
-      "types": "./dist/runtime/index.d.ts"
-    },
-    "./providers": {
-      "import": "./dist/providers/index.mjs",
-      "require": "./dist/providers/index.js",
-      "types": "./dist/providers/index.d.ts"
-    },
-    "./scheduler": {
-      "import": "./dist/scheduler/index.mjs",
-      "require": "./dist/scheduler/index.js",
-      "types": "./dist/scheduler/index.d.ts"
-    },
-    "./vault": {
-      "import": "./dist/vault/index.mjs",
-      "require": "./dist/vault/index.js",
-      "types": "./dist/vault/index.d.ts"
-    }
-  },
-  "files": [
-    "dist"
-  ],
-  "scripts": {
-    "build": "node ./node_modules/tsup/dist/cli-default.js",
-    "dev": "node ./node_modules/tsup/dist/cli-default.js --watch",
-    "test": "vitest --run --passWithNoTests",
-    "test:watch": "vitest --watch",
-    "test:coverage": "vitest --coverage",
-    "test:integration": "vitest --run --config vitest.integration.config.ts --passWithNoTests",
-    "test:canonical": "vitest --run --config vitest.canonical.config.ts --passWithNoTests",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src/",
-    "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "@babel/parser": "^7.26.8",
-    "yaml": "^2.3.0",
-    "cron-parser": "^4.9.0",
-    "zod": "^3.22.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.10.0",
-    "tsup": "^8.0.0",
-    "typescript": "^5.3.0",
-    "vitest": "^1.0.0",
-    "@vitest/coverage-v8": "^1.0.0"
-  },
-  "peerDependencies": {
-    "typescript": ">=5.0.0"
-  }
+	"name": "@vaultore/core",
+	"version": "0.1.0",
+	"description": "Core engine for VaultOre - workflow parsing, execution, and scheduling",
+	"main": "./dist/index.js",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/index.mjs",
+			"require": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		},
+		"./parser": {
+			"import": "./dist/parser/index.mjs",
+			"require": "./dist/parser/index.js",
+			"types": "./dist/parser/index.d.ts"
+		},
+		"./executor": {
+			"import": "./dist/executor/index.mjs",
+			"require": "./dist/executor/index.js",
+			"types": "./dist/executor/index.d.ts"
+		},
+		"./runtime": {
+			"import": "./dist/runtime/index.mjs",
+			"require": "./dist/runtime/index.js",
+			"types": "./dist/runtime/index.d.ts"
+		},
+		"./providers": {
+			"import": "./dist/providers/index.mjs",
+			"require": "./dist/providers/index.js",
+			"types": "./dist/providers/index.d.ts"
+		},
+		"./scheduler": {
+			"import": "./dist/scheduler/index.mjs",
+			"require": "./dist/scheduler/index.js",
+			"types": "./dist/scheduler/index.d.ts"
+		},
+		"./vault": {
+			"import": "./dist/vault/index.mjs",
+			"require": "./dist/vault/index.js",
+			"types": "./dist/vault/index.d.ts"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "node ./node_modules/tsup/dist/cli-default.js",
+		"dev": "node ./node_modules/tsup/dist/cli-default.js --watch",
+		"test": "vitest --run --passWithNoTests",
+		"test:watch": "vitest --watch",
+		"test:coverage": "vitest --coverage",
+		"test:integration": "vitest --run --config vitest.integration.config.ts --passWithNoTests",
+		"test:canonical": "vitest --run --config vitest.canonical.config.ts --passWithNoTests",
+		"typecheck": "tsc --noEmit",
+		"lint": "eslint src/",
+		"clean": "rm -rf dist"
+	},
+	"dependencies": {
+		"@babel/parser": "^7.26.8",
+		"yaml": "^2.3.0",
+		"cron-parser": "^4.9.0",
+		"zod": "^3.22.0"
+	},
+	"devDependencies": {
+		"@types/node": "^20.10.0",
+		"tsup": "^8.0.0",
+		"typescript": "^5.3.0",
+		"vitest": "^1.0.0",
+		"@vitest/coverage-v8": "^1.0.0"
+	},
+	"peerDependencies": {
+		"typescript": ">=5.0.0"
+	}
 }
