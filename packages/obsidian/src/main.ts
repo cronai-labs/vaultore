@@ -1,5 +1,6 @@
 import {
   App,
+  Modal,
   Plugin,
   PluginSettingTab,
   Setting,
@@ -30,6 +31,8 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   enableWarmPool: false,
   outputRoot: "_vaultore",
 };
+
+const SCHEDULER_DEBOUNCE_MS = 2000;
 
 class ObsidianAdapter implements PlatformAdapter {
   readonly platform = "obsidian" as const;
@@ -222,7 +225,10 @@ class ObsidianAdapter implements PlatformAdapter {
   }
 
   async confirm(message: string): Promise<boolean> {
-    return window.confirm(message);
+    return new Promise((resolve) => {
+      const modal = new ConfirmModal(this.plugin.app, message, resolve);
+      modal.open();
+    });
   }
 
   log(level: "debug" | "info" | "warn" | "error", message: string, data?: unknown): void {
@@ -284,6 +290,50 @@ class ObsidianAdapter implements PlatformAdapter {
   }
 }
 
+class ConfirmModal extends Modal {
+  private message: string;
+  private resolve: (value: boolean) => void;
+  private resolved = false;
+
+  constructor(app: App, message: string, resolve: (value: boolean) => void) {
+    super(app);
+    this.message = message;
+    this.resolve = resolve;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.createEl("p", { text: this.message });
+    const buttonRow = contentEl.createDiv({ cls: "modal-button-container" });
+
+    buttonRow
+      .createEl("button", { text: "Allow", cls: "mod-cta" })
+      .addEventListener("click", () => {
+        this.settled(true);
+        this.close();
+      });
+
+    buttonRow
+      .createEl("button", { text: "Deny" })
+      .addEventListener("click", () => {
+        this.settled(false);
+        this.close();
+      });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    // If modal is closed via Esc without clicking a button, deny by default
+    this.settled(false);
+  }
+
+  private settled(value: boolean): void {
+    if (this.resolved) return;
+    this.resolved = true;
+    this.resolve(value);
+  }
+}
+
 export default class VaultOrePlugin extends Plugin {
   settings: VaultOreSettings = DEFAULT_SETTINGS;
   private adapter!: ObsidianAdapter;
@@ -295,6 +345,8 @@ export default class VaultOrePlugin extends Plugin {
       workflows.forEach((workflow) => this.runWorkflowByPath(workflow.path));
     },
   });
+  private schedulerRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private runningWorkflows = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -341,9 +393,9 @@ export default class VaultOrePlugin extends Plugin {
     await this.refreshScheduledWorkflows();
 
     this.registerEvent(
-      this.app.vault.on("modify", async (file) => {
+      this.app.vault.on("modify", (file) => {
         if (file instanceof TFile && file.extension === "md") {
-          await this.refreshScheduledWorkflows();
+          this.debouncedRefreshScheduledWorkflows();
         }
       })
     );
@@ -351,6 +403,10 @@ export default class VaultOrePlugin extends Plugin {
 
   onunload(): void {
     this.scheduler.stop();
+    if (this.schedulerRefreshTimer !== null) {
+      clearTimeout(this.schedulerRefreshTimer);
+      this.schedulerRefreshTimer = null;
+    }
   }
 
   async loadSettings(): Promise<void> {
@@ -371,16 +427,36 @@ export default class VaultOrePlugin extends Plugin {
   }
 
   private async runWorkflow(file: TFile): Promise<void> {
+    if (this.runningWorkflows.has(file.path)) {
+      new Notice("VaultOre: Workflow is already running");
+      return;
+    }
+
+    this.runningWorkflows.add(file.path);
     const content = await this.app.vault.read(file);
+    const startNotice = new Notice(`VaultOre: Running ${file.basename}...`, 0);
+
     try {
       await this.executor.runWorkflow({
         platform: this.adapter,
         workflowPath: file.path,
         content,
+        emitEvent: (event, data) => {
+          if (event === "cell:started") {
+            const cellId = (data as { cellId?: string })?.cellId;
+            if (cellId) {
+              startNotice.setMessage(`VaultOre: Running cell ${cellId}...`);
+            }
+          }
+        },
       });
+      startNotice.hide();
       new Notice("VaultOre: Workflow completed");
     } catch (err) {
+      startNotice.hide();
       new Notice(`VaultOre error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.runningWorkflows.delete(file.path);
     }
   }
 
@@ -391,26 +467,35 @@ export default class VaultOrePlugin extends Plugin {
     }
   }
 
+  private debouncedRefreshScheduledWorkflows(): void {
+    if (this.schedulerRefreshTimer !== null) {
+      clearTimeout(this.schedulerRefreshTimer);
+    }
+    this.schedulerRefreshTimer = setTimeout(() => {
+      this.schedulerRefreshTimer = null;
+      void this.refreshScheduledWorkflows();
+    }, SCHEDULER_DEBOUNCE_MS);
+  }
+
   private async refreshScheduledWorkflows(): Promise<void> {
-    this.scheduler.stop();
-    this.scheduler = new WorkflowScheduler({
-      tickIntervalMs: 60 * 1000,
-      onTick: (workflows) => {
-        workflows.forEach((workflow) => this.runWorkflowByPath(workflow.path));
-      },
-    });
+    // Clear existing registrations without destroying the scheduler instance
+    for (const entry of this.scheduler.list()) {
+      this.scheduler.unregister(entry.path);
+    }
 
     const files = this.app.vault.getMarkdownFiles();
     for (const file of files) {
       const content = await this.app.vault.read(file);
       if (!this.parser.isWorkflow(content)) continue;
-      const workflow = this.parser.parse(content, file.path);
-      if (workflow.frontmatter.schedule) {
-        this.scheduler.register(file.path, workflow.frontmatter.schedule);
+      try {
+        const workflow = this.parser.parse(content, file.path);
+        if (workflow.frontmatter.schedule) {
+          this.scheduler.register(file.path, workflow.frontmatter.schedule);
+        }
+      } catch {
+        // Skip files that fail to parse (e.g. malformed frontmatter)
       }
     }
-
-    this.scheduler.start();
   }
 
   private async runCellAtLine(
@@ -418,8 +503,20 @@ export default class VaultOrePlugin extends Plugin {
     line: number,
     options: { skipDependencies?: boolean } = {}
   ): Promise<void> {
+    if (this.runningWorkflows.has(file.path)) {
+      new Notice("VaultOre: Workflow is already running");
+      return;
+    }
+
     const content = await this.app.vault.read(file);
-    const workflow = this.parser.parse(content, file.path);
+    let workflow;
+    try {
+      workflow = this.parser.parse(content, file.path);
+    } catch (err) {
+      new Notice(`VaultOre: Parse error: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+
     const cell = workflow.cells.find(
       (c) => line >= c.startLine && line <= c.endLine
     );
@@ -429,6 +526,9 @@ export default class VaultOrePlugin extends Plugin {
       return;
     }
 
+    this.runningWorkflows.add(file.path);
+    const startNotice = new Notice(`VaultOre: Running cell ${cell.attributes.id}...`, 0);
+
     try {
       await this.executor.runWorkflow({
         platform: this.adapter,
@@ -436,10 +536,22 @@ export default class VaultOrePlugin extends Plugin {
         content,
         targetCellId: cell.attributes.id,
         skipDependencies: options.skipDependencies,
+        emitEvent: (event, data) => {
+          if (event === "cell:started") {
+            const cellId = (data as { cellId?: string })?.cellId;
+            if (cellId) {
+              startNotice.setMessage(`VaultOre: Running cell ${cellId}...`);
+            }
+          }
+        },
       });
+      startNotice.hide();
       new Notice(`VaultOre: Cell ${cell.attributes.id} completed`);
     } catch (err) {
+      startNotice.hide();
       new Notice(`VaultOre error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.runningWorkflows.delete(file.path);
     }
   }
 }

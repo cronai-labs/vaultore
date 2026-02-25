@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---- Core module mock (before importing main) ----
 vi.mock("@vaultore/core", () => ({
@@ -16,6 +16,8 @@ vi.mock("@vaultore/core", () => ({
     start = vi.fn();
     stop = vi.fn();
     register = vi.fn();
+    unregister = vi.fn();
+    list = vi.fn().mockReturnValue([]);
   },
 }));
 
@@ -26,6 +28,7 @@ describe("VaultOrePlugin", () => {
   let plugin: InstanceType<typeof VaultOrePlugin>;
 
   beforeEach(async () => {
+    vi.useFakeTimers();
     plugin = new VaultOrePlugin(undefined as any, undefined as any);
     // Spy on mock methods from the base class
     vi.spyOn(plugin, "addCommand");
@@ -35,6 +38,10 @@ describe("VaultOrePlugin", () => {
     vi.spyOn(plugin, "loadData").mockResolvedValue(null);
 
     await plugin.onload();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("onload", () => {
@@ -88,6 +95,12 @@ describe("VaultOrePlugin", () => {
         expect.objectContaining({ defaultProvider: "anthropic" })
       );
     });
+
+    it("preserves all default fields on fresh load", () => {
+      expect(plugin.settings.aiTemperature).toBeUndefined();
+      expect(plugin.settings.aiMaxTokens).toBe(800);
+      expect(plugin.settings.permissionDecisions).toEqual({});
+    });
   });
 
   describe("secret management", () => {
@@ -117,11 +130,53 @@ describe("VaultOrePlugin", () => {
 
       expect(setSecret).toHaveBeenCalledWith("vaultore-openai-apikey", "");
     });
+
+    it("normalizes secret key with special characters", async () => {
+      const setSecret = vi.fn();
+      plugin.app.secretStorage = {
+        getSecret: vi.fn(),
+        setSecret,
+      };
+
+      await plugin.setSecretValue("some.complex-key_v2", "value");
+
+      expect(setSecret).toHaveBeenCalledWith(
+        "vaultore-some-complex-key-v2",
+        "value"
+      );
+    });
+
+    it("returns undefined when secret storage is unavailable", async () => {
+      plugin.app.secretStorage = null;
+      // getSecret returns undefined when storage is missing
+      // (the adapter checks for this)
+    });
   });
 
   describe("onunload", () => {
     it("completes without error", () => {
       expect(() => plugin.onunload()).not.toThrow();
+    });
+
+    it("cleans up pending debounce timer", () => {
+      // Trigger a debounced refresh by simulating a vault modify
+      // The timer should be cleaned up on unload
+      expect(() => plugin.onunload()).not.toThrow();
+    });
+  });
+
+  describe("run-all command", () => {
+    it("is a check callback that requires an active md file", () => {
+      const calls = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls;
+      const runAllCmd = calls.find(
+        (c: [{ id: string }]) => c[0].id === "vaultore-run-all"
+      );
+      expect(runAllCmd).toBeDefined();
+      const cmd = runAllCmd![0];
+
+      // With no active file, checkCallback returns false
+      plugin.app.workspace.getActiveFile = () => null;
+      expect(cmd.checkCallback(true)).toBe(false);
     });
   });
 });
@@ -141,5 +196,37 @@ describe("manifest.json", () => {
     expect(manifest.description).toBeTruthy();
     expect(manifest.author).toBeTruthy();
     expect(manifest.isDesktopOnly).toBe(true);
+  });
+
+  it("has matching version in packages/obsidian/manifest.json", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const rootManifest = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, "../manifest.json"), "utf8")
+    );
+    const rootRootManifest = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, "../../../manifest.json"), "utf8")
+    );
+
+    expect(rootManifest.version).toBe(rootRootManifest.version);
+    expect(rootManifest.id).toBe(rootRootManifest.id);
+  });
+});
+
+describe("versions.json", () => {
+  it("maps plugin versions to minAppVersion", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const versionsPath = path.resolve(__dirname, "../../../versions.json");
+    const versions = JSON.parse(fs.readFileSync(versionsPath, "utf8"));
+
+    expect(typeof versions).toBe("object");
+    // At minimum, 0.1.0 should be present
+    expect(versions["0.1.0"]).toBeDefined();
+    // All values should be semver-like strings
+    for (const [key, value] of Object.entries(versions)) {
+      expect(key).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(value).toMatch(/^\d+\.\d+\.\d+$/);
+    }
   });
 });

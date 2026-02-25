@@ -32,3 +32,11 @@
 .notice.vaultore-notice {
   border-left: 3px solid var(--interactive-accent);
 }
+
+/* Permission confirmation modal */
+.modal-button-container {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
