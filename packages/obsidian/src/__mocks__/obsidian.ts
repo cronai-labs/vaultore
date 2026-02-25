@@ -77,8 +77,37 @@ export class Setting {
   }
 }
 
+export class Modal {
+  app: any;
+  contentEl = {
+    createEl: (_tag: string, _opts?: any) => ({
+      addEventListener: () => {},
+    }),
+    createDiv: (_opts?: any) => ({
+      createEl: (_tag: string, _opts2?: any) => ({
+        addEventListener: () => {},
+      }),
+    }),
+    empty: () => {},
+  };
+  constructor(app: any) {
+    this.app = app;
+  }
+  open() {}
+  close() {}
+  onOpen() {}
+  onClose() {}
+}
+
 export class Notice {
-  constructor(_message: string, _timeout?: number) {}
+  message: string;
+  constructor(message: string, _timeout?: number) {
+    this.message = message;
+  }
+  setMessage(message: string) {
+    this.message = message;
+  }
+  hide() {}
 }
 
 export class TFile {
