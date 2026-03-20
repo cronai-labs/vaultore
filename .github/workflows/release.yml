@@ -1,0 +1,58 @@
+name: Release Obsidian Plugin
+
+# This workflow handles manual tag-based releases as a fallback.
+# The primary release flow is via release-please (see release-please.yml).
+# To trigger manually: git tag 0.2.0 && git push origin 0.2.0
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Skip if release-please already created this release
+    if: ${{ !contains(github.event.head_commit.message, 'chore(release)') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.5"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Package plugin
+        run: bun run obsidian:package
+
+      - name: Create or update release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+
+          # Create release if it doesn't exist, or upload to existing
+          if gh release view "$tag" &>/dev/null; then
+            gh release upload "$tag" \
+              packages/obsidian/package/vaultore/main.js \
+              packages/obsidian/package/vaultore/manifest.json \
+              packages/obsidian/package/vaultore/styles.css \
+              --clobber
+          else
+            gh release create "$tag" \
+              --title "v$tag" \
+              --generate-notes \
+              packages/obsidian/package/vaultore/main.js \
+              packages/obsidian/package/vaultore/manifest.json \
+              packages/obsidian/package/vaultore/styles.css
+          fi

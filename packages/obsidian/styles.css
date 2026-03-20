@@ -1,1 +1,42 @@
 /* VaultOre plugin styles */
+
+/* Ore-output callout styling */
+.callout[data-callout="ore-output"] {
+  --callout-color: 120, 120, 180;
+  --callout-icon: lucide-terminal;
+  font-size: 0.85em;
+}
+
+.callout[data-callout="ore-output"] .callout-title {
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+}
+
+.callout[data-callout="ore-output"] .callout-content {
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+/* Status indicators inside ore-output */
+.callout[data-callout="ore-output"] .callout-content p {
+  margin: 2px 0;
+}
+
+/* Ore cell code block styling */
+.cm-s-obsidian pre.HyperMD-codeblock[class*="ore:"] {
+  border-left: 3px solid var(--interactive-accent);
+}
+
+/* VaultOre notice styling */
+.notice.vaultore-notice {
+  border-left: 3px solid var(--interactive-accent);
+}
+
+/* Permission confirmation modal */
+.modal-button-container {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

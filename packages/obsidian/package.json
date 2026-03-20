@@ -1,20 +1,22 @@
 {
-  "name": "@vaultore/obsidian",
-  "version": "0.1.0",
-  "description": "Obsidian plugin wrapper for VaultOre",
-  "main": "dist/main.js",
-  "types": "dist/main.d.ts",
-  "scripts": {
-    "build": "esbuild src/main.ts --bundle --platform=node --target=es2020 --outfile=dist/main.js --external:obsidian --format=cjs",
-    "dev": "esbuild src/main.ts --bundle --platform=node --target=es2020 --outfile=dist/main.js --external:obsidian --format=cjs --watch",
-    "test": "echo \"No tests yet\""
-  },
-  "dependencies": {
-    "@vaultore/core": "workspace:*"
-  },
-  "devDependencies": {
-    "esbuild": "^0.20.0",
-    "obsidian": "^1.4.0",
-    "@types/node": "^20.10.0"
-  }
+	"name": "@vaultore/obsidian",
+	"version": "0.1.0",
+	"description": "Obsidian plugin wrapper for VaultOre",
+	"main": "dist/main.js",
+	"types": "dist/main.d.ts",
+	"scripts": {
+		"build": "esbuild src/main.ts --bundle --platform=node --target=es2020 --outfile=dist/main.js --external:obsidian --format=cjs --minify --tree-shaking=true",
+		"dev": "esbuild src/main.ts --bundle --platform=node --target=es2020 --outfile=dist/main.js --external:obsidian --format=cjs --watch",
+		"test": "vitest --run --passWithNoTests",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@vaultore/core": "workspace:*"
+	},
+	"devDependencies": {
+		"esbuild": "^0.20.0",
+		"obsidian": "^1.4.0",
+		"@types/node": "^20.10.0",
+		"vitest": "^1.0.0"
+	}
 }
