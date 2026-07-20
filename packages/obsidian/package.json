@@ -5,18 +5,25 @@
 	"main": "dist/main.js",
 	"types": "dist/main.d.ts",
 	"scripts": {
-		"build": "esbuild src/main.ts --bundle --platform=node --target=es2020 --outfile=dist/main.js --external:obsidian --format=cjs --minify --tree-shaking=true",
-		"dev": "esbuild src/main.ts --bundle --platform=node --target=es2020 --outfile=dist/main.js --external:obsidian --format=cjs --watch",
+		"build": "tsc --noEmit && node esbuild.config.mjs production",
+		"dev": "node esbuild.config.mjs",
 		"test": "vitest --run --passWithNoTests",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"lint": "eslint ."
 	},
 	"dependencies": {
 		"@vaultore/core": "workspace:*"
 	},
 	"devDependencies": {
+		"@eslint/js": "^9.39.4",
+		"@types/node": "^22.15.17",
 		"esbuild": "^0.27.4",
-		"obsidian": "^1.4.0",
-		"@types/node": "^20.10.0",
+		"eslint": "^9.39.4",
+		"eslint-plugin-obsidianmd": "^0.4.0",
+		"globals": "^17.6.0",
+		"jiti": "^2.6.1",
+		"obsidian": "^1.13.1",
+		"typescript-eslint": "^8.59.1",
 		"vitest": "^1.0.0"
 	}
 }

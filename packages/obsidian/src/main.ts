@@ -17,8 +17,8 @@ interface VaultOreSettings {
   defaultModel: string;
   aiTemperature?: number;
   aiMaxTokens?: number;
-  runtimeEngine: "docker" | "podman" | "colima";
-  permissionDecisions: Record<string, any>;
+  runtimeEngine: "docker" | "podman" | "colima" | "apple";
+  permissionDecisions: Record<string, unknown>;
   enableWarmPool: boolean;
   outputRoot: string;
 }
@@ -161,7 +161,9 @@ class ObsidianAdapter implements PlatformAdapter {
       case "vaultore.outputRoot":
         return this.plugin.settings.outputRoot as T;
       default:
-        return (this.plugin.settings as Record<string, any>)[key];
+        return (this.plugin.settings as unknown as Record<string, unknown>)[key] as
+          | T
+          | undefined;
     }
   }
 
@@ -183,7 +185,7 @@ class ObsidianAdapter implements PlatformAdapter {
         this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
         break;
       case "vaultore.permissionDecisions":
-        this.plugin.settings.permissionDecisions = value as Record<string, any>;
+        this.plugin.settings.permissionDecisions = value as Record<string, unknown>;
         break;
       case "vaultore.enableWarmPool":
         this.plugin.settings.enableWarmPool = value as boolean;
@@ -192,7 +194,7 @@ class ObsidianAdapter implements PlatformAdapter {
         this.plugin.settings.outputRoot = value as string;
         break;
       default:
-        (this.plugin.settings as Record<string, any>)[key] = value;
+        (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
     }
     await this.plugin.saveSettings();
   }
@@ -239,10 +241,10 @@ class ObsidianAdapter implements PlatformAdapter {
     const payload = data ? { message, data } : message;
     switch (level) {
       case "debug":
-        console.debug("[VaultOre]", payload);
-        break;
       case "info":
-        console.info("[VaultOre]", payload);
+        // Keep routine logging at debug level per plugin guidelines —
+        // hidden unless the user enables verbose console output.
+        console.debug("[VaultOre]", payload);
         break;
       case "warn":
         console.warn("[VaultOre]", payload);
@@ -346,10 +348,12 @@ export default class VaultOrePlugin extends Plugin {
   private scheduler = new WorkflowScheduler({
     tickIntervalMs: 60 * 1000,
     onTick: (workflows) => {
-      workflows.forEach((workflow) => this.runWorkflowByPath(workflow.path));
+      workflows.forEach((workflow) => {
+        void this.runWorkflowByPath(workflow.path);
+      });
     },
   });
-  private schedulerRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private schedulerRefreshTimer: number | null = null;
   private runningWorkflows = new Set<string>();
 
   async onload(): Promise<void> {
@@ -425,7 +429,7 @@ export default class VaultOrePlugin extends Plugin {
   onunload(): void {
     this.scheduler.stop();
     if (this.schedulerRefreshTimer !== null) {
-      clearTimeout(this.schedulerRefreshTimer);
+      window.clearTimeout(this.schedulerRefreshTimer);
       this.schedulerRefreshTimer = null;
     }
   }
@@ -490,9 +494,9 @@ export default class VaultOrePlugin extends Plugin {
 
   private debouncedRefreshScheduledWorkflows(): void {
     if (this.schedulerRefreshTimer !== null) {
-      clearTimeout(this.schedulerRefreshTimer);
+      window.clearTimeout(this.schedulerRefreshTimer);
     }
-    this.schedulerRefreshTimer = setTimeout(() => {
+    this.schedulerRefreshTimer = window.setTimeout(() => {
       this.schedulerRefreshTimer = null;
       void this.refreshScheduledWorkflows();
     }, SCHEDULER_DEBOUNCE_MS);
@@ -619,7 +623,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
       .setName("Temperature")
       .setDesc("Leave blank to use provider defaults. Some models ignore temperature.")
       .addText((text) => {
-        text.setPlaceholder("provider default");
+        text.setPlaceholder("Provider default");
         text.setValue(
           this.plugin.settings.aiTemperature !== undefined
             ? String(this.plugin.settings.aiTemperature)
@@ -662,6 +666,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
         dropdown.addOption("docker", "Docker");
         dropdown.addOption("podman", "Podman");
         dropdown.addOption("colima", "Colima");
+        dropdown.addOption("apple", "Apple container (macOS 26+)");
         dropdown.setValue(this.plugin.settings.runtimeEngine);
         dropdown.onChange(async (value) => {
           this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
