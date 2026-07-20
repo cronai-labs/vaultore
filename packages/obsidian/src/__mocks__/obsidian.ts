@@ -24,6 +24,11 @@ export class Plugin {
     },
     workspace: {
       getActiveFile: () => null,
+      onLayoutReady: (cb: () => void) => cb(),
+    },
+    metadataCache: {
+      getFileCache: () => null,
+      on: () => ({ unload: () => {} }),
     },
     secretStorage: {
       getSecret: () => null,
@@ -118,6 +123,12 @@ export class TFile {
   parent = null;
   stat = { ctime: 0, mtime: 0, size: 0 };
   vault: any = null;
+}
+
+export class FileSystemAdapter {
+  getBasePath(): string {
+    return "/mock-vault";
+  }
 }
 
 export class SecretComponent {

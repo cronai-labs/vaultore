@@ -49,18 +49,19 @@ describe("VaultOrePlugin", () => {
       expect(plugin.addCommand).toHaveBeenCalledTimes(3);
 
       const calls = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const ids = calls.map((c: [{ id: string }]) => c[0].id);
-      expect(ids).toContain("vaultore-run-all");
-      expect(ids).toContain("vaultore-run-cell");
-      expect(ids).toContain("vaultore-run-cell-only");
+      const ids = calls.map((c: any[]) => c[0].id);
+      expect(ids).toContain("run-all");
+      expect(ids).toContain("run-cell");
+      expect(ids).toContain("run-cell-only");
     });
 
     it("registers a settings tab", () => {
       expect(plugin.addSettingTab).toHaveBeenCalledTimes(1);
     });
 
-    it("registers vault modify event handler", () => {
-      expect(plugin.registerEvent).toHaveBeenCalled();
+    it("registers metadata and vault event handlers", () => {
+      // metadataCache changed + vault delete + vault rename
+      expect(plugin.registerEvent).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -109,7 +110,7 @@ describe("VaultOrePlugin", () => {
       plugin.app.secretStorage = {
         getSecret: vi.fn(),
         setSecret,
-      };
+      } as any;
 
       await plugin.setSecretValue("openai.apiKey", "sk-test");
 
@@ -124,7 +125,7 @@ describe("VaultOrePlugin", () => {
       plugin.app.secretStorage = {
         getSecret: vi.fn().mockReturnValue("existing"),
         setSecret,
-      };
+      } as any;
 
       await plugin.deleteSecretValue("openai.apiKey");
 
@@ -136,7 +137,7 @@ describe("VaultOrePlugin", () => {
       plugin.app.secretStorage = {
         getSecret: vi.fn(),
         setSecret,
-      };
+      } as any;
 
       await plugin.setSecretValue("some.complex-key_v2", "value");
 
@@ -147,7 +148,7 @@ describe("VaultOrePlugin", () => {
     });
 
     it("returns undefined when secret storage is unavailable", async () => {
-      plugin.app.secretStorage = null;
+      plugin.app.secretStorage = null as any;
       // getSecret returns undefined when storage is missing
       // (the adapter checks for this)
     });
@@ -168,9 +169,7 @@ describe("VaultOrePlugin", () => {
   describe("run-all command", () => {
     it("is a check callback that requires an active md file", () => {
       const calls = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const runAllCmd = calls.find(
-        (c: [{ id: string }]) => c[0].id === "vaultore-run-all"
-      );
+      const runAllCmd = calls.find((c: any[]) => c[0].id === "run-all");
       expect(runAllCmd).toBeDefined();
       const cmd = runAllCmd![0];
 
