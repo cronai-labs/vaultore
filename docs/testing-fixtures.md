@@ -186,8 +186,8 @@ cp fixtures/canonical/sys-snapshot.md ~/vaultore-test-vault/System-Snapshot.md
    ```
 
 2. **Open in Obsidian** and run:
-   - `Cmd+Shift+Enter` (Mac) or `Ctrl+Shift+Enter` (Windows/Linux) to run all cells
-   - Or use command palette: "VaultOre: Run All Cells"
+   - Command palette: "VaultOre: Run all cells"
+   - Or a custom hotkey assigned under Settings → Hotkeys
 
 3. **Verify outputs:**
    - Check ore-output callouts below each cell
@@ -343,4 +343,4 @@ Fixtures include a `version` field in frontmatter. When a fixture's format chang
 
 ---
 
-**Questions?** Open an [issue](https://github.com/cronai-ug/vaultore/issues) or start a [discussion](https://github.com/cronai-ug/vaultore/discussions).
+**Questions?** Open an [issue](https://github.com/cronai-labs/vaultore/issues) or start a [discussion](https://github.com/cronai-labs/vaultore/discussions).

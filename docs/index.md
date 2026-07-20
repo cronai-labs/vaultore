@@ -104,4 +104,4 @@ Follow the existing style and link back to this index.
 
 ---
 
-**Need help?** Open an [issue](https://github.com/cronai-ug/vaultore/issues) or start a [discussion](https://github.com/cronai-ug/vaultore/discussions).
+**Need help?** Open an [issue](https://github.com/cronai-labs/vaultore/issues) or start a [discussion](https://github.com/cronai-labs/vaultore/discussions).

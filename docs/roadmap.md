@@ -208,10 +208,10 @@ VaultOre follows a "brick-by-brick" approach to control flow:
 
 The roadmap is a living document. To propose changes:
 
-1. Open a [discussion](https://github.com/cronai-ug/vaultore/discussions) with the `roadmap` tag
+1. Open a [discussion](https://github.com/cronai-labs/vaultore/discussions) with the `roadmap` tag
 2. Reference this document
 3. Explain the rationale and impact
 
 ---
 
-**Questions?** See the [PRD](PRD.md) for detailed requirements or open an [issue](https://github.com/cronai-ug/vaultore/issues).
+**Questions?** See the [PRD](PRD.md) for detailed requirements or open an [issue](https://github.com/cronai-labs/vaultore/issues).

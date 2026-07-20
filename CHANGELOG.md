@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Repository
 
-- Repository: [github.com/cronai-ug/vaultore](https://github.com/cronai-ug/vaultore)
+- Repository: [github.com/cronai-labs/vaultore](https://github.com/cronai-labs/vaultore)
 - npm scope: `@vaultore/*`
 - License: MIT
 
@@ -56,5 +56,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/cronai-ug/vaultore/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/cronai-ug/vaultore/releases/tag/v0.1.0
+[Unreleased]: https://github.com/cronai-labs/vaultore/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/cronai-labs/vaultore/releases/tag/v0.1.0

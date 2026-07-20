@@ -3,7 +3,7 @@
 > **Status:** Canonical  
 > **Version:** 0.2.0  
 > **Last Updated:** 2026-01-10  
-> **Repository:** [github.com/cronai-ug/vaultore](https://github.com/cronai-ug/vaultore)
+> **Repository:** [github.com/cronai-labs/vaultore](https://github.com/cronai-labs/vaultore)
 
 ## Overview
 

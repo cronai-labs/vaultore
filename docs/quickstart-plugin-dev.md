@@ -30,7 +30,7 @@ docker --version  # Should show Docker/Podman/Colima
 
 ```bash
 # Clone the repository
-git clone https://github.com/cronai-ug/vaultore.git
+git clone https://github.com/cronai-labs/vaultore.git
 cd vaultore
 
 # Install dependencies
@@ -160,13 +160,10 @@ cp fixtures/canonical/hello-world.md ~/vaultore-test-vault/Hello-World.md
 ### Run the Workflow
 
 1. Open `Hello-World.md` in Obsidian
-2. Place cursor in the note
-3. Press **`Cmd+Shift+Enter`** (Mac) or **`Ctrl+Shift+Enter`** (Windows/Linux) to run all cells
+2. Open the command palette: **`Cmd+P`** (Mac) or **`Ctrl+P`** (Windows/Linux)
+3. Type "Run all" and select **"VaultOre: Run all cells"**
 
-Or use the command palette:
-
-- **`Cmd+P`** (Mac) or **`Ctrl+P`** (Windows/Linux)
-- Type "Run All" and select "VaultOre: Run All Cells"
+> **Tip:** No default hotkeys are registered (to avoid conflicts). Assign your own under **Settings → Hotkeys** — search for "VaultOre".
 
 ### Expected Result
 
@@ -327,8 +324,8 @@ bun run test:canonical
 
 ## Getting Help
 
-- **Issues:** [GitHub Issues](https://github.com/cronai-ug/vaultore/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/cronai-ug/vaultore/discussions)
+- **Issues:** [GitHub Issues](https://github.com/cronai-labs/vaultore/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/cronai-labs/vaultore/discussions)
 - **Documentation:** [docs/](index.md)
 
 ---
