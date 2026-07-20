@@ -20,7 +20,7 @@ import {
 // =============================================================================
 
 export async function detectRuntimes(): Promise<RuntimeDetection> {
-  const engines: RuntimeEngine[] = ["docker", "podman", "colima"];
+  const engines: RuntimeEngine[] = ["docker", "podman", "colima", "apple"];
   const available: RuntimeEngine[] = [];
   const errors = new Map<RuntimeEngine, string>();
 
@@ -43,6 +43,12 @@ export async function detectRuntimes(): Promise<RuntimeDetection> {
 async function detectEngine(engine: RuntimeEngine): Promise<void> {
   if (engine === "colima") {
     await runCommand("colima", ["status"]);
+    return;
+  }
+
+  if (engine === "apple") {
+    // Apple's `container` CLI requires its background service to be running
+    await runCommand("container", ["system", "status"]);
     return;
   }
 
@@ -70,14 +76,24 @@ export async function execContainer(
   };
 }
 
-function buildRunCommand(
+export function buildRunCommand(
   engine: RuntimeEngine,
   options: ContainerExecOptions
 ): { command: string; args: string[] } {
-  const runtime = engine === "colima" ? "docker" : engine;
+  const runtime = engineBinary(engine);
   const args: string[] = ["run", "--rm"];
 
   if (!options.networkEnabled) {
+    if (engine === "apple") {
+      // Apple's container CLI has no --network=none equivalent yet; every
+      // container gets its own network interface. Fail closed rather than
+      // silently running a network-denied workflow with network access.
+      throw new Error(
+        "Apple container does not support disabling network access yet. " +
+          "Use Docker or Podman for workflows with 'network: deny', or set " +
+          "'permissions.network: allow' in the workflow frontmatter."
+      );
+    }
     args.push("--network=none");
   }
 
@@ -114,6 +130,17 @@ function buildRunCommand(
   args.push(...options.command);
 
   return { command: runtime, args };
+}
+
+function engineBinary(engine: RuntimeEngine): string {
+  switch (engine) {
+    case "colima":
+      return "docker";
+    case "apple":
+      return "container";
+    default:
+      return engine;
+  }
 }
 
 // =============================================================================
@@ -229,6 +256,14 @@ function knownCommandPaths(command: string): string[] {
   if (command === "colima") {
     if (platform === "darwin") {
       return ["/usr/local/bin/colima", "/opt/homebrew/bin/colima"];
+    }
+    return [];
+  }
+
+  if (command === "container") {
+    // Apple's container CLI installs to /usr/local/bin (Apple silicon only)
+    if (platform === "darwin") {
+      return ["/usr/local/bin/container", "/opt/homebrew/bin/container"];
     }
     return [];
   }
