@@ -13,8 +13,10 @@ This guide walks you through setting up VaultOre for plugin development, buildin
 ### Required
 
 - **Node.js 20+** — [Download](https://nodejs.org/)
-- **Bun 1.3+** — [Install](https://bun.sh/)
-- **Docker** — [Install Docker Desktop](https://www.docker.com/products/docker-desktop) or [Podman](https://podman.io/) or [Colima](https://github.com/abiosoft/colima) (macOS)
+- **Bun 1.3.14+** — [Install](https://bun.sh/)
+- **A container runtime** — [Docker Desktop](https://www.docker.com/products/docker-desktop), [Podman](https://podman.io/), [Colima](https://github.com/abiosoft/colima) (macOS), or [Apple container](https://github.com/apple/container) (macOS 26+, Apple silicon)
+  - **Windows:** Docker Desktop with the WSL2 backend, or Docker Engine/Podman inside a WSL2 distro
+  - **Apple container caveat:** no network-disable support yet, so `network: deny` workflows require Docker/Podman
 
 ### Verify Installation
 

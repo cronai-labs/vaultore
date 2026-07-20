@@ -23,8 +23,14 @@ VaultOre turns your Obsidian vault into an automation platform. Create **noteboo
 | Requirement | Notes |
 |-------------|-------|
 | **Obsidian 1.11.4+ (desktop only)** | Uses the desktop file system and secret storage; not available on mobile |
-| **A container runtime** | [Docker](https://docker.com), [Podman](https://podman.io), or [Colima](https://github.com/abiosoft/colima) must be installed and running |
+| **A container runtime** | [Docker](https://docker.com), [Podman](https://podman.io), [Colima](https://github.com/abiosoft/colima), or [Apple container](https://github.com/apple/container) (macOS 26+, Apple silicon) must be installed and running |
 | **AI provider API key** *(optional)* | Only needed for `ore:ai` cells — OpenAI or Anthropic |
+
+**Windows:** use Docker Desktop with the WSL2 backend, or install Docker Engine/Podman directly inside a WSL2 distro.
+
+**Apple container note:** Apple's `container` CLI does not support disabling network access yet, so workflows with `network: deny` (the default) refuse to run on that engine rather than running un-isolated — use Docker or Podman for those, or grant `network: allow` explicitly.
+
+> A container-free WASM sandbox tier for TypeScript cells is planned for v0.2 — see the [Sandbox Spec](specs/sandbox-spec.md).
 
 ## 🚀 Installation
 
@@ -125,9 +131,9 @@ See the [Permissions Spec](specs/permissions-spec.md) for the full security mode
 
 | Version | Theme | Key Features |
 |---------|-------|--------------|
-| **v0.1 (current)** | MVP | TypeScript, shell, and AI cells; scheduling; permissions |
-| v0.2 | Notebooks that don't rot | Python cells, dependency graph, staleness detection, semantic conditions, warm container pool |
-| v0.3 | Go + control flow | Go cells with build caching, loop/parallel blocks |
+| **v0.1 (current)** | MVP | TypeScript, shell, and AI cells; scheduling; permissions; Docker/Podman/Colima/Apple container engines |
+| v0.2 | Notebooks that don't rot | **WASM sandbox tier (no container required for TS cells)**, Python cells, dependency graph, staleness detection, semantic conditions, warm container pool |
+| v0.3 | Go + control flow | Go cells with build caching (WASI lane under evaluation), loop/parallel blocks |
 | v0.4 | Automation | CLI runner, event triggers, more AI providers |
 | v0.5 | Portability | VS Code and Zed extensions |
 
@@ -139,6 +145,7 @@ Each version is additive — no breaking changes to the workflow format.
 - [Documentation Index](docs/index.md) — all docs in one place
 - [Workflow Note Spec](specs/workflow-note-spec.md) — the full workflow format
 - [Permissions Spec](specs/permissions-spec.md) — security model
+- [Sandbox Spec](specs/sandbox-spec.md) — execution tiers: containers today, WASM next
 - [Architecture](ARCHITECTURE.md) — system design
 
 ## 🏗️ Architecture

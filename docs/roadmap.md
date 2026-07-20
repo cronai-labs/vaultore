@@ -62,6 +62,8 @@ This roadmap outlines VaultOre's evolution from MVP to a full-featured automatio
 
 | Feature | Description |
 |---------|-------------|
+| **WASM Sandbox Tier** | QuickJS-in-WASM execution for `ore:ts` cells — no container runtime required ([sandbox spec](../specs/sandbox-spec.md)) |
+| `engine: auto` | Prefer a detected container engine, fall back to the WASM tier for TS-only workflows |
 | Python Runtime | `ore:py` cell execution in Python container |
 | Dependency Graph | Cell dependency tracking and visualization |
 | Staleness Detection | Know which cells need re-run based on input changes |
@@ -70,9 +72,11 @@ This roadmap outlines VaultOre's evolution from MVP to a full-featured automatio
 | Semantic Conditions | `when` attribute with `{{ai: condition}}` |
 | Workflow-Level `runIf` | Skip entire workflow if condition fails |
 | Implicit Parallel | Auto-parallelize independent cells |
+| Declarative Settings | Adopt Obsidian 1.13's `getSettingDefinitions()` API so settings appear in the app-wide settings search |
 
 ### Key Improvements
 
+- **Zero-install tier:** TS-only workflows run without Docker via the WASM sandbox
 - **Performance:** Warm containers reduce startup time from ~100ms to <10ms
 - **Efficiency:** Staleness detection prevents unnecessary re-runs
 - **Intelligence:** Semantic conditions enable smart filtering
@@ -87,7 +91,7 @@ This roadmap outlines VaultOre's evolution from MVP to a full-featured automatio
 
 | Feature | Description |
 |---------|-------------|
-| Go Runtime | `ore:go` compiled cells with caching |
+| Go Runtime | `ore:go` compiled cells with caching (TinyGo→WASI in-process lane under evaluation — see [sandbox spec](../specs/sandbox-spec.md)) |
 | Go Build Caching | Cache compiled binaries keyed on source + deps |
 | Control Blocks | Explicit `loop:`, `parallel:` blocks in frontmatter |
 | Loop Execution | Iterative refinement with `until` and `max` |

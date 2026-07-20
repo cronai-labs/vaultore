@@ -182,6 +182,21 @@ Bricks are numbered by version: `BRICK-0XX` = v0.1, `BRICK-2XX` = v0.2, etc.
 
 ## Container Strategy
 
+### Runtime Engines (v0.1)
+
+| Engine | Platform | Notes |
+|--------|----------|-------|
+| Docker | all | Reference engine; on Windows via Docker Desktop (WSL2 backend) or Docker Engine inside WSL2 |
+| Podman | all | Rootless supported |
+| Colima | macOS | Drives the docker CLI |
+| Apple `container` | macOS 26+, Apple silicon | CLI 1.0; per-container micro-VMs. No network-disable flag yet — workflows with `network: deny` fail closed on this engine |
+
+Beyond containers, a tiered sandbox strategy is specified in
+[specs/sandbox-spec.md](specs/sandbox-spec.md): Tier 2 adds an in-process
+QuickJS-in-WASM sandbox (v0.2) so `ore:ts` workflows run with no container
+runtime installed, and Tier 3 explores WASI 0.2 components for compiled
+cells (v0.3+).
+
 ### Base Images (v0.1)
 
 | Image | Purpose | Size | Cold Start |
