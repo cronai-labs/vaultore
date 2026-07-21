@@ -26,6 +26,7 @@ module.exports = {
       [
         "core",       // @vaultore/core changes
         "obsidian",   // Obsidian plugin changes
+        "cli",        // @vaultore/cli changes
         "parser",     // Workflow parser
         "executor",   // Cell execution engine
         "runtime",    // Container runtime

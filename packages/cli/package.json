@@ -1,0 +1,27 @@
+{
+	"name": "@vaultore/cli",
+	"version": "0.1.0",
+	"description": "Standalone CLI and headless agent for VaultOre workflows",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"vaultore": "./dist/cli.js"
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsup",
+		"dev": "tsup --watch",
+		"test": "vitest --run --passWithNoTests",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@vaultore/core": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^22.15.17",
+		"tsup": "^8.0.0",
+		"vitest": "^1.0.0"
+	}
+}

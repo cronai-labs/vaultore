@@ -41,6 +41,11 @@
           "type": "json",
           "path": "packages/obsidian/package.json",
           "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/cli/package.json",
+          "jsonpath": "$.version"
         }
       ]
     }

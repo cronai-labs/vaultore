@@ -60,6 +60,11 @@ updateJson("packages/obsidian/package.json", (pkg) => {
   pkg.version = targetVersion;
 });
 
+// 5b. packages/cli/package.json
+updateJson("packages/cli/package.json", (pkg) => {
+  pkg.version = targetVersion;
+});
+
 // 6. versions.json (additive — maps plugin version to minAppVersion)
 const rootManifest = JSON.parse(readFileSync("manifest.json", "utf8"));
 const { minAppVersion } = rootManifest;
