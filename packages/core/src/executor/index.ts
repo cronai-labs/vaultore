@@ -574,13 +574,20 @@ async function ensureArtifactIndex(
   const indexPath = `${dir}/_index.md`;
   await platform.mkdirp(dir);
 
+  // Frontmatter follows the Open Knowledge Format (OKF) v0.1: `type` is the
+  // one required field, so artifact indexes are valid OKF concepts and any
+  // OKF consumer can ingest the output tree as a knowledge bundle.
   const lines: string[] = [
     "---",
+    "type: VaultOre Artifacts",
+    `title: Artifacts for ${output.cellId}`,
+    `description: Files produced by cell ${output.cellId} of ${runContext.workflowPath}.`,
+    `timestamp: ${output.meta.timestamp}`,
+    "tags: [vaultore, artifacts]",
     "vaultore: artifacts",
     `runId: ${runContext.runId}`,
     `cellId: ${output.cellId}`,
     `workflowPath: ${runContext.workflowPath}`,
-    `created: ${output.meta.timestamp}`,
     `artifactDir: ${dir}`,
     "---",
     "",
@@ -614,13 +621,20 @@ function renderOutputMarkdown(
   value: unknown,
   outputPath: string
 ): string {
+  // Frontmatter follows the Open Knowledge Format (OKF) v0.1: `type` is the
+  // one required field; title/description/timestamp are OKF-recommended.
+  // Extra keys are allowed — OKF consumers preserve unknown fields.
   const frontmatter: string[] = [
     "---",
+    "type: VaultOre Output",
+    `title: ${cellId} output`,
+    `description: Output of workflow cell ${cellId} (status ${meta.status}).`,
+    `timestamp: ${meta.timestamp}`,
+    "tags: [vaultore, output]",
     "vaultore: output",
     `cellId: ${cellId}`,
     `runId: ${meta.runId ?? ""}`,
     `status: ${meta.status}`,
-    `timestamp: ${meta.timestamp}`,
     `durationMs: ${meta.duration}`,
     `source: ${outputPath}`,
   ];
