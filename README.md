@@ -113,6 +113,17 @@ schedule: "0 18 * * *"   # every day at 6pm
 
 See the [Permissions Spec](specs/permissions-spec.md) for the full security model.
 
+## 🔌 Interoperability
+
+VaultOre is core-first: the engine is editor-agnostic, and Obsidian is one of several surfaces.
+
+- **Standalone CLI** — `vaultore run <workflow.md>` executes any workflow headless, no Obsidian required; `vaultore agent` is a local scheduler daemon ([@vaultore/cli](packages/cli))
+- **CronAI handover** — `vaultore schedules export` emits a manifest that hands scheduled jobs to always-on CronAI infrastructure ([spec](specs/cronai-handover-spec.md))
+- **Open Knowledge Format** — run outputs and artifact indexes are [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.1 concepts out of the box, so any OKF consumer can ingest VaultOre's output tree as an agent-ready knowledge bundle
+- **Obsidian CLI & Quarto** — composes with the official Obsidian CLI (1.12+) and maps cleanly onto Quarto's QMD cells; a `quarto-vaultore` engine extension is planned
+
+Details in [docs/interoperability.md](docs/interoperability.md).
+
 ## 🎯 Why VaultOre?
 
 | If you want... | Use... |
@@ -131,10 +142,10 @@ See the [Permissions Spec](specs/permissions-spec.md) for the full security mode
 
 | Version | Theme | Key Features |
 |---------|-------|--------------|
-| **v0.1 (current)** | MVP | TypeScript, shell, and AI cells; scheduling; permissions; Docker/Podman/Colima/Apple container engines |
-| v0.2 | Notebooks that don't rot | **WASM sandbox tier (no container required for TS cells)**, Python cells, dependency graph, staleness detection, semantic conditions, warm container pool |
+| **v0.1 (current)** | MVP | TypeScript, shell, and AI cells; scheduling; permissions; Docker/Podman/Colima/Apple container engines; standalone CLI + headless agent; OKF-conformant outputs |
+| v0.2 | Notebooks that don't rot | **WASM sandbox tier (no container required for TS cells)**, Python cells, dependency graph, staleness detection, semantic conditions, warm container pool, OKF bundle export |
 | v0.3 | Go + control flow | Go cells with build caching (WASI lane under evaluation), loop/parallel blocks |
-| v0.4 | Automation | CLI runner, event triggers, more AI providers |
+| v0.4 | Automation | CronAI cloud execution, event triggers, Quarto engine extension, more AI providers |
 | v0.5 | Portability | VS Code and Zed extensions |
 
 Each version is additive — no breaking changes to the workflow format.
@@ -154,7 +165,8 @@ Each version is additive — no breaking changes to the workflow format.
 vaultore/
 ├── packages/
 │   ├── core/        # @vaultore/core - Editor-agnostic engine
-│   └── obsidian/    # Obsidian plugin
+│   ├── obsidian/    # Obsidian plugin
+│   └── cli/         # @vaultore/cli - Standalone CLI + headless agent
 ├── containers/      # Runtime container images
 ├── specs/           # Specifications (TDD anchors)
 ├── fixtures/        # Canonical test workflows

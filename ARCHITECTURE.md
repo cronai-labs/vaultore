@@ -49,7 +49,7 @@ vaultore/
 │   ├── zed/                     # Zed extension (v0.5+)
 │   │   └── ...
 │   │
-│   └── cli/                     # Standalone CLI (v0.4+)
+│   └── cli/                     # @vaultore/cli - Standalone CLI + headless agent
 │       └── ...
 │
 ├── containers/                   # Runtime container definitions

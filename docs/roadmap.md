@@ -64,6 +64,8 @@ This roadmap outlines VaultOre's evolution from MVP to a full-featured automatio
 |---------|-------------|
 | **WASM Sandbox Tier** | QuickJS-in-WASM execution for `ore:ts` cells — no container runtime required ([sandbox spec](../specs/sandbox-spec.md)) |
 | `engine: auto` | Prefer a detected container engine, fall back to the WASM tier for TS-only workflows |
+| OKF Bundle Export | `okf export` command: assemble run outputs into an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundle with wikilink→markdown-link normalization and generated `index.md` ([interoperability](interoperability.md)) |
+| Handover Ownership | Local schedulers honor `.vaultore/handover.json` so CronAI-owned workflows are not double-scheduled ([handover spec](../specs/cronai-handover-spec.md)) |
 | Python Runtime | `ore:py` cell execution in Python container |
 | Dependency Graph | Cell dependency tracking and visualization |
 | Staleness Detection | Know which cells need re-run based on input changes |
@@ -122,9 +124,10 @@ See [Go Cell Specification](../specs/go-cell-spec.md) for details.
 
 | Feature | Description |
 |---------|-------------|
-| CLI Runner | Headless execution from command line |
-| CronAI Cloud Integration | Cloud execution for true background scheduling |
+| CLI Runner | ✅ Shipped early in v0.1 (`vaultore run` / `vaultore agent` in `@vaultore/cli`) |
+| CronAI Cloud Integration | Cloud execution for true background scheduling — handover contract already specified ([cronai-handover-spec](../specs/cronai-handover-spec.md)) and `vaultore schedules export` shipped |
 | Event Triggers | File change, webhook, email triggers |
+| Quarto Engine Extension | `quarto-vaultore` engine executing ore:* cells during `quarto render` (Quarto 1.9+ engine extension API, once stabilized upstream) |
 | Workflow Templates | Pre-built workflow recipes |
 | Workflow Gallery | Community-shared workflows |
 
