@@ -4,7 +4,7 @@ Thanks for your interest in contributing! This guide covers project setup, conve
 
 ## Development Setup
 
-**Prerequisites:** Node.js 20+, [Bun](https://bun.sh) 1.3+, and Docker (or Podman/Colima) for running canonical fixture tests.
+**Prerequisites:** Node.js 20+ and [Bun](https://bun.sh) 1.3+. The whole test suite runs without a container runtime; you only need Docker (or Podman/Colima) to actually *execute* a workflow.
 
 ```bash
 git clone https://github.com/cronai-labs/vaultore.git
@@ -59,7 +59,7 @@ docs: clarify permission model in README
 ```bash
 bun run test              # unit tests (all packages)
 bun run typecheck         # TypeScript across all packages
-bun run test:canonical    # canonical fixture tests (requires Docker)
+bun run test:canonical    # parse every canonical fixture (no container needed)
 ```
 
 Please keep tests green and add coverage for new behavior. Canonical fixtures in `fixtures/canonical/` are the acceptance bar — if you change the workflow format, update the spec in `specs/` first.

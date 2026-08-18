@@ -204,10 +204,17 @@ bun run test:canonical
 bun run test:canonical -- fixtures/canonical/hello-world.md
 ```
 
-**Note:** Automated tests require:
-- Docker running
-- Test vault configured
-- AI provider keys (for AI-dependent fixtures)
+**Note:** `test:canonical` only parses the fixtures — it asserts they are valid
+workflow notes and needs no container runtime, no test vault and no API keys.
+
+Executing a fixture is a separate, manual step and does require:
+- A container runtime running (Docker, Podman, Colima, or Apple container)
+- AI provider keys, for the fixtures containing `ore:ai` cells
+
+```bash
+bun run build
+node packages/cli/dist/cli.js run hello-world.md --vault fixtures/canonical --yes
+```
 
 ---
 
