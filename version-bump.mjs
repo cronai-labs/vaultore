@@ -1,15 +1,16 @@
 /**
  * Version bump script for VaultOre.
  *
- * Syncs the version across all manifests and updates versions.json.
+ * Syncs the version across every file that carries one, so that a release tag,
+ * both Obsidian manifests, all three package manifests, the runtime VERSION
+ * constant and versions.json can never drift apart.
  *
  * Usage:
- *   node version-bump.mjs <version>        # explicit version
- *   npm version patch                       # via npm lifecycle (reads npm_package_version)
+ *   bun run version:bump 0.2.0
+ *   node version-bump.mjs 0.2.0
  *
- * This is a fallback for manual releases. The primary flow is release-please,
- * which updates versions via its extra-files config and the release-please.yml
- * workflow handles versions.json separately.
+ * Releases are cut by pushing the matching tag; .github/workflows/release.yml
+ * refuses to publish when the tag and the manifests disagree.
  */
 import { readFileSync, writeFileSync } from "fs";
 
@@ -73,9 +74,17 @@ updateJson("versions.json", (versions) => {
   versions[targetVersion] = minAppVersion;
 });
 
-// 7. .release-please-manifest.json
-updateJson(".release-please-manifest.json", (manifest) => {
-  manifest["."] = targetVersion;
-});
+// 7. The VERSION constant the CLI and library report at runtime
+const versionModule = "packages/core/src/index.ts";
+const source = readFileSync(versionModule, "utf8");
+const pattern = /^export const VERSION = "\d+\.\d+\.\d+";$/m;
+
+if (!pattern.test(source)) {
+  console.error(`Could not find the VERSION constant in ${versionModule}`);
+  process.exit(1);
+}
+
+writeFileSync(versionModule, source.replace(pattern, `export const VERSION = "${targetVersion}";`));
+console.log(`  updated ${versionModule}`);
 
 console.log(`\nDone. Version ${targetVersion} (minAppVersion: ${minAppVersion})`);

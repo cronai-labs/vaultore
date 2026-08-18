@@ -220,12 +220,23 @@ describe("versions.json", () => {
     const versions = JSON.parse(fs.readFileSync(versionsPath, "utf8"));
 
     expect(typeof versions).toBe("object");
-    // At minimum, 0.1.0 should be present
-    expect(versions["0.1.0"]).toBeDefined();
-    // All values should be semver-like strings
+    // All keys and values are semver triples
     for (const [key, value] of Object.entries(versions)) {
       expect(key).toMatch(/^\d+\.\d+\.\d+$/);
       expect(value).toMatch(/^\d+\.\d+\.\d+$/);
+    }
+
+    // Obsidian uses this map to find the newest plugin release an older app
+    // can install, so an entry must never name a version that was never
+    // released. It is populated by version:bump at release time and is legally
+    // empty before the first release — the invariant is that once it has any
+    // entry, the version currently in the manifest is one of them.
+    const manifestPath = path.resolve(__dirname, "../../../manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+
+    if (Object.keys(versions).length > 0) {
+      expect(versions[manifest.version]).toBeDefined();
+      expect(versions[manifest.version]).toBe(manifest.minAppVersion);
     }
   });
 });

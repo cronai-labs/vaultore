@@ -1,8 +1,15 @@
 name: Release Obsidian Plugin
 
-# This workflow handles manual tag-based releases as a fallback.
-# The primary release flow is via release-please (see release-please.yml).
-# To trigger manually: git tag 0.2.0 && git push origin 0.2.0
+# The release path. Releases are cut by pushing a semver tag:
+#
+#   bun run version:bump 0.2.0
+#   git commit -am "chore(release): 0.2.0"
+#   git tag 0.2.0 && git push origin main 0.2.0
+#
+# The tag must equal manifest.json's version — Obsidian's community-plugin
+# tooling matches releases to the manifest by exact version, and a mismatch
+# produces a release the directory cannot consume. The verify step below fails
+# the run rather than publishing one.
 
 on:
   push:
@@ -14,12 +21,29 @@ permissions:
 
 jobs:
   build:
-    # Skip if release-please already created this release
-    if: ${{ !contains(github.event.head_commit.message, 'chore(release)') }}
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify tag matches manifest version
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          manifest="$(node -p "require('./manifest.json').version")"
+          plugin="$(node -p "require('./packages/obsidian/manifest.json').version")"
+
+          if [ "$tag" != "$manifest" ] || [ "$tag" != "$plugin" ]; then
+            echo "::error::Tag '$tag' does not match manifest.json ('$manifest') or packages/obsidian/manifest.json ('$plugin')."
+            echo "Run 'bun run version:bump $tag', commit, then re-tag."
+            exit 1
+          fi
+
+          if ! node -e "process.exit(require('./versions.json')['$tag'] ? 0 : 1)"; then
+            echo "::error::versions.json has no entry for '$tag'. Run 'bun run version:bump $tag'."
+            exit 1
+          fi
+
+          echo "Tag $tag matches both manifests and versions.json."
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -31,6 +55,9 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Test
+        run: bun run test
 
       - name: Package plugin
         run: bun run obsidian:package
@@ -50,7 +77,7 @@ jobs:
               --clobber
           else
             gh release create "$tag" \
-              --title "v$tag" \
+              --title "$tag" \
               --generate-notes \
               packages/obsidian/package/vaultore/main.js \
               packages/obsidian/package/vaultore/manifest.json \
