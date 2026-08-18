@@ -62,6 +62,10 @@ This roadmap outlines VaultOre's evolution from MVP to a full-featured automatio
 
 | Feature | Description |
 |---------|-------------|
+| **WASM Sandbox Tier** | QuickJS-in-WASM execution for `ore:ts` cells — no container runtime required ([sandbox spec](../specs/sandbox-spec.md)) |
+| `engine: auto` | Prefer a detected container engine, fall back to the WASM tier for TS-only workflows |
+| OKF Bundle Export | `okf export` command: assemble run outputs into an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundle with wikilink→markdown-link normalization and generated `index.md` ([interoperability](interoperability.md)) |
+| Handover Ownership | Local schedulers honor `.vaultore/handover.json` so CronAI-owned workflows are not double-scheduled ([handover spec](../specs/cronai-handover-spec.md)) |
 | Python Runtime | `ore:py` cell execution in Python container |
 | Dependency Graph | Cell dependency tracking and visualization |
 | Staleness Detection | Know which cells need re-run based on input changes |
@@ -70,9 +74,11 @@ This roadmap outlines VaultOre's evolution from MVP to a full-featured automatio
 | Semantic Conditions | `when` attribute with `{{ai: condition}}` |
 | Workflow-Level `runIf` | Skip entire workflow if condition fails |
 | Implicit Parallel | Auto-parallelize independent cells |
+| Declarative Settings | Adopt Obsidian 1.13's `getSettingDefinitions()` API so settings appear in the app-wide settings search |
 
 ### Key Improvements
 
+- **Zero-install tier:** TS-only workflows run without Docker via the WASM sandbox
 - **Performance:** Warm containers reduce startup time from ~100ms to <10ms
 - **Efficiency:** Staleness detection prevents unnecessary re-runs
 - **Intelligence:** Semantic conditions enable smart filtering
@@ -87,7 +93,7 @@ This roadmap outlines VaultOre's evolution from MVP to a full-featured automatio
 
 | Feature | Description |
 |---------|-------------|
-| Go Runtime | `ore:go` compiled cells with caching |
+| Go Runtime | `ore:go` compiled cells with caching (TinyGo→WASI in-process lane under evaluation — see [sandbox spec](../specs/sandbox-spec.md)) |
 | Go Build Caching | Cache compiled binaries keyed on source + deps |
 | Control Blocks | Explicit `loop:`, `parallel:` blocks in frontmatter |
 | Loop Execution | Iterative refinement with `until` and `max` |
@@ -118,9 +124,10 @@ See [Go Cell Specification](../specs/go-cell-spec.md) for details.
 
 | Feature | Description |
 |---------|-------------|
-| CLI Runner | Headless execution from command line |
-| CronAI Cloud Integration | Cloud execution for true background scheduling |
+| CLI Runner | ✅ Implemented in v0.1 (`vaultore run` / `vaultore agent` in `@vaultore/cli`); npm distribution still pending |
+| CronAI Cloud Integration | Cloud execution for true background scheduling — handover contract already specified ([cronai-handover-spec](../specs/cronai-handover-spec.md)) and `vaultore schedules export` shipped |
 | Event Triggers | File change, webhook, email triggers |
+| Quarto Engine Extension | `quarto-vaultore` engine executing ore:* cells during `quarto render` (Quarto 1.9+ engine extension API, once stabilized upstream) |
 | Workflow Templates | Pre-built workflow recipes |
 | Workflow Gallery | Community-shared workflows |
 
@@ -208,10 +215,10 @@ VaultOre follows a "brick-by-brick" approach to control flow:
 
 The roadmap is a living document. To propose changes:
 
-1. Open a [discussion](https://github.com/cronai-ug/vaultore/discussions) with the `roadmap` tag
+1. Open a [discussion](https://github.com/cronai-labs/vaultore/discussions) with the `roadmap` tag
 2. Reference this document
 3. Explain the rationale and impact
 
 ---
 
-**Questions?** See the [PRD](PRD.md) for detailed requirements or open an [issue](https://github.com/cronai-ug/vaultore/issues).
+**Questions?** See the [PRD](PRD.md) for detailed requirements or open an [issue](https://github.com/cronai-labs/vaultore/issues).

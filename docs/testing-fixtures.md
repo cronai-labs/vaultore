@@ -186,8 +186,8 @@ cp fixtures/canonical/sys-snapshot.md ~/vaultore-test-vault/System-Snapshot.md
    ```
 
 2. **Open in Obsidian** and run:
-   - `Cmd+Shift+Enter` (Mac) or `Ctrl+Shift+Enter` (Windows/Linux) to run all cells
-   - Or use command palette: "VaultOre: Run All Cells"
+   - Command palette: "VaultOre: Run all cells"
+   - Or a custom hotkey assigned under Settings → Hotkeys
 
 3. **Verify outputs:**
    - Check ore-output callouts below each cell
@@ -204,10 +204,17 @@ bun run test:canonical
 bun run test:canonical -- fixtures/canonical/hello-world.md
 ```
 
-**Note:** Automated tests require:
-- Docker running
-- Test vault configured
-- AI provider keys (for AI-dependent fixtures)
+**Note:** `test:canonical` only parses the fixtures — it asserts they are valid
+workflow notes and needs no container runtime, no test vault and no API keys.
+
+Executing a fixture is a separate, manual step and does require:
+- A container runtime running (Docker, Podman, Colima, or Apple container)
+- AI provider keys, for the fixtures containing `ore:ai` cells
+
+```bash
+bun run build
+node packages/cli/dist/cli.js run hello-world.md --vault fixtures/canonical --yes
+```
 
 ---
 
@@ -343,4 +350,4 @@ Fixtures include a `version` field in frontmatter. When a fixture's format chang
 
 ---
 
-**Questions?** Open an [issue](https://github.com/cronai-ug/vaultore/issues) or start a [discussion](https://github.com/cronai-ug/vaultore/discussions).
+**Questions?** Open an [issue](https://github.com/cronai-labs/vaultore/issues) or start a [discussion](https://github.com/cronai-labs/vaultore/discussions).

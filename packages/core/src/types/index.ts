@@ -45,8 +45,13 @@ export const DEFAULT_PERMISSIONS: WorkflowPermissions = {
 
 /**
  * Available container runtime engines
+ *
+ * - docker/podman: standard OCI runtimes (Linux, macOS, Windows via WSL2)
+ * - colima: docker-compatible runtime on macOS (uses the docker CLI)
+ * - apple: Apple's `container` CLI (macOS 26+, Apple silicon) — runs each
+ *   container in a lightweight VM; network isolation not yet supported
  */
-export type RuntimeEngine = "docker" | "podman" | "colima";
+export type RuntimeEngine = "docker" | "podman" | "colima" | "apple";
 
 /**
  * Runtime configuration for workflow execution
@@ -170,7 +175,7 @@ export const WorkflowFrontmatterSchema = z.object({
   description: z.string().optional(),
   runtime: z
     .object({
-      engine: z.enum(["docker", "podman", "colima"]).optional(),
+      engine: z.enum(["docker", "podman", "colima", "apple"]).optional(),
       image: z.string().optional(),
       timeout: z.number().optional(),
       memoryLimit: z.string().optional(),

@@ -1,0 +1,36 @@
+version: 2
+
+# This repository installs with `bun install --frozen-lockfile` in CI, so a
+# dependency PR that edits package.json without regenerating bun.lock is
+# guaranteed to fail. The `bun` ecosystem understands bun.lock and keeps the
+# two in step; the default `npm` ecosystem does not, which is why the earlier
+# dependabot PRs here left the lockfile stale.
+updates:
+  - package-ecosystem: "bun"
+    directories:
+      - "/"
+      - "/packages/*"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"

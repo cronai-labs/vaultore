@@ -1,5 +1,7 @@
 import {
   App,
+  FileSystemAdapter,
+  Modal,
   Plugin,
   PluginSettingTab,
   Setting,
@@ -15,8 +17,8 @@ interface VaultOreSettings {
   defaultModel: string;
   aiTemperature?: number;
   aiMaxTokens?: number;
-  runtimeEngine: "docker" | "podman" | "colima";
-  permissionDecisions: Record<string, any>;
+  runtimeEngine: "docker" | "podman" | "colima" | "apple";
+  permissionDecisions: Record<string, unknown>;
   enableWarmPool: boolean;
   outputRoot: string;
 }
@@ -30,6 +32,8 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   enableWarmPool: false,
   outputRoot: "_vaultore",
 };
+
+const SCHEDULER_DEBOUNCE_MS = 2000;
 
 class ObsidianAdapter implements PlatformAdapter {
   readonly platform = "obsidian" as const;
@@ -131,8 +135,11 @@ class ObsidianAdapter implements PlatformAdapter {
   }
 
   async getVaultRoot(): Promise<string> {
-    // @ts-expect-error - Obsidian adapter provides getBasePath on desktop
-    return this.plugin.app.vault.adapter.getBasePath();
+    const adapter = this.plugin.app.vault.adapter;
+    if (adapter instanceof FileSystemAdapter) {
+      return adapter.getBasePath();
+    }
+    throw new Error("VaultOre requires a vault with file system access (desktop only)");
   }
 
   getSetting<T>(key: string): T | undefined {
@@ -154,7 +161,9 @@ class ObsidianAdapter implements PlatformAdapter {
       case "vaultore.outputRoot":
         return this.plugin.settings.outputRoot as T;
       default:
-        return (this.plugin.settings as Record<string, any>)[key];
+        return (this.plugin.settings as unknown as Record<string, unknown>)[key] as
+          | T
+          | undefined;
     }
   }
 
@@ -176,7 +185,7 @@ class ObsidianAdapter implements PlatformAdapter {
         this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
         break;
       case "vaultore.permissionDecisions":
-        this.plugin.settings.permissionDecisions = value as Record<string, any>;
+        this.plugin.settings.permissionDecisions = value as Record<string, unknown>;
         break;
       case "vaultore.enableWarmPool":
         this.plugin.settings.enableWarmPool = value as boolean;
@@ -185,7 +194,7 @@ class ObsidianAdapter implements PlatformAdapter {
         this.plugin.settings.outputRoot = value as string;
         break;
       default:
-        (this.plugin.settings as Record<string, any>)[key] = value;
+        (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
     }
     await this.plugin.saveSettings();
   }
@@ -222,17 +231,20 @@ class ObsidianAdapter implements PlatformAdapter {
   }
 
   async confirm(message: string): Promise<boolean> {
-    return window.confirm(message);
+    return new Promise((resolve) => {
+      const modal = new ConfirmModal(this.plugin.app, message, resolve);
+      modal.open();
+    });
   }
 
   log(level: "debug" | "info" | "warn" | "error", message: string, data?: unknown): void {
     const payload = data ? { message, data } : message;
     switch (level) {
       case "debug":
-        console.debug("[VaultOre]", payload);
-        break;
       case "info":
-        console.info("[VaultOre]", payload);
+        // Keep routine logging at debug level per plugin guidelines —
+        // hidden unless the user enables verbose console output.
+        console.debug("[VaultOre]", payload);
         break;
       case "warn":
         console.warn("[VaultOre]", payload);
@@ -284,6 +296,50 @@ class ObsidianAdapter implements PlatformAdapter {
   }
 }
 
+class ConfirmModal extends Modal {
+  private message: string;
+  private resolve: (value: boolean) => void;
+  private resolved = false;
+
+  constructor(app: App, message: string, resolve: (value: boolean) => void) {
+    super(app);
+    this.message = message;
+    this.resolve = resolve;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.createEl("p", { text: this.message });
+    const buttonRow = contentEl.createDiv({ cls: "modal-button-container" });
+
+    buttonRow
+      .createEl("button", { text: "Allow", cls: "mod-cta" })
+      .addEventListener("click", () => {
+        this.settled(true);
+        this.close();
+      });
+
+    buttonRow
+      .createEl("button", { text: "Deny" })
+      .addEventListener("click", () => {
+        this.settled(false);
+        this.close();
+      });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    // If modal is closed via Esc without clicking a button, deny by default
+    this.settled(false);
+  }
+
+  private settled(value: boolean): void {
+    if (this.resolved) return;
+    this.resolved = true;
+    this.resolve(value);
+  }
+}
+
 export default class VaultOrePlugin extends Plugin {
   settings: VaultOreSettings = DEFAULT_SETTINGS;
   private adapter!: ObsidianAdapter;
@@ -292,17 +348,21 @@ export default class VaultOrePlugin extends Plugin {
   private scheduler = new WorkflowScheduler({
     tickIntervalMs: 60 * 1000,
     onTick: (workflows) => {
-      workflows.forEach((workflow) => this.runWorkflowByPath(workflow.path));
+      workflows.forEach((workflow) => {
+        void this.runWorkflowByPath(workflow.path);
+      });
     },
   });
+  private schedulerRefreshTimer: number | null = null;
+  private runningWorkflows = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.adapter = new ObsidianAdapter(this);
 
     this.addCommand({
-      id: "vaultore-run-all",
-      name: "Run All Cells",
+      id: "run-all",
+      name: "Run all cells",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md") return false;
@@ -314,8 +374,8 @@ export default class VaultOrePlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "vaultore-run-cell",
-      name: "Run Cell",
+      id: "run-cell",
+      name: "Run cell",
       editorCallback: async (editor, view) => {
         const file = view.file;
         if (!file) return;
@@ -325,8 +385,8 @@ export default class VaultOrePlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "vaultore-run-cell-only",
-      name: "Run Cell Only (Skip Dependencies)",
+      id: "run-cell-only",
+      name: "Run cell only (skip dependencies)",
       editorCallback: async (editor, view) => {
         const file = view.file;
         if (!file) return;
@@ -338,12 +398,29 @@ export default class VaultOrePlugin extends Plugin {
     this.addSettingTab(new VaultOreSettingsTab(this.app, this));
 
     this.scheduler.start();
-    await this.refreshScheduledWorkflows();
+
+    // Defer the initial vault scan until the workspace layout (and metadata
+    // cache) is ready, so plugin load stays fast on large vaults.
+    this.app.workspace.onLayoutReady(() => {
+      void this.refreshScheduledWorkflows();
+    });
 
     this.registerEvent(
-      this.app.vault.on("modify", async (file) => {
+      this.app.metadataCache.on("changed", () => {
+        this.debouncedRefreshScheduledWorkflows();
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
         if (file instanceof TFile && file.extension === "md") {
-          await this.refreshScheduledWorkflows();
+          this.debouncedRefreshScheduledWorkflows();
+        }
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          this.debouncedRefreshScheduledWorkflows();
         }
       })
     );
@@ -351,6 +428,10 @@ export default class VaultOrePlugin extends Plugin {
 
   onunload(): void {
     this.scheduler.stop();
+    if (this.schedulerRefreshTimer !== null) {
+      window.clearTimeout(this.schedulerRefreshTimer);
+      this.schedulerRefreshTimer = null;
+    }
   }
 
   async loadSettings(): Promise<void> {
@@ -371,16 +452,36 @@ export default class VaultOrePlugin extends Plugin {
   }
 
   private async runWorkflow(file: TFile): Promise<void> {
+    if (this.runningWorkflows.has(file.path)) {
+      new Notice("VaultOre: Workflow is already running");
+      return;
+    }
+
+    this.runningWorkflows.add(file.path);
     const content = await this.app.vault.read(file);
+    const startNotice = new Notice(`VaultOre: Running ${file.basename}...`, 0);
+
     try {
       await this.executor.runWorkflow({
         platform: this.adapter,
         workflowPath: file.path,
         content,
+        emitEvent: (event, data) => {
+          if (event === "cell:started") {
+            const cellId = (data as { cellId?: string })?.cellId;
+            if (cellId) {
+              startNotice.setMessage(`VaultOre: Running cell ${cellId}...`);
+            }
+          }
+        },
       });
+      startNotice.hide();
       new Notice("VaultOre: Workflow completed");
     } catch (err) {
+      startNotice.hide();
       new Notice(`VaultOre error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.runningWorkflows.delete(file.path);
     }
   }
 
@@ -391,26 +492,34 @@ export default class VaultOrePlugin extends Plugin {
     }
   }
 
-  private async refreshScheduledWorkflows(): Promise<void> {
-    this.scheduler.stop();
-    this.scheduler = new WorkflowScheduler({
-      tickIntervalMs: 60 * 1000,
-      onTick: (workflows) => {
-        workflows.forEach((workflow) => this.runWorkflowByPath(workflow.path));
-      },
-    });
+  private debouncedRefreshScheduledWorkflows(): void {
+    if (this.schedulerRefreshTimer !== null) {
+      window.clearTimeout(this.schedulerRefreshTimer);
+    }
+    this.schedulerRefreshTimer = window.setTimeout(() => {
+      this.schedulerRefreshTimer = null;
+      void this.refreshScheduledWorkflows();
+    }, SCHEDULER_DEBOUNCE_MS);
+  }
 
-    const files = this.app.vault.getMarkdownFiles();
-    for (const file of files) {
-      const content = await this.app.vault.read(file);
-      if (!this.parser.isWorkflow(content)) continue;
-      const workflow = this.parser.parse(content, file.path);
-      if (workflow.frontmatter.schedule) {
-        this.scheduler.register(file.path, workflow.frontmatter.schedule);
-      }
+  private async refreshScheduledWorkflows(): Promise<void> {
+    // Clear existing registrations without destroying the scheduler instance
+    for (const entry of this.scheduler.list()) {
+      this.scheduler.unregister(entry.path);
     }
 
-    this.scheduler.start();
+    // Use the metadata cache instead of reading file contents — frontmatter
+    // is already parsed, so this stays cheap even on very large vaults.
+    const files = this.app.vault.getMarkdownFiles();
+    for (const file of files) {
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (frontmatter?.ore !== true || !frontmatter.schedule) continue;
+      try {
+        this.scheduler.register(file.path, String(frontmatter.schedule));
+      } catch {
+        // Skip invalid cron expressions instead of blocking other schedules
+      }
+    }
   }
 
   private async runCellAtLine(
@@ -418,8 +527,20 @@ export default class VaultOrePlugin extends Plugin {
     line: number,
     options: { skipDependencies?: boolean } = {}
   ): Promise<void> {
+    if (this.runningWorkflows.has(file.path)) {
+      new Notice("VaultOre: Workflow is already running");
+      return;
+    }
+
     const content = await this.app.vault.read(file);
-    const workflow = this.parser.parse(content, file.path);
+    let workflow;
+    try {
+      workflow = this.parser.parse(content, file.path);
+    } catch (err) {
+      new Notice(`VaultOre: Parse error: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+
     const cell = workflow.cells.find(
       (c) => line >= c.startLine && line <= c.endLine
     );
@@ -429,6 +550,9 @@ export default class VaultOrePlugin extends Plugin {
       return;
     }
 
+    this.runningWorkflows.add(file.path);
+    const startNotice = new Notice(`VaultOre: Running cell ${cell.attributes.id}...`, 0);
+
     try {
       await this.executor.runWorkflow({
         platform: this.adapter,
@@ -436,10 +560,22 @@ export default class VaultOrePlugin extends Plugin {
         content,
         targetCellId: cell.attributes.id,
         skipDependencies: options.skipDependencies,
+        emitEvent: (event, data) => {
+          if (event === "cell:started") {
+            const cellId = (data as { cellId?: string })?.cellId;
+            if (cellId) {
+              startNotice.setMessage(`VaultOre: Running cell ${cellId}...`);
+            }
+          }
+        },
       });
+      startNotice.hide();
       new Notice(`VaultOre: Cell ${cell.attributes.id} completed`);
     } catch (err) {
+      startNotice.hide();
       new Notice(`VaultOre error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.runningWorkflows.delete(file.path);
     }
   }
 }
@@ -455,11 +591,12 @@ class VaultOreSettingsTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "VaultOre Settings" });
+
+    new Setting(containerEl).setName("AI").setHeading();
 
     new Setting(containerEl)
-      .setName("Default AI Provider")
-      .setDesc("Select the default AI provider for ore:ai cells.")
+      .setName("Default provider")
+      .setDesc("Provider used for ore:ai cells.")
       .addDropdown((dropdown) => {
         dropdown.addOption("openai", "OpenAI");
         dropdown.addOption("anthropic", "Anthropic");
@@ -471,8 +608,8 @@ class VaultOreSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Default Model")
-      .setDesc("Default model used for AI cells when none is specified.")
+      .setName("Default model")
+      .setDesc("Model used for AI cells when none is specified.")
       .addText((text) => {
         text.setValue(this.plugin.settings.defaultModel);
         text.onChange(async (value) => {
@@ -483,10 +620,10 @@ class VaultOreSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("AI Temperature (Default)")
+      .setName("Temperature")
       .setDesc("Leave blank to use provider defaults. Some models ignore temperature.")
       .addText((text) => {
-        text.setPlaceholder("provider default");
+        text.setPlaceholder("Provider default");
         text.setValue(
           this.plugin.settings.aiTemperature !== undefined
             ? String(this.plugin.settings.aiTemperature)
@@ -502,7 +639,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("AI Max Tokens (Default)")
+      .setName("Max tokens")
       .setDesc("Controls response length. Leave blank to use provider defaults.")
       .addText((text) => {
         text.setPlaceholder("800");
@@ -520,13 +657,16 @@ class VaultOreSettingsTab extends PluginSettingTab {
         });
       });
 
+    new Setting(containerEl).setName("Execution").setHeading();
+
     new Setting(containerEl)
-      .setName("Runtime Engine")
+      .setName("Runtime engine")
       .setDesc("Container runtime used for cell execution.")
       .addDropdown((dropdown) => {
         dropdown.addOption("docker", "Docker");
         dropdown.addOption("podman", "Podman");
         dropdown.addOption("colima", "Colima");
+        dropdown.addOption("apple", "Apple container (macOS 26+)");
         dropdown.setValue(this.plugin.settings.runtimeEngine);
         dropdown.onChange(async (value) => {
           this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
@@ -535,7 +675,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Warm Container Pool")
+      .setName("Warm container pool")
       .setDesc("Pre-start containers for faster execution (future feature).")
       .addToggle((toggle) => {
         toggle.setValue(this.plugin.settings.enableWarmPool);
@@ -546,7 +686,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Output Folder")
+      .setName("Output folder")
       .setDesc(
         "Where run outputs are stored. Use a visible folder (e.g. _vaultore) to make links clickable."
       )
@@ -560,9 +700,11 @@ class VaultOreSettingsTab extends PluginSettingTab {
         });
       });
 
+    new Setting(containerEl).setName("API keys").setHeading();
+
     new Setting(containerEl)
-      .setName("OpenAI API Key")
-      .setDesc("Stored in Obsidian SecretStorage.")
+      .setName("OpenAI API key")
+      .setDesc("Stored in Obsidian's secret storage.")
       .addComponent((el) => {
         const secret = new SecretComponent(this.app, el);
         secret.onChange((value) => {
@@ -597,8 +739,8 @@ class VaultOreSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Anthropic API Key")
-      .setDesc("Stored in Obsidian SecretStorage.")
+      .setName("Anthropic API key")
+      .setDesc("Stored in Obsidian's secret storage.")
       .addComponent((el) => {
         const secret = new SecretComponent(this.app, el);
         secret.onChange((value) => {

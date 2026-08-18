@@ -1,12 +1,18 @@
 {
-	"name": "@vaultore/obsidian",
+	"name": "@vaultore/cli",
 	"version": "0.1.0",
-	"description": "Obsidian plugin wrapper for VaultOre",
-	"main": "dist/main.js",
-	"types": "dist/main.d.ts",
+	"description": "Standalone CLI and headless agent for VaultOre workflows",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"vaultore": "./dist/cli.js"
+	},
+	"files": [
+		"dist"
+	],
 	"scripts": {
-		"build": "tsc --noEmit && node esbuild.config.mjs production",
-		"dev": "node esbuild.config.mjs",
+		"build": "tsup",
+		"dev": "tsup --watch",
 		"test": "vitest --run --passWithNoTests",
 		"typecheck": "tsc --noEmit",
 		"lint": "eslint ."
@@ -17,12 +23,9 @@
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
 		"@types/node": "^22.15.17",
-		"esbuild": "^0.27.4",
 		"eslint": "^9.39.4",
-		"eslint-plugin-obsidianmd": "^0.4.0",
 		"globals": "^17.6.0",
-		"jiti": "^2.6.1",
-		"obsidian": "^1.13.1",
+		"tsup": "^8.0.0",
 		"typescript-eslint": "^8.59.1",
 		"vitest": "^1.0.0"
 	}

@@ -18,6 +18,8 @@ Technical specifications that serve as TDD anchors:
 
 - **[Workflow Note Specification](../specs/workflow-note-spec.md)** — Format, syntax, and semantics of workflow notes
 - **[Permissions Specification](../specs/permissions-spec.md)** — Security model and permission system
+- **[Sandbox Specification](../specs/sandbox-spec.md)** — Execution tiers: containers today, WASM next
+- **[CronAI Handover Specification](../specs/cronai-handover-spec.md)** — Schedule manifest and cloud execution contract
 - **[Go Cell Specification](../specs/go-cell-spec.md)** — Go cell type (v0.3+, future work)
 
 ---
@@ -26,6 +28,7 @@ Technical specifications that serve as TDD anchors:
 
 - **[Testing Fixtures](testing-fixtures.md)** — Canonical workflows as acceptance tests
 - **[Roadmap](roadmap.md)** — Version timeline and feature planning
+- **[Interoperability](interoperability.md)** — CLI, headless agent, OKF, Obsidian CLI, Quarto, CronAI
 - **[Local Intelligence (RAG) Strategy](local-intelligence.md)** — Local retrieval and AI augmentation
 
 ---
@@ -104,4 +107,4 @@ Follow the existing style and link back to this index.
 
 ---
 
-**Need help?** Open an [issue](https://github.com/cronai-ug/vaultore/issues) or start a [discussion](https://github.com/cronai-ug/vaultore/discussions).
+**Need help?** Open an [issue](https://github.com/cronai-labs/vaultore/issues) or start a [discussion](https://github.com/cronai-labs/vaultore/discussions).

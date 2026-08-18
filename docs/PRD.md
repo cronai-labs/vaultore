@@ -3,7 +3,7 @@
 > **Version:** 1.1.0  
 > **Status:** Final  
 > **Last Updated:** 2026-01-10  
-> **Repository:** [github.com/cronai-ug/vaultore](https://github.com/cronai-ug/vaultore)  
+> **Repository:** [github.com/cronai-labs/vaultore](https://github.com/cronai-labs/vaultore)  
 > **npm Scope:** `@vaultore/*`
 
 ---

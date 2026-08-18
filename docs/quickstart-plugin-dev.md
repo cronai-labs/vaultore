@@ -13,8 +13,10 @@ This guide walks you through setting up VaultOre for plugin development, buildin
 ### Required
 
 - **Node.js 20+** — [Download](https://nodejs.org/)
-- **Bun 1.3+** — [Install](https://bun.sh/)
-- **Docker** — [Install Docker Desktop](https://www.docker.com/products/docker-desktop) or [Podman](https://podman.io/) or [Colima](https://github.com/abiosoft/colima) (macOS)
+- **Bun 1.3.14+** — [Install](https://bun.sh/)
+- **A container runtime** — [Docker Desktop](https://www.docker.com/products/docker-desktop), [Podman](https://podman.io/), [Colima](https://github.com/abiosoft/colima) (macOS), or [Apple container](https://github.com/apple/container) (macOS 26+, Apple silicon)
+  - **Windows:** Docker Desktop with the WSL2 backend, or Docker Engine/Podman inside a WSL2 distro
+  - **Apple container caveat:** no network-disable support yet, so `network: deny` workflows require Docker/Podman
 
 ### Verify Installation
 
@@ -30,7 +32,7 @@ docker --version  # Should show Docker/Podman/Colima
 
 ```bash
 # Clone the repository
-git clone https://github.com/cronai-ug/vaultore.git
+git clone https://github.com/cronai-labs/vaultore.git
 cd vaultore
 
 # Install dependencies
@@ -160,13 +162,10 @@ cp fixtures/canonical/hello-world.md ~/vaultore-test-vault/Hello-World.md
 ### Run the Workflow
 
 1. Open `Hello-World.md` in Obsidian
-2. Place cursor in the note
-3. Press **`Cmd+Shift+Enter`** (Mac) or **`Ctrl+Shift+Enter`** (Windows/Linux) to run all cells
+2. Open the command palette: **`Cmd+P`** (Mac) or **`Ctrl+P`** (Windows/Linux)
+3. Type "Run all" and select **"VaultOre: Run all cells"**
 
-Or use the command palette:
-
-- **`Cmd+P`** (Mac) or **`Ctrl+P`** (Windows/Linux)
-- Type "Run All" and select "VaultOre: Run All Cells"
+> **Tip:** No default hotkeys are registered (to avoid conflicts). Assign your own under **Settings → Hotkeys** — search for "VaultOre".
 
 ### Expected Result
 
@@ -327,8 +326,8 @@ bun run test:canonical
 
 ## Getting Help
 
-- **Issues:** [GitHub Issues](https://github.com/cronai-ug/vaultore/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/cronai-ug/vaultore/discussions)
+- **Issues:** [GitHub Issues](https://github.com/cronai-labs/vaultore/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/cronai-labs/vaultore/discussions)
 - **Documentation:** [docs/](index.md)
 
 ---

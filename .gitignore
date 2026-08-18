@@ -1,3 +1,11 @@
 node_modules
+dist
 .turbo
 .DS_Store
+*.map
+packages/obsidian/package
+
+# Vault run output produced by workflow executions (e.g. in fixtures/)
+_vaultore/
+.vaultore/
+coverage
