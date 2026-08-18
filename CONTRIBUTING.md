@@ -29,20 +29,20 @@ Core-first rule: all logic lives in `@vaultore/core`; the plugin only adapts it 
 
 ## Commit Conventions
 
-This repo uses [Conventional Commits](https://www.conventionalcommits.org/), enforced by commitlint in CI. Versioning and changelogs are automated from commit messages via release-please.
+This repo uses [Conventional Commits](https://www.conventionalcommits.org/), enforced by commitlint in CI. The type does not bump the version automatically — see [Release Process](#release-process) — but it does drive the generated release notes, so write the subject for someone reading the changelog.
 
 ```
 <type>(<scope>): <subject>
 ```
 
-| Type | Version effect | Use for |
-|------|---------------|---------|
+| Type | Suggests | Use for |
+|------|----------|---------|
 | `feat` | minor bump | New features |
 | `fix` | patch bump | Bug fixes |
 | `perf` | patch bump | Performance improvements |
-| `docs`, `style`, `refactor`, `test`, `build`, `ci`, `chore` | none | Everything else |
+| `docs`, `style`, `refactor`, `test`, `build`, `ci`, `chore` | no bump | Everything else |
 
-Add `BREAKING CHANGE:` in the commit body for a major bump.
+Add `BREAKING CHANGE:` in the commit body when the change warrants a major bump.
 
 **Scopes:** `core`, `obsidian`, `parser`, `executor`, `runtime`, `scheduler`, `providers`, `vault`, `deps`, `release`
 
@@ -73,14 +73,28 @@ Please keep tests green and add coverage for new behavior. Canonical fixtures in
 
 ## Release Process
 
-Releases are automated:
+Releases are cut by pushing a semver tag. Pick the version yourself, using the commit types
+since the last release as the guide.
 
-1. Conventional commits land on `main`
-2. [release-please](https://github.com/googleapis/release-please) opens/updates a release PR with the version bump and changelog
-3. Merging the release PR creates a git tag and GitHub release with the plugin artifacts (`main.js`, `manifest.json`, `styles.css`) attached
-4. `versions.json` is updated automatically for Obsidian's version compatibility lookup
+```bash
+bun run version:bump 0.2.0          # syncs all 8 version locations
+git commit -am "chore(release): 0.2.0"
+git tag 0.2.0                        # no 'v' prefix — Obsidian matches the bare version
+git push origin main 0.2.0
+```
 
-For a manual release (fallback): `node version-bump.mjs <version>`, commit, tag `<version>` (no `v` prefix), and push the tag.
+Pushing the tag runs [`release.yml`](.github/workflows/release.yml), which verifies the tag
+against both manifests and `versions.json`, builds and tests, then publishes a GitHub release
+with `main.js`, `manifest.json` and `styles.css` attached and notes generated from the merged
+PRs.
+
+`version:bump` is the only supported way to change the version. It updates the root
+`package.json`, both `manifest.json` files, all three package manifests, `versions.json`, and
+the `VERSION` constant in `packages/core/src/index.ts` — and a test fails the build if that
+constant ever drifts from the package version.
+
+If the tag and the manifests disagree, the release job fails before publishing anything. Fix
+the version, commit, delete the tag and re-push it.
 
 ## Questions?
 
