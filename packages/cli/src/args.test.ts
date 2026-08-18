@@ -1,6 +1,7 @@
 import { resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { hasExplicitVault, parseArgs, toVaultRelative, vaultRootFrom } from "./args";
+import { stripTrailing } from "./scan";
 
 describe("parseArgs", () => {
 	it("collects positionals and boolean flags", () => {
@@ -85,5 +86,28 @@ describe("toVaultRelative", () => {
 		expect(
 			toVaultRelative(vaultRoot, "..dotfolder/a.md", { vaultExplicit: true })
 		).toBe("..dotfolder/a.md");
+	});
+});
+
+describe("stripTrailing", () => {
+	it("drops trailing separators", () => {
+		expect(stripTrailing("_vaultore///", "/")).toBe("_vaultore");
+		expect(stripTrailing("/vault/notes/", "/", "\\")).toBe("/vault/notes");
+		expect(stripTrailing("C:\\vault\\", "/", "\\")).toBe("C:\\vault");
+	});
+
+	it("leaves interior separators and separator-free input alone", () => {
+		expect(stripTrailing("a/b/c", "/")).toBe("a/b/c");
+		expect(stripTrailing("_vaultore", "/")).toBe("_vaultore");
+	});
+
+	it("collapses an all-separator string to empty", () => {
+		expect(stripTrailing("///", "/")).toBe("");
+	});
+
+	it("is linear on a long run of separators", () => {
+		const started = performance.now();
+		expect(stripTrailing("x" + "/".repeat(200_000), "/")).toBe("x");
+		expect(performance.now() - started).toBeLessThan(1_000);
 	});
 });

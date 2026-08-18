@@ -40,6 +40,19 @@ export interface ScheduleManifest {
 const parser = new WorkflowParser();
 
 /**
+ * Drop trailing separators from a path.
+ *
+ * Done with a loop rather than a `/[\\/]+$/` replace: an anchored quantifier
+ * backtracks across every starting position, which is quadratic on a long run
+ * of separators (CodeQL js/polynomial-redos).
+ */
+export function stripTrailing(value: string, ...separators: string[]): string {
+	let end = value.length;
+	while (end > 0 && separators.includes(value[end - 1] as string)) end -= 1;
+	return value.slice(0, end);
+}
+
+/**
  * Find every workflow note in the vault. Output folders (default
  * `_vaultore`) are skipped so generated notes are never picked up.
  */
@@ -47,7 +60,7 @@ export async function discoverWorkflows(
 	adapter: NodeAdapter,
 	options: { outputRoot?: string } = {}
 ): Promise<DiscoveredWorkflow[]> {
-	const outputRoot = (options.outputRoot ?? "_vaultore").replace(/\/+$/, "");
+	const outputRoot = stripTrailing(options.outputRoot ?? "_vaultore", "/");
 	const files = await adapter.listFiles("");
 	const results: DiscoveredWorkflow[] = [];
 
@@ -87,7 +100,7 @@ export function buildScheduleManifest(
 	discovered: DiscoveredWorkflow[],
 	vaultRoot: string
 ): ScheduleManifest {
-	const name = vaultRoot.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "vault";
+	const name = stripTrailing(vaultRoot, "/", "\\").split(/[\\/]/).pop() || "vault";
 
 	return {
 		format: "vaultore.schedule-manifest",
