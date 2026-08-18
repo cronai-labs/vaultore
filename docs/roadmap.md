@@ -124,7 +124,7 @@ See [Go Cell Specification](../specs/go-cell-spec.md) for details.
 
 | Feature | Description |
 |---------|-------------|
-| CLI Runner | ✅ Shipped early in v0.1 (`vaultore run` / `vaultore agent` in `@vaultore/cli`) |
+| CLI Runner | ✅ Implemented in v0.1 (`vaultore run` / `vaultore agent` in `@vaultore/cli`); npm distribution still pending |
 | CronAI Cloud Integration | Cloud execution for true background scheduling — handover contract already specified ([cronai-handover-spec](../specs/cronai-handover-spec.md)) and `vaultore schedules export` shipped |
 | Event Triggers | File change, webhook, email triggers |
 | Quarto Engine Extension | `quarto-vaultore` engine executing ore:* cells during `quarto render` (Quarto 1.9+ engine extension API, once stabilized upstream) |

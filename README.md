@@ -34,14 +34,27 @@ VaultOre turns your Obsidian vault into an automation platform. Create **noteboo
 
 ## 🚀 Installation
 
-VaultOre has been submitted to the Obsidian community plugin directory. Until it is approved, install manually:
+VaultOre is pre-release: it is not yet in the Obsidian community plugin directory, and
+there is no published release to download. Build it from source:
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/cronai-labs/vaultore/releases/latest)
-2. Create the folder `<your-vault>/.obsidian/plugins/vaultore/` and copy the three files into it
-3. In Obsidian: **Settings → Community plugins → Enable "VaultOre"**
-4. Open **Settings → VaultOre** to pick your container runtime and (optionally) add an AI provider API key
+```bash
+git clone https://github.com/cronai-labs/vaultore.git
+cd vaultore
+bun install
+bun run build
+bun run obsidian:package
+```
 
-Once listed, you will be able to install directly from **Settings → Community plugins → Browse**.
+That writes `main.js`, `manifest.json`, and `styles.css` to
+`packages/obsidian/package/vaultore/`. Then:
+
+1. Copy that `vaultore/` folder into `<your-vault>/.obsidian/plugins/`
+2. In Obsidian: **Settings → Community plugins → Enable "VaultOre"**
+3. Open **Settings → VaultOre** to pick your container runtime and (optionally) add an AI provider API key
+
+Once the plugin is released and listed, downloadable builds will appear under
+[Releases](https://github.com/cronai-labs/vaultore/releases) and you will be able to
+install directly from **Settings → Community plugins → Browse**.
 
 ## 🏃 Your First Workflow
 
@@ -117,7 +130,7 @@ See the [Permissions Spec](specs/permissions-spec.md) for the full security mode
 
 VaultOre is core-first: the engine is editor-agnostic, and Obsidian is one of several surfaces.
 
-- **Standalone CLI** — `vaultore run <workflow.md>` executes any workflow headless, no Obsidian required; `vaultore agent` is a local scheduler daemon ([@vaultore/cli](packages/cli))
+- **Standalone CLI** — `vaultore run <workflow.md>` executes any workflow headless, no Obsidian required; `vaultore agent` is a local scheduler daemon ([@vaultore/cli](packages/cli), build from source — not on npm yet)
 - **CronAI handover** — `vaultore schedules export` emits a manifest that hands scheduled jobs to always-on CronAI infrastructure ([spec](specs/cronai-handover-spec.md))
 - **Open Knowledge Format** — run outputs and artifact indexes are [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.1 concepts out of the box, so any OKF consumer can ingest VaultOre's output tree as an agent-ready knowledge bundle
 - **Obsidian CLI & Quarto** — composes with the official Obsidian CLI (1.12+) and maps cleanly onto Quarto's QMD cells; a `quarto-vaultore` engine extension is planned
