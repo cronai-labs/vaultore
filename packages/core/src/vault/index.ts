@@ -146,7 +146,7 @@ export function createCellFn(outputs: Map<string, CellOutput>): CellFn {
  */
 function normalizePath(path: string): string {
   // Remove leading slash if present
-  let normalized = path.startsWith("/") ? path.slice(1) : path;
+  const normalized = path.startsWith("/") ? path.slice(1) : path;
 
   // Split and filter out empty parts and resolve ..
   const parts = normalized.split("/").filter(Boolean);

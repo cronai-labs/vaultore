@@ -7,6 +7,29 @@
 import { AIProvider, CompletionRequest, CompletionResponse, PlatformAdapter } from "../types";
 
 // =============================================================================
+// WIRE FORMATS
+// =============================================================================
+
+/** The subset of the OpenAI chat-completions response this module reads. */
+interface OpenAIResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
+
+/** The subset of the Anthropic messages response this module reads. */
+interface AnthropicResponse {
+  content?: Array<{ text?: string }>;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+  };
+}
+
+// =============================================================================
 // PROVIDER FACTORY
 // =============================================================================
 
@@ -69,7 +92,7 @@ export function createOpenAIProvider(platform: PlatformAdapter): AIProvider {
         throw new Error(`OpenAI error: ${response.status} ${text}`);
       }
 
-      const data = (await response.json()) as any;
+      const data = (await response.json()) as OpenAIResponse;
       const content = data.choices?.[0]?.message?.content ?? "";
 
       return {
@@ -139,7 +162,7 @@ export function createAnthropicProvider(platform: PlatformAdapter): AIProvider {
         throw new Error(`Anthropic error: ${response.status} ${text}`);
       }
 
-      const data = (await response.json()) as any;
+      const data = (await response.json()) as AnthropicResponse;
       const content = data.content?.[0]?.text ?? "";
 
       return {

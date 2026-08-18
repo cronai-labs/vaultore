@@ -54,7 +54,7 @@
 		"test:integration": "vitest --run --config vitest.integration.config.ts --passWithNoTests",
 		"test:canonical": "vitest --run --config vitest.canonical.config.ts --passWithNoTests",
 		"typecheck": "tsc --noEmit",
-		"lint": "eslint src/",
+		"lint": "eslint .",
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
@@ -64,11 +64,15 @@
 		"zod": "^3.22.0"
 	},
 	"devDependencies": {
+		"@eslint/js": "^9.39.4",
 		"@types/node": "^20.10.0",
+		"@vitest/coverage-v8": "^1.0.0",
+		"eslint": "^9.39.4",
+		"globals": "^17.6.0",
 		"tsup": "^8.0.0",
 		"typescript": "^5.3.0",
-		"vitest": "^1.0.0",
-		"@vitest/coverage-v8": "^1.0.0"
+		"typescript-eslint": "^8.59.1",
+		"vitest": "^1.0.0"
 	},
 	"peerDependencies": {
 		"typescript": ">=5.0.0"

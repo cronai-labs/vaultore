@@ -893,12 +893,12 @@ function extractLastExpression(code: string): { body: string; lastExpression: st
       return { body: code, lastExpression: "undefined" };
     }
 
-    const lastNode: any = bodyNodes[idx];
-    if (lastNode.type === "ExpressionStatement") {
+    const lastNode = bodyNodes[idx];
+    if (lastNode?.type === "ExpressionStatement") {
       const statementStart = lastNode.start ?? 0;
       const statementEnd = lastNode.end ?? code.length;
-      const exprStart = lastNode.expression?.start ?? statementStart;
-      const exprEnd = lastNode.expression?.end ?? statementEnd;
+      const exprStart = lastNode.expression.start ?? statementStart;
+      const exprEnd = lastNode.expression.end ?? statementEnd;
 
       const body = `${code.slice(0, statementStart)}${code.slice(statementEnd)}`.trimEnd();
       const lastExpression = code.slice(exprStart, exprEnd).trim();
