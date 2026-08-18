@@ -73,28 +73,44 @@ Please keep tests green and add coverage for new behavior. Canonical fixtures in
 
 ## Release Process
 
-Releases are cut by pushing a semver tag. Pick the version yourself, using the commit types
-since the last release as the guide.
+Releases are cut locally with one command and published by pushing the tag.
 
 ```bash
-bun run version:bump 0.2.0          # syncs all 8 version locations
-git commit -am "chore(release): 0.2.0"
-git tag 0.2.0                        # no 'v' prefix — Obsidian matches the bare version
+bun run release              # version derived from the commits since the last tag
+bun run release --dry-run    # show the version and changelog, change nothing
+bun run release 0.4.0        # override the derived version
+```
+
+`release` derives the next version from your conventional commits via
+[git-cliff](https://git-cliff.org/) (`feat` → minor, `fix`/`perf`/`revert` → patch;
+pre-1.0 a breaking change bumps the minor rather than jumping to 1.0.0), syncs every
+version location, regenerates `CHANGELOG.md`, then commits and tags. It refuses to run
+on a dirty tree, off `main`, or when nothing since the last tag warrants a release.
+
+Nothing is pushed. Review, then publish:
+
+```bash
+git show HEAD --stat
 git push origin main 0.2.0
 ```
 
-Pushing the tag runs [`release.yml`](.github/workflows/release.yml), which verifies the tag
-against both manifests and `versions.json`, builds and tests, then publishes a GitHub release
-with `main.js`, `manifest.json` and `styles.css` attached and notes generated from the merged
-PRs.
+Pushing the tag runs [`release.yml`](.github/workflows/release.yml), which re-verifies the
+tag against both manifests and `versions.json`, builds and tests, then publishes a GitHub
+release with `main.js`, `manifest.json` and `styles.css` attached.
 
-`version:bump` is the only supported way to change the version. It updates the root
-`package.json`, both `manifest.json` files, all three package manifests, `versions.json`, and
-the `VERSION` constant in `packages/core/src/index.ts` — and a test fails the build if that
-constant ever drifts from the package version.
+This deliberately needs no GitHub Actions permission to open pull requests — the release is
+prepared on your machine and CI only reacts to the tag.
 
-If the tag and the manifests disagree, the release job fails before publishing anything. Fix
-the version, commit, delete the tag and re-push it.
+### Version locations
+
+`bun run release` (via `version-bump.mjs`) is the only supported way to change the version.
+It updates the root `package.json`, both `manifest.json` files, all three package manifests,
+`versions.json`, and the `VERSION` constant in `packages/core/src/index.ts`. A test fails the
+build if that constant ever drifts from the package version.
+
+`CHANGELOG.md` is generated — edit `cliff.toml` rather than the file itself. The commit type
+to section mapping there mirrors the bump semantics documented in `commitlint.config.cjs`;
+if you add a type to one, add it to the other.
 
 ## Questions?
 
