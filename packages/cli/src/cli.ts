@@ -10,37 +10,12 @@
  */
 
 import { promises as fs } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { WorkflowExecutor, WorkflowScheduler, VERSION } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
-
-interface ParsedArgs {
-	positional: string[];
-	flags: Record<string, string | boolean>;
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-	const positional: string[] = [];
-	const flags: Record<string, string | boolean> = {};
-	for (let i = 0; i < argv.length; i += 1) {
-		const arg = argv[i];
-		if (arg === undefined) continue;
-		if (arg.startsWith("--")) {
-			const name = arg.slice(2);
-			const next = argv[i + 1];
-			if (next !== undefined && !next.startsWith("--")) {
-				flags[name] = next;
-				i += 1;
-			} else {
-				flags[name] = true;
-			}
-		} else {
-			positional.push(arg);
-		}
-	}
-	return { positional, flags };
-}
+import { hasExplicitVault, parseArgs, toVaultRelative, vaultRootFrom } from "./args";
+import type { ParsedArgs } from "./args";
 
 function usage(): string {
 	return `vaultore ${VERSION} — Markdown-native AI workflow engine (headless CLI)
@@ -53,7 +28,8 @@ Usage:
   vaultore --version | --help
 
 Options:
-  --vault <dir>       Vault root (default: current directory)
+  --vault <dir>       Vault root (default: current directory). When given, a
+                      relative <workflow.md> resolves against it.
   --cell <id>         Run a single cell (with its dependencies)
   --skip-deps         With --cell: skip dependency cells
   --yes               Auto-grant "ask" permissions (non-interactive default: deny)
@@ -65,22 +41,6 @@ Secrets are read from the environment:
   VAULTORE_OPENAI_APIKEY (or OPENAI_API_KEY)
   VAULTORE_ANTHROPIC_APIKEY (or ANTHROPIC_API_KEY)
 `;
-}
-
-function vaultRootFrom(flags: Record<string, string | boolean>): string {
-	const flag = flags["vault"];
-	return resolve(typeof flag === "string" ? flag : process.cwd());
-}
-
-function toVaultRelative(vaultRoot: string, workflowArg: string): string {
-	const abs = isAbsolute(workflowArg) ? workflowArg : resolve(process.cwd(), workflowArg);
-	const rel = relative(vaultRoot, abs).split(sep).join("/");
-	if (rel.startsWith("..")) {
-		throw new Error(
-			`Workflow ${workflowArg} is outside the vault ${vaultRoot} — pass --vault to set the vault root`
-		);
-	}
-	return rel;
 }
 
 async function cmdRun(args: ParsedArgs): Promise<number> {
@@ -97,11 +57,18 @@ async function cmdRun(args: ParsedArgs): Promise<number> {
 		quiet: args.flags["quiet"] === true,
 	});
 
-	const workflowPath = toVaultRelative(vaultRoot, workflowArg);
+	const workflowPath = toVaultRelative(vaultRoot, workflowArg, {
+		vaultExplicit: hasExplicitVault(args.flags),
+	});
 	const content = await adapter.readFile(workflowPath);
 
 	const executor = new WorkflowExecutor();
 	const targetCellId = typeof args.flags["cell"] === "string" ? args.flags["cell"] : undefined;
+
+	// Cells this invocation actually ran. result.outputs also carries outputs
+	// hydrated from earlier runs, which must not colour this run's summary or
+	// its exit code.
+	const ran: string[] = [];
 
 	const result = await executor.runWorkflow({
 		platform: adapter,
@@ -110,19 +77,29 @@ async function cmdRun(args: ParsedArgs): Promise<number> {
 		targetCellId,
 		skipDependencies: args.flags["skip-deps"] === true,
 		emitEvent: (event, data) => {
+			const cellId = (data as { cellId?: string })?.cellId;
+			if (event === "cell:started" && cellId !== undefined) ran.push(cellId);
 			if (args.flags["quiet"] === true) return;
 			if (event === "cell:started" || event === "cell:completed") {
-				const cellId = (data as { cellId?: string })?.cellId ?? "?";
-				process.stdout.write(`[vaultore] ${event.replace("cell:", "cell ")}: ${cellId}\n`);
+				process.stdout.write(
+					`[vaultore] ${event.replace("cell:", "cell ")}: ${cellId ?? "?"}\n`
+				);
 			}
 		},
 	});
 
 	let failed = 0;
-	for (const [cellId, output] of result.outputs) {
+	for (const cellId of ran) {
+		const output = result.outputs.get(cellId);
+		if (output === undefined) continue;
 		const mark = output.meta.status === "success" ? "ok" : output.meta.status;
 		process.stdout.write(`  ${cellId}: ${mark} (${output.meta.duration}ms)\n`);
-		if (output.meta.status !== "success") failed += 1;
+		if (output.meta.status !== "success") {
+			failed += 1;
+			if (output.meta.error) {
+				process.stderr.write(`error: ${cellId}: ${output.meta.error}\n`);
+			}
+		}
 	}
 
 	return failed > 0 ? 1 : 0;
@@ -248,7 +225,15 @@ async function cmdSchedulesExport(args: ParsedArgs): Promise<number> {
 
 async function main(): Promise<number> {
 	const argv = process.argv.slice(2);
-	const args = parseArgs(argv);
+
+	let args: ParsedArgs;
+	try {
+		args = parseArgs(argv);
+	} catch (err) {
+		process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n\n` + usage());
+		return 2;
+	}
+
 	const command = args.positional.shift();
 
 	if (args.flags["version"] === true) {
