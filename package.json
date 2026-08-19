@@ -33,8 +33,8 @@
 		"changelog": "git-cliff --output CHANGELOG.md"
 	},
 	"devDependencies": {
-		"@commitlint/cli": "^20.4.2",
-		"@commitlint/config-conventional": "^20.4.2",
+		"@commitlint/cli": "^21.2.2",
+		"@commitlint/config-conventional": "^21.2.2",
 		"@types/node": "^26.2.0",
 		"git-cliff": "^2.13.1",
 		"prettier": "^3.9.6",
