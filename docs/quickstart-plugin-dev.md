@@ -138,13 +138,17 @@ If `obsidian:dev` isn't set up yet:
 
 1. Open Obsidian Settings → VaultOre
 2. Ensure Obsidian 1.11.4+ for SecretStorage support
-3. **Container Runtime:** Select Docker (or Podman/Colima if you prefer)
+3. **Default runtime engine:** Select Docker (or Podman/Colima/Apple container). A workflow
+   whose frontmatter sets `runtime.engine` overrides this — the setting is the default, not
+   the last word
 4. **Output Folder:** Default `_vaultore` (used for run outputs and artifacts)
 5. **AI Provider (optional):** Add API keys if you want to test `ore:ai` cells:
 
    - OpenAI: Get key from [platform.openai.com](https://platform.openai.com)
    - Anthropic: Get key from [console.anthropic.com](https://console.anthropic.com)
 6. **AI Defaults (optional):** Set Temperature and Max Tokens if you want explicit defaults
+7. **AI request timeout (optional):** Seconds before an AI request is abandoned; blank uses
+   120. The CLI reads the same value as `aiTimeoutSeconds` in `<vault>/.vaultore/config.json`
 
 ---
 

@@ -139,6 +139,46 @@ describe("finalizeRunContext", () => {
 		expect(record.cells[0].cellId).toBe("b");
 	});
 
+	// A throw part-way through leaves `ran` holding only cells that were
+	// persisted — all green — so inferring status from them alone would report a
+	// failed run as "completed".
+	it("records an escaping error rather than inferring success from the cells that did run", async () => {
+		const { platform, written } = capturingPlatform();
+		await finalizeRunContext(
+			platform,
+			runContext,
+			["a"],
+			new Map([["a", output("success", 209)]]),
+			new Error('Container runtime "docker" is not available: daemon not running')
+		);
+
+		const record = JSON.parse(written.get("_vaultore/runs/wf/r1/run.json") as string);
+		expect(record.status).toBe("aborted");
+		expect(record.error).toMatch(/docker" is not available/);
+	});
+
+	it("omits the error field and stays completed on a clean run", async () => {
+		const { platform, written } = capturingPlatform();
+		await finalizeRunContext(platform, runContext, ["a"], new Map([["a", output("success", 1)]]));
+
+		const record = JSON.parse(written.get("_vaultore/runs/wf/r1/run.json") as string);
+		expect(record.status).toBe("completed");
+		expect(record.error).toBeUndefined();
+	});
+
+	it("omits durationMs rather than emitting NaN for an unparseable start time", async () => {
+		const { platform, written } = capturingPlatform();
+		await finalizeRunContext(
+			platform,
+			{ ...runContext, startedAt: "not a date" },
+			["a"],
+			new Map([["a", output("success", 1)]])
+		);
+
+		const record = JSON.parse(written.get("_vaultore/runs/wf/r1/run.json") as string);
+		expect(record).not.toHaveProperty("durationMs");
+	});
+
 	it("never masks the error already propagating out of the run", async () => {
 		const platform = {
 			writeFile: async () => {

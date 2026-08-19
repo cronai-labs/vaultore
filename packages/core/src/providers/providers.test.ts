@@ -77,3 +77,46 @@ describe("provider request timeouts", () => {
 		}
 	});
 });
+
+describe("response body handling", () => {
+	// The abort signal stays attached to the body stream, so a stalled body must
+	// still produce the actionable message rather than a bare TimeoutError.
+	it("describes a failure that happens while reading the body", async () => {
+		vi.stubGlobal("fetch", async () => ({
+			ok: true,
+			status: 200,
+			text: async () => {
+				const err = new Error("The operation was aborted");
+				err.name = "TimeoutError";
+				throw err;
+			},
+		}));
+
+		await expect(
+			createOpenAIProvider(adapter({ "vaultore.aiTimeoutSeconds": 45 })).complete({
+				model: "gpt-5-mini",
+				prompt: "hi",
+			})
+		).rejects.toThrow(/OpenAI request for model "gpt-5-mini" timed out after 45s/);
+	});
+
+	it("keeps the HTTP status when the response is not ok", async () => {
+		vi.stubGlobal("fetch", async () => ({
+			ok: false,
+			status: 429,
+			text: async () => "rate limited",
+		}));
+
+		await expect(
+			createOpenAIProvider(adapter()).complete({ model: "gpt-5-mini", prompt: "hi" })
+		).rejects.toThrow(/OpenAI error: 429 rate limited/);
+	});
+
+	it("does not rewrite an HTTP error as a transport failure", async () => {
+		vi.stubGlobal("fetch", async () => ({ ok: false, status: 500, text: async () => "" }));
+
+		await expect(
+			createOpenAIProvider(adapter()).complete({ model: "m", prompt: "hi" })
+		).rejects.toThrow(/OpenAI error: 500 <empty body>/);
+	});
+});

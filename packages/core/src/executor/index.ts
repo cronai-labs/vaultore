@@ -44,41 +44,52 @@ export class WorkflowExecutor {
     const workflow = this.parser.parse(options.content, options.workflowPath);
     const runContext = await createRunContext(options.platform, workflow.path);
 
-    const permissions = await resolvePermissions(
-      options.platform,
-      workflow.path,
-      workflow.frontmatter
-    );
-
-    const engineChoice = resolveEngine(
-      workflow.frontmatter.runtime?.engine,
-      options.platform.getSetting<string>("vaultore.runtimeEngine")
-    );
-    const runtime = {
-      ...DEFAULT_RUNTIME,
-      ...workflow.frontmatter.runtime,
-      engine: engineChoice.engine,
-    };
-
-    await ensureRuntimeAvailable(engineChoice);
-
-    const orderedCells = orderCells(workflow.cells);
-    const cellsToRun = options.targetCellId
-      ? filterCellsForTarget(
-          orderedCells,
-          options.targetCellId,
-          !options.skipDependencies
-        )
-      : orderedCells;
     const outputs = new Map<string, CellOutput>(workflow.outputs);
-    await hydrateOutputsFromStubs(this.parser, options.platform, workflow.rawContent, outputs);
     let updatedContent = workflow.rawContent;
 
     // Cells this invocation ran, so the run record reflects the run rather than
     // every output hydrated from earlier ones.
     const ran: string[] = [];
+    let runError: unknown;
 
+    // Everything after the run record exists is inside the try. Setup can fail
+    // too — an unavailable engine throws from ensureRuntimeAvailable — and that
+    // failure used to escape before any finally, leaving the record this method
+    // just wrote stuck at "running" forever.
     try {
+      const permissions = await resolvePermissions(
+        options.platform,
+        workflow.path,
+        workflow.frontmatter
+      );
+
+      const engineChoice = resolveEngine(
+        workflow.frontmatter.runtime?.engine,
+        options.platform.getSetting<string>("vaultore.runtimeEngine")
+      );
+      const runtime = {
+        ...DEFAULT_RUNTIME,
+        ...workflow.frontmatter.runtime,
+        engine: engineChoice.engine,
+      };
+
+      await ensureRuntimeAvailable(engineChoice);
+
+      const orderedCells = orderCells(workflow.cells);
+      const cellsToRun = options.targetCellId
+        ? filterCellsForTarget(
+            orderedCells,
+            options.targetCellId,
+            !options.skipDependencies
+          )
+        : orderedCells;
+      await hydrateOutputsFromStubs(
+        this.parser,
+        options.platform,
+        workflow.rawContent,
+        outputs
+      );
+
       for (const cell of cellsToRun) {
         options.emitEvent?.("cell:started", { cellId: cell.attributes.id });
         const result = await this.runCell({
@@ -106,11 +117,13 @@ export class WorkflowExecutor {
         await options.platform.writeFile(workflow.path, updatedContent);
         options.emitEvent?.("cell:completed", { cellId: cell.attributes.id });
       }
+    } catch (err) {
+      // Captured so the record reflects it. Rethrown unchanged — finalising is
+      // bookkeeping and must not alter what the caller sees.
+      runError = err;
+      throw err;
     } finally {
-      // In a finally so a throw between cells still closes the record — it
-      // previously stayed "running" forever, and anything reading the output
-      // tree saw a run that never ended.
-      await finalizeRunContext(options.platform, runContext, ran, outputs);
+      await finalizeRunContext(options.platform, runContext, ran, outputs, runError);
     }
 
     return {
@@ -467,7 +480,8 @@ export async function finalizeRunContext(
   platform: PlatformAdapter,
   runContext: RunContext,
   ran: readonly string[],
-  outputs: ReadonlyMap<string, CellOutput>
+  outputs: ReadonlyMap<string, CellOutput>,
+  runError?: unknown
 ): Promise<void> {
   const cells = ran.map((cellId) => ({
     cellId,
@@ -477,6 +491,13 @@ export async function finalizeRunContext(
 
   const failed = cells.filter((c) => c.status !== "success").length;
   const finishedAt = new Date().toISOString();
+  const startedMs = Date.parse(runContext.startedAt);
+
+  // An error that escaped the run is authoritative. `ran` only holds cells that
+  // were persisted, so a throw part-way through leaves the recorded cells all
+  // green — reporting that as "completed" would claim success for a run the
+  // caller saw fail.
+  const status = runError !== undefined ? "aborted" : failed > 0 ? "failed" : "completed";
 
   try {
     await platform.writeFile(
@@ -487,8 +508,13 @@ export async function finalizeRunContext(
           workflowPath: runContext.workflowPath,
           startedAt: runContext.startedAt,
           finishedAt,
-          durationMs: Date.parse(finishedAt) - Date.parse(runContext.startedAt),
-          status: failed > 0 ? "failed" : "completed",
+          ...(Number.isFinite(startedMs)
+            ? { durationMs: Date.parse(finishedAt) - startedMs }
+            : {}),
+          status,
+          ...(runError !== undefined
+            ? { error: runError instanceof Error ? runError.message : String(runError) }
+            : {}),
           cells,
         },
         null,

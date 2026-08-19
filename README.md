@@ -65,7 +65,6 @@ Create a note with this content:
 ore: true
 name: Hello World
 runtime:
-  engine: docker
   image: oven/bun:1-alpine
 ---
 
@@ -82,7 +81,11 @@ msg.toUpperCase();
 ```
 ````
 
-Then open the command palette (`Cmd+P` / `Ctrl+P`) and run **"VaultOre: Run all cells"**. Output callouts appear below each cell, with results persisted under your configured output folder.
+Then open the command palette (`Cmd+P` / `Ctrl+P`) and run **"VaultOre: Run all cells"**.
+
+> **Note:** the example deliberately omits `runtime.engine`, so it uses the engine you
+> picked in settings. A workflow that *does* set `engine:` overrides your setting — useful
+> for a note that genuinely requires one runtime, surprising otherwise. Output callouts appear below each cell, with results persisted under your configured output folder.
 
 > **Tip:** No default hotkeys are set to avoid conflicts. Assign your own under **Settings → Hotkeys** (search for "VaultOre").
 

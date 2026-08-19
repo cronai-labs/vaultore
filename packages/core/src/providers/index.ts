@@ -68,7 +68,7 @@ function describeRequestFailure(
   if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
     return new Error(
       `${provider} request for model "${model}" timed out after ${timeoutMs / 1000}s. ` +
-        `Raise vaultore.aiTimeoutSeconds if the model needs longer.`
+        `Raise the "AI request timeout" setting (vaultore.aiTimeoutSeconds) if the model needs longer.`
     );
   }
 
@@ -145,12 +145,22 @@ export function createOpenAIProvider(platform: PlatformAdapter): AIProvider {
         throw describeRequestFailure(err, "OpenAI", request.model, startedAt, timeoutMs);
       }
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`OpenAI error: ${response.status} ${text}`);
+      // Read the body inside the guard too: the abort signal stays attached to
+      // the body stream, so a response whose headers arrive and whose body
+      // stalls would otherwise reject with the bare error this module exists to
+      // replace — and on the !ok path would lose the status code entirely.
+      let bodyText: string;
+      try {
+        bodyText = await response.text();
+      } catch (err) {
+        throw describeRequestFailure(err, "OpenAI", request.model, startedAt, timeoutMs);
       }
 
-      const data = (await response.json()) as OpenAIResponse;
+      if (!response.ok) {
+        throw new Error(`OpenAI error: ${response.status} ${bodyText || "<empty body>"}`);
+      }
+
+      const data = JSON.parse(bodyText) as OpenAIResponse;
       const content = data.choices?.[0]?.message?.content ?? "";
 
       return {
@@ -223,12 +233,18 @@ export function createAnthropicProvider(platform: PlatformAdapter): AIProvider {
         throw describeRequestFailure(err, "Anthropic", request.model, startedAt, timeoutMs);
       }
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Anthropic error: ${response.status} ${text}`);
+      let bodyText: string;
+      try {
+        bodyText = await response.text();
+      } catch (err) {
+        throw describeRequestFailure(err, "Anthropic", request.model, startedAt, timeoutMs);
       }
 
-      const data = (await response.json()) as AnthropicResponse;
+      if (!response.ok) {
+        throw new Error(`Anthropic error: ${response.status} ${bodyText || "<empty body>"}`);
+      }
+
+      const data = JSON.parse(bodyText) as AnthropicResponse;
       const content = data.content?.[0]?.text ?? "";
 
       return {
