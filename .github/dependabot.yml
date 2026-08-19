@@ -6,10 +6,12 @@ version: 2
 # two in step; the default `npm` ecosystem does not, which is why the earlier
 # dependabot PRs here left the lockfile stale.
 updates:
+  # A single directory, not one per package: the workspace has one root
+  # bun.lock that already covers every member manifest, so listing
+  # packages/* separately makes Dependabot open per-package PRs that touch a
+  # package.json without the lockfile — all of which fail --frozen-lockfile.
   - package-ecosystem: "bun"
-    directories:
-      - "/"
-      - "/packages/*"
+    directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
