@@ -44,61 +44,86 @@ export class WorkflowExecutor {
     const workflow = this.parser.parse(options.content, options.workflowPath);
     const runContext = await createRunContext(options.platform, workflow.path);
 
-    const permissions = await resolvePermissions(
-      options.platform,
-      workflow.path,
-      workflow.frontmatter
-    );
-
-    const runtimeEngine =
-      workflow.frontmatter.runtime?.engine ??
-      options.platform.getSetting<string>("vaultore.runtimeEngine") ??
-      DEFAULT_RUNTIME.engine;
-    const runtime = {
-      ...DEFAULT_RUNTIME,
-      ...workflow.frontmatter.runtime,
-      engine: runtimeEngine as RuntimeEngine,
-    };
-
-    await ensureRuntimeAvailable(runtime.engine);
-
-    const orderedCells = orderCells(workflow.cells);
-    const cellsToRun = options.targetCellId
-      ? filterCellsForTarget(
-          orderedCells,
-          options.targetCellId,
-          !options.skipDependencies
-        )
-      : orderedCells;
     const outputs = new Map<string, CellOutput>(workflow.outputs);
-    await hydrateOutputsFromStubs(this.parser, options.platform, workflow.rawContent, outputs);
     let updatedContent = workflow.rawContent;
 
-    for (const cell of cellsToRun) {
-      options.emitEvent?.("cell:started", { cellId: cell.attributes.id });
-      const result = await this.runCell({
-        cell,
-        platform: options.platform,
-        permissions,
-        outputs,
-        runtime,
-        runContext,
-      });
+    // Cells this invocation ran, so the run record reflects the run rather than
+    // every output hydrated from earlier ones.
+    const ran: string[] = [];
+    let runError: unknown;
 
-      const outputPath = await persistCellOutput(
+    // Everything after the run record exists is inside the try. Setup can fail
+    // too — an unavailable engine throws from ensureRuntimeAvailable — and that
+    // failure used to escape before any finally, leaving the record this method
+    // just wrote stuck at "running" forever.
+    try {
+      const permissions = await resolvePermissions(
         options.platform,
-        runContext,
         workflow.path,
-        result
+        workflow.frontmatter
       );
-      result.meta.runId = runContext.runId;
-      result.meta.outputPath = outputPath;
 
-      outputs.set(cell.attributes.id, result);
-      updatedContent = this.serializer.updateWorkflowOutput(updatedContent, result);
+      const engineChoice = resolveEngine(
+        workflow.frontmatter.runtime?.engine,
+        options.platform.getSetting<string>("vaultore.runtimeEngine")
+      );
+      const runtime = {
+        ...DEFAULT_RUNTIME,
+        ...workflow.frontmatter.runtime,
+        engine: engineChoice.engine,
+      };
 
-      await options.platform.writeFile(workflow.path, updatedContent);
-      options.emitEvent?.("cell:completed", { cellId: cell.attributes.id });
+      await ensureRuntimeAvailable(engineChoice);
+
+      const orderedCells = orderCells(workflow.cells);
+      const cellsToRun = options.targetCellId
+        ? filterCellsForTarget(
+            orderedCells,
+            options.targetCellId,
+            !options.skipDependencies
+          )
+        : orderedCells;
+      await hydrateOutputsFromStubs(
+        this.parser,
+        options.platform,
+        workflow.rawContent,
+        outputs
+      );
+
+      for (const cell of cellsToRun) {
+        options.emitEvent?.("cell:started", { cellId: cell.attributes.id });
+        const result = await this.runCell({
+          cell,
+          platform: options.platform,
+          permissions,
+          outputs,
+          runtime,
+          runContext,
+        });
+
+        const outputPath = await persistCellOutput(
+          options.platform,
+          runContext,
+          workflow.path,
+          result
+        );
+        result.meta.runId = runContext.runId;
+        result.meta.outputPath = outputPath;
+
+        outputs.set(cell.attributes.id, result);
+        ran.push(cell.attributes.id);
+        updatedContent = this.serializer.updateWorkflowOutput(updatedContent, result);
+
+        await options.platform.writeFile(workflow.path, updatedContent);
+        options.emitEvent?.("cell:completed", { cellId: cell.attributes.id });
+      }
+    } catch (err) {
+      // Captured so the record reflects it. Rethrown unchanged — finalising is
+      // bookkeeping and must not alter what the caller sees.
+      runError = err;
+      throw err;
+    } finally {
+      await finalizeRunContext(options.platform, runContext, ran, outputs, runError);
     }
 
     return {
@@ -256,12 +281,76 @@ async function resolvePermissions(
   };
 }
 
-async function ensureRuntimeAvailable(engine: string): Promise<void> {
-  const detection = await detectRuntimes();
-  if (!detection.available.includes(engine as never)) {
-    const error = detection.errors.get(engine as never) ?? "runtime not available";
-    throw new Error(`Container runtime ${engine} not available: ${error}`);
+/**
+ * Where the engine came from. A workflow note that names an engine wins over
+ * the user's configured default, so when it fails the message has to say which
+ * source asked for it — otherwise "docker not available" is baffling to someone
+ * who selected colima in settings.
+ */
+export interface EngineChoice {
+  engine: RuntimeEngine;
+  source: "workflow" | "setting" | "default";
+  /** The user's configured default, when they have one and it is not what ran. */
+  configuredDefault?: RuntimeEngine;
+}
+
+export function resolveEngine(
+  frontmatterEngine: string | undefined,
+  settingEngine: string | undefined
+): EngineChoice {
+  const configuredDefault = settingEngine as RuntimeEngine | undefined;
+
+  if (frontmatterEngine) {
+    return {
+      engine: frontmatterEngine as RuntimeEngine,
+      source: "workflow",
+      ...(configuredDefault && configuredDefault !== frontmatterEngine
+        ? { configuredDefault }
+        : {}),
+    };
   }
+
+  if (settingEngine) {
+    return { engine: settingEngine as RuntimeEngine, source: "setting" };
+  }
+
+  return { engine: DEFAULT_RUNTIME.engine, source: "default" };
+}
+
+export function describeEngineFailure(
+  choice: EngineChoice,
+  detail: string,
+  available: readonly RuntimeEngine[]
+): string {
+  const lines = [`Container runtime "${choice.engine}" is not available: ${detail}`];
+
+  if (choice.source === "workflow") {
+    lines.push(`This workflow's frontmatter requests "${choice.engine}".`);
+    if (choice.configuredDefault) {
+      lines.push(
+        `Your configured default is "${choice.configuredDefault}", but frontmatter takes precedence.`,
+        `Remove "engine: ${choice.engine}" from the note to use your default, or start ${choice.engine}.`
+      );
+    }
+  } else if (choice.source === "setting") {
+    lines.push(`"${choice.engine}" is your configured default in VaultOre settings.`);
+  }
+
+  lines.push(
+    available.length > 0
+      ? `Detected on this machine: ${available.join(", ")}.`
+      : "No container runtime was detected on this machine."
+  );
+
+  return lines.join("\n");
+}
+
+async function ensureRuntimeAvailable(choice: EngineChoice): Promise<void> {
+  const detection = await detectRuntimes();
+  if (detection.available.includes(choice.engine)) return;
+
+  const detail = detection.errors.get(choice.engine) ?? "runtime not available";
+  throw new Error(describeEngineFailure(choice, detail, detection.available));
 }
 
 function orderCells(cells: Cell[]): Cell[] {
@@ -379,6 +468,62 @@ async function createRunContext(
   );
 
   return { runId, runDir, runBaseDir, startedAt, workflowPath, outputRoot };
+}
+
+/**
+ * Close out run.json with a terminal status and a per-cell summary.
+ *
+ * Best effort: a failure to write the record must not mask whatever error is
+ * already propagating out of the run.
+ */
+export async function finalizeRunContext(
+  platform: PlatformAdapter,
+  runContext: RunContext,
+  ran: readonly string[],
+  outputs: ReadonlyMap<string, CellOutput>,
+  runError?: unknown
+): Promise<void> {
+  const cells = ran.map((cellId) => ({
+    cellId,
+    status: outputs.get(cellId)?.meta.status ?? "error",
+    durationMs: outputs.get(cellId)?.meta.duration,
+  }));
+
+  const failed = cells.filter((c) => c.status !== "success").length;
+  const finishedAt = new Date().toISOString();
+  const startedMs = Date.parse(runContext.startedAt);
+
+  // An error that escaped the run is authoritative. `ran` only holds cells that
+  // were persisted, so a throw part-way through leaves the recorded cells all
+  // green — reporting that as "completed" would claim success for a run the
+  // caller saw fail.
+  const status = runError !== undefined ? "aborted" : failed > 0 ? "failed" : "completed";
+
+  try {
+    await platform.writeFile(
+      `${runContext.runDir}/run.json`,
+      JSON.stringify(
+        {
+          runId: runContext.runId,
+          workflowPath: runContext.workflowPath,
+          startedAt: runContext.startedAt,
+          finishedAt,
+          ...(Number.isFinite(startedMs)
+            ? { durationMs: Date.parse(finishedAt) - startedMs }
+            : {}),
+          status,
+          ...(runError !== undefined
+            ? { error: runError instanceof Error ? runError.message : String(runError) }
+            : {}),
+          cells,
+        },
+        null,
+        2
+      )
+    );
+  } catch {
+    // Swallowed on purpose — see the doc comment.
+  }
 }
 
 async function hydrateOutputsFromStubs(

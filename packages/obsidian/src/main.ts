@@ -17,6 +17,7 @@ interface VaultOreSettings {
   defaultModel: string;
   aiTemperature?: number;
   aiMaxTokens?: number;
+  aiTimeoutSeconds?: number;
   runtimeEngine: "docker" | "podman" | "colima" | "apple";
   permissionDecisions: Record<string, unknown>;
   enableWarmPool: boolean;
@@ -27,6 +28,7 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   defaultProvider: "openai",
   defaultModel: "gpt-5-mini",
   aiMaxTokens: 800,
+  aiTimeoutSeconds: 120,
   runtimeEngine: "docker",
   permissionDecisions: {},
   enableWarmPool: false,
@@ -152,6 +154,8 @@ class ObsidianAdapter implements PlatformAdapter {
         return this.plugin.settings.aiTemperature as T;
       case "vaultore.aiMaxTokens":
         return this.plugin.settings.aiMaxTokens as T;
+      case "vaultore.aiTimeoutSeconds":
+        return this.plugin.settings.aiTimeoutSeconds as T;
       case "vaultore.runtimeEngine":
         return this.plugin.settings.runtimeEngine as T;
       case "vaultore.permissionDecisions":
@@ -180,6 +184,9 @@ class ObsidianAdapter implements PlatformAdapter {
         break;
       case "vaultore.aiMaxTokens":
         this.plugin.settings.aiMaxTokens = value as number | undefined;
+        break;
+      case "vaultore.aiTimeoutSeconds":
+        this.plugin.settings.aiTimeoutSeconds = value as number | undefined;
         break;
       case "vaultore.runtimeEngine":
         this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
@@ -458,10 +465,16 @@ export default class VaultOrePlugin extends Plugin {
     }
 
     this.runningWorkflows.add(file.path);
-    const content = await this.app.vault.read(file);
-    const startNotice = new Notice(`VaultOre: Running ${file.basename}...`, 0);
+    let startNotice: Notice | undefined;
 
     try {
+      // Inside the try: a read that rejects (note deleted or renamed between
+      // resolution and read) previously escaped before the finally, leaving the
+      // path marked as running for the rest of the session — it could never be
+      // run again without reloading the plugin.
+      const content = await this.app.vault.read(file);
+      startNotice = new Notice(`VaultOre: Running ${file.basename}...`, 0);
+
       await this.executor.runWorkflow({
         platform: this.adapter,
         workflowPath: file.path,
@@ -470,17 +483,17 @@ export default class VaultOrePlugin extends Plugin {
           if (event === "cell:started") {
             const cellId = (data as { cellId?: string })?.cellId;
             if (cellId) {
-              startNotice.setMessage(`VaultOre: Running cell ${cellId}...`);
+              startNotice?.setMessage(`VaultOre: Running cell ${cellId}...`);
             }
           }
         },
       });
-      startNotice.hide();
       new Notice("VaultOre: Workflow completed");
     } catch (err) {
-      startNotice.hide();
       new Notice(`VaultOre error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
+      // The notice is only created once the read succeeds, so it may not exist.
+      startNotice?.hide();
       this.runningWorkflows.delete(file.path);
     }
   }
@@ -633,7 +646,9 @@ class VaultOreSettingsTab extends PluginSettingTab {
           const trimmed = value.trim();
           const parsed = trimmed ? Number(trimmed) : undefined;
           this.plugin.settings.aiTemperature =
-            parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined;
+            parsed !== undefined && Number.isFinite(parsed) && parsed >= 0 && parsed <= 2
+              ? parsed
+              : undefined;
           await this.plugin.saveSettings();
         });
       });
@@ -652,7 +667,26 @@ class VaultOreSettingsTab extends PluginSettingTab {
           const trimmed = value.trim();
           const parsed = trimmed ? Number(trimmed) : undefined;
           this.plugin.settings.aiMaxTokens =
-            parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined;
+            parsed !== undefined && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("AI request timeout")
+      .setDesc("Seconds before an AI request is abandoned. Blank uses 120.")
+      .addText((text) => {
+        text.setPlaceholder("120");
+        text.setValue(
+          this.plugin.settings.aiTimeoutSeconds !== undefined
+            ? String(this.plugin.settings.aiTimeoutSeconds)
+            : ""
+        );
+        text.onChange(async (value) => {
+          const trimmed = value.trim();
+          const parsed = trimmed ? Number(trimmed) : undefined;
+          this.plugin.settings.aiTimeoutSeconds =
+            parsed !== undefined && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
           await this.plugin.saveSettings();
         });
       });
@@ -660,8 +694,11 @@ class VaultOreSettingsTab extends PluginSettingTab {
     new Setting(containerEl).setName("Execution").setHeading();
 
     new Setting(containerEl)
-      .setName("Runtime engine")
-      .setDesc("Container runtime used for cell execution.")
+      .setName("Default runtime engine")
+      .setDesc(
+        "Container runtime used for cell execution. A workflow that sets " +
+          "'engine:' in its frontmatter overrides this."
+      )
       .addDropdown((dropdown) => {
         dropdown.addOption("docker", "Docker");
         dropdown.addOption("podman", "Podman");
