@@ -112,9 +112,13 @@ export class WorkflowExecutor {
 
         outputs.set(cell.attributes.id, result);
         ran.push(cell.attributes.id);
-        updatedContent = this.serializer.updateWorkflowOutput(updatedContent, result);
 
-        await options.platform.writeFile(workflow.path, updatedContent);
+        updatedContent = await this.writeBackOutput(
+          options.platform,
+          workflow.path,
+          updatedContent,
+          result
+        );
         options.emitEvent?.("cell:completed", { cellId: cell.attributes.id });
       }
     } catch (err) {
@@ -131,6 +135,46 @@ export class WorkflowExecutor {
       outputs,
       rawContent: updatedContent,
     };
+  }
+
+  /**
+   * Splice one cell's output into the note and persist it.
+   *
+   * The note is re-read first. A run holds a snapshot from before it started,
+   * and writing that snapshot back discards anything the user typed while the
+   * run was in flight — which is easy to hit, because the write happens once
+   * per cell and container and AI cells are slow. `updateWorkflowOutput` is a
+   * pure per-cell splice, so applying it to current content preserves those
+   * edits and still lands the output in the right place.
+   *
+   * Returns the content now on disk, which becomes the fallback base if a later
+   * re-read fails.
+   */
+  private async writeBackOutput(
+    platform: PlatformAdapter,
+    workflowPath: string,
+    lastKnownContent: string,
+    result: CellOutput
+  ): Promise<string> {
+    // A note deleted or renamed mid-run must not be recreated from the
+    // snapshot: the platform's writeFile falls back to creating the file, which
+    // would resurrect a note the user just deleted. The output is already
+    // persisted under the run directory either way.
+    if (!(await platform.exists(workflowPath))) {
+      return lastKnownContent;
+    }
+
+    let base = lastKnownContent;
+    try {
+      base = await platform.readFile(workflowPath);
+    } catch {
+      // Unreadable but present: fall back to what we last wrote rather than
+      // losing the output entirely.
+    }
+
+    const next = this.serializer.updateWorkflowOutput(base, result);
+    await platform.writeFile(workflowPath, next);
+    return next;
   }
 
   private async runCell(params: {
