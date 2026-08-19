@@ -17,6 +17,7 @@ interface VaultOreSettings {
   defaultModel: string;
   aiTemperature?: number;
   aiMaxTokens?: number;
+  aiTimeoutSeconds?: number;
   runtimeEngine: "docker" | "podman" | "colima" | "apple";
   permissionDecisions: Record<string, unknown>;
   enableWarmPool: boolean;
@@ -27,6 +28,7 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   defaultProvider: "openai",
   defaultModel: "gpt-5-mini",
   aiMaxTokens: 800,
+  aiTimeoutSeconds: 120,
   runtimeEngine: "docker",
   permissionDecisions: {},
   enableWarmPool: false,
@@ -152,6 +154,8 @@ class ObsidianAdapter implements PlatformAdapter {
         return this.plugin.settings.aiTemperature as T;
       case "vaultore.aiMaxTokens":
         return this.plugin.settings.aiMaxTokens as T;
+      case "vaultore.aiTimeoutSeconds":
+        return this.plugin.settings.aiTimeoutSeconds as T;
       case "vaultore.runtimeEngine":
         return this.plugin.settings.runtimeEngine as T;
       case "vaultore.permissionDecisions":
@@ -180,6 +184,9 @@ class ObsidianAdapter implements PlatformAdapter {
         break;
       case "vaultore.aiMaxTokens":
         this.plugin.settings.aiMaxTokens = value as number | undefined;
+        break;
+      case "vaultore.aiTimeoutSeconds":
+        this.plugin.settings.aiTimeoutSeconds = value as number | undefined;
         break;
       case "vaultore.runtimeEngine":
         this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
@@ -657,11 +664,33 @@ class VaultOreSettingsTab extends PluginSettingTab {
         });
       });
 
+    new Setting(containerEl)
+      .setName("AI request timeout")
+      .setDesc("Seconds before an AI request is abandoned. Blank uses 120.")
+      .addText((text) => {
+        text.setPlaceholder("120");
+        text.setValue(
+          this.plugin.settings.aiTimeoutSeconds !== undefined
+            ? String(this.plugin.settings.aiTimeoutSeconds)
+            : ""
+        );
+        text.onChange(async (value) => {
+          const trimmed = value.trim();
+          const parsed = trimmed ? Number(trimmed) : undefined;
+          this.plugin.settings.aiTimeoutSeconds =
+            parsed !== undefined && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+          await this.plugin.saveSettings();
+        });
+      });
+
     new Setting(containerEl).setName("Execution").setHeading();
 
     new Setting(containerEl)
-      .setName("Runtime engine")
-      .setDesc("Container runtime used for cell execution.")
+      .setName("Default runtime engine")
+      .setDesc(
+        "Container runtime used for cell execution. A workflow that sets " +
+          "'engine:' in its frontmatter overrides this."
+      )
       .addDropdown((dropdown) => {
         dropdown.addOption("docker", "Docker");
         dropdown.addOption("podman", "Podman");

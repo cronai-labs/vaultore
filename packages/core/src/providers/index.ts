@@ -30,6 +30,56 @@ interface AnthropicResponse {
 }
 
 // =============================================================================
+// REQUEST TIMEOUT
+// =============================================================================
+
+/**
+ * Provider calls are unbounded by default: `runtime.timeout` in frontmatter
+ * bounds container cells only, so a hung request would stall a workflow for as
+ * long as the network took to give up. A scheduled run was observed failing
+ * with a bare "Failed to fetch" after 15.5 minutes.
+ */
+export const DEFAULT_AI_TIMEOUT_SECONDS = 120;
+
+function timeoutMsFor(platform: PlatformAdapter): number {
+  const configured = platform.getSetting<number>("vaultore.aiTimeoutSeconds");
+  const seconds =
+    typeof configured === "number" && Number.isFinite(configured) && configured > 0
+      ? configured
+      : DEFAULT_AI_TIMEOUT_SECONDS;
+  return seconds * 1000;
+}
+
+/**
+ * Turn transport failures into something a user can act on. `fetch` rejects
+ * with a bare "Failed to fetch" in Obsidian's renderer, which does not
+ * distinguish no-network from a blocked origin from a timeout.
+ */
+function describeRequestFailure(
+  err: unknown,
+  provider: string,
+  model: string,
+  startedAt: number,
+  timeoutMs: number
+): Error {
+  const elapsedMs = Date.now() - startedAt;
+  const seconds = Math.round(elapsedMs / 100) / 10;
+
+  if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+    return new Error(
+      `${provider} request for model "${model}" timed out after ${timeoutMs / 1000}s. ` +
+        `Raise vaultore.aiTimeoutSeconds if the model needs longer.`
+    );
+  }
+
+  const detail = err instanceof Error ? err.message : String(err);
+  return new Error(
+    `${provider} request for model "${model}" failed after ${seconds}s: ${detail}. ` +
+      `Check network access and that the stored API key is valid.`
+  );
+}
+
+// =============================================================================
 // PROVIDER FACTORY
 // =============================================================================
 
@@ -78,14 +128,22 @@ export function createOpenAIProvider(platform: PlatformAdapter): AIProvider {
         }
       }
 
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-      });
+      const timeoutMs = timeoutMsFor(platform);
+      const startedAt = Date.now();
+      let response: Response;
+      try {
+        response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        throw describeRequestFailure(err, "OpenAI", request.model, startedAt, timeoutMs);
+      }
 
       if (!response.ok) {
         const text = await response.text();
@@ -140,22 +198,30 @@ export function createAnthropicProvider(platform: PlatformAdapter): AIProvider {
       }
 
       const maxTokens = request.maxTokens ?? 800;
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: request.model,
-          max_tokens: maxTokens,
-          ...(request.temperature !== undefined
-            ? { temperature: request.temperature }
-            : {}),
-          messages: [{ role: "user", content: request.prompt }],
-        }),
-      });
+      const timeoutMs = timeoutMsFor(platform);
+      const startedAt = Date.now();
+      let response: Response;
+      try {
+        response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: request.model,
+            max_tokens: maxTokens,
+            ...(request.temperature !== undefined
+              ? { temperature: request.temperature }
+              : {}),
+            messages: [{ role: "user", content: request.prompt }],
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        throw describeRequestFailure(err, "Anthropic", request.model, startedAt, timeoutMs);
+      }
 
       if (!response.ok) {
         const text = await response.text();
