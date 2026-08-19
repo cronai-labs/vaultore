@@ -60,8 +60,61 @@ export function extractWikilink(line: string): string | undefined {
   return inner.length > 0 ? inner : undefined;
 }
 
+const OUTPUT_OPEN = "<!--";
+const OUTPUT_MARKER = "ore:output:";
+const OUTPUT_CLOSE = "-->";
+
+/**
+ * Every `<!-- ore:output:<id> … -->` block, found by scanning.
+ *
+ * This replaced a regex: `/<!--\s*ore:output:(\S+)\n([\s\S]*?)-->/g` rescans
+ * across every following marker before failing to find its newline, which is
+ * quadratic on a note full of unterminated comments (CodeQL js/polynomial-redos
+ * — 50k of them took 16.6s). Bounding the id character class made it fast in
+ * practice but left the pattern flagged, and a scan is both linear and easier
+ * to reason about.
+ */
+export function findOutputBlocks(
+  content: string
+): Array<{ cellId: string; body: string }> {
+  const blocks: Array<{ cellId: string; body: string }> = [];
+  let cursor = 0;
+
+  while (cursor < content.length) {
+    const open = content.indexOf(OUTPUT_OPEN, cursor);
+    if (open === -1) break;
+
+    let idStart = open + OUTPUT_OPEN.length;
+    while (idStart < content.length && (content[idStart] === " " || content[idStart] === "\t")) {
+      idStart += 1;
+    }
+
+    if (!content.startsWith(OUTPUT_MARKER, idStart)) {
+      cursor = open + OUTPUT_OPEN.length;
+      continue;
+    }
+    idStart += OUTPUT_MARKER.length;
+
+    const newline = content.indexOf("\n", idStart);
+    if (newline === -1) break;
+
+    const close = content.indexOf(OUTPUT_CLOSE, newline + 1);
+    if (close === -1) break;
+
+    const cellId = content.slice(idStart, newline);
+    // The original regex required a non-whitespace id, so an empty or padded
+    // one was simply not a match.
+    if (cellId.length > 0 && !/\s/.test(cellId)) {
+      blocks.push({ cellId, body: content.slice(newline + 1, close) });
+    }
+
+    cursor = close + OUTPUT_CLOSE.length;
+  }
+
+  return blocks;
+}
+
 const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;
-const OUTPUT_REGEX = /<!--[ \t]*ore:output:([^\s<]+)\n([\s\S]*?)-->/g;
 const CELL_ATTR_REGEX = /(?:^|[ \t])(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
 
 // =============================================================================
@@ -236,14 +289,9 @@ export class WorkflowParser {
   parseOutputs(content: string): Map<string, CellOutput> {
     const outputs = new Map<string, CellOutput>();
 
-    let match: RegExpExecArray | null;
-    OUTPUT_REGEX.lastIndex = 0;
-
-    while ((match = OUTPUT_REGEX.exec(content)) !== null) {
-      const [, cellId, outputContent] = match;
-
+    for (const { cellId, body } of findOutputBlocks(content)) {
       try {
-        const parsed = this.parseOutputContent(outputContent);
+        const parsed = this.parseOutputContent(body);
         outputs.set(cellId, {
           cellId,
           value: parsed.value,

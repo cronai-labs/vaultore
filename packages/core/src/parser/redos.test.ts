@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { WorkflowParser, extractWikilink, stripLeading, stripTrailing } from "./index";
+import {
+	WorkflowParser,
+	extractWikilink,
+	findOutputBlocks,
+	stripLeading,
+	stripTrailing,
+} from "./index";
 
 /**
  * CodeQL flagged six polynomial-backtracking regexes (js/polynomial-redos) in
@@ -115,5 +121,39 @@ describe("separator helpers", () => {
 	it("are linear on long separator runs", () => {
 		const value = "x" + "/".repeat(400_000);
 		expect(timed(() => stripTrailing(value, "/"))).toBeLessThan(BUDGET_MS);
+	});
+});
+
+describe("findOutputBlocks", () => {
+	it("finds a block and returns its id and body", () => {
+		const blocks = findOutputBlocks("x\n<!-- ore:output:hello\nvalue\n-->\ny");
+		expect(blocks).toEqual([{ cellId: "hello", body: "value\n" }]);
+	});
+
+	it("finds several blocks in order", () => {
+		const blocks = findOutputBlocks(
+			"<!--ore:output:a\n1\n--> mid <!--ore:output:b\n2\n-->"
+		);
+		expect(blocks.map((b) => b.cellId)).toEqual(["a", "b"]);
+		expect(blocks[1]?.body).toBe("2\n");
+	});
+
+	it("ignores comments that are not output markers", () => {
+		expect(findOutputBlocks("<!-- just a comment -->")).toEqual([]);
+		expect(findOutputBlocks("<!--ore:other:a\n1\n-->")).toEqual([]);
+	});
+
+	it("ignores an unterminated block rather than guessing", () => {
+		expect(findOutputBlocks("<!--ore:output:a\nno close")).toEqual([]);
+		expect(findOutputBlocks("<!--ore:output:a")).toEqual([]);
+	});
+
+	it("rejects an id containing whitespace, as the regex did", () => {
+		expect(findOutputBlocks("<!--ore:output:a b\n1\n-->")).toEqual([]);
+	});
+
+	it("is fast on many unterminated markers", () => {
+		const content = "<!--ore:output:!".repeat(200_000);
+		expect(timed(() => findOutputBlocks(content))).toBeLessThan(BUDGET_MS);
 	});
 });
