@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# CI only reads the repository: it checks out, installs and runs the gate.
+# Nothing here publishes, comments, or writes back (CodeQL
+# actions/missing-workflow-permissions).
+permissions:
+  contents: read
+
 jobs:
   commitlint:
     runs-on: ubuntu-latest

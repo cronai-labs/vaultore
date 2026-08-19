@@ -27,9 +27,42 @@ import {
 // =============================================================================
 
 const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---/;
-const CELL_REGEX = /```ore:(ts|shell|ai|py|go)\s*([^\n]*)\n([\s\S]*?)```/g;
-const OUTPUT_REGEX = /<!--\s*ore:output:(\S+)\n([\s\S]*?)-->/g;
-const CELL_ATTR_REGEX = /(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
+/**
+ * Strip leading/trailing separators without an anchored quantifier.
+ *
+ * `/\/+$/` and friends backtrack across every starting offset, which is
+ * quadratic on a long run of separators (CodeQL js/polynomial-redos). These
+ * loops are linear and say the same thing.
+ */
+export function stripTrailing(value: string, ...separators: string[]): string {
+  let end = value.length;
+  while (end > 0 && separators.includes(value[end - 1] as string)) end -= 1;
+  return value.slice(0, end);
+}
+
+export function stripLeading(value: string, ...separators: string[]): string {
+  let start = 0;
+  while (start < value.length && separators.includes(value[start] as string)) start += 1;
+  return value.slice(start);
+}
+
+/**
+ * First `[[…]]` target in a line, found by scanning rather than by
+ * `/\[\[([^\]]+)\]\]/` — that pattern rescans to end of input for every `[[`
+ * it fails to close (CodeQL js/polynomial-redos).
+ */
+export function extractWikilink(line: string): string | undefined {
+  const open = line.indexOf("[[");
+  if (open === -1) return undefined;
+  const close = line.indexOf("]]", open + 2);
+  if (close === -1) return undefined;
+  const inner = line.slice(open + 2, close);
+  return inner.length > 0 ? inner : undefined;
+}
+
+const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;
+const OUTPUT_REGEX = /<!--[ \t]*ore:output:([^\s<]+)\n([\s\S]*?)-->/g;
+const CELL_ATTR_REGEX = /(?:^|[ \t])(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
 
 // =============================================================================
 // PARSER CLASS
@@ -112,7 +145,7 @@ export class WorkflowParser {
       const startLine = beforeMatch.split("\n").length;
       const endLine = startLine + rawBlock.split("\n").length - 1;
 
-      const attributes = this.parseAttributes(attrString, type, startLine);
+      const attributes = this.parseAttributes(attrString.trim(), type, startLine);
 
       cells.push({
         attributes,
@@ -245,11 +278,11 @@ export class WorkflowParser {
         const nextLine = lines[j];
         if (!nextLine.startsWith(">")) break;
 
-        const trimmed = nextLine.replace(/^>\s*/, "");
+        const trimmed = stripLeading(nextLine.slice(1), " ", "\t");
         if (trimmed.startsWith("json:")) {
-          const match = trimmed.match(/\[\[([^\]]+)\]\]/);
-          if (match?.[1]) {
-            outputPath = match[1].split("|")[0]?.trim();
+          const link = extractWikilink(trimmed);
+          if (link) {
+            outputPath = link.split("|")[0]?.trim();
           }
         } else if (trimmed.startsWith("run:")) {
           runId = trimmed.replace("run:", "").trim();
@@ -352,7 +385,7 @@ export class OutputSerializer {
 
     const artifacts = output.meta.artifacts ?? extractArtifactsFromValue(output.value);
     if (artifacts?.artifactDir) {
-      const dir = artifacts.artifactDir.replace(/\/+$/, "");
+      const dir = stripTrailing(artifacts.artifactDir, "/");
       lines.push(`> artifactDir: [[${dir}/_index.md]]`);
     }
     if (artifacts?.files?.length) {

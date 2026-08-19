@@ -18,7 +18,13 @@ import {
   DEFAULT_RUNTIME,
 } from "../types";
 import { detectRuntimes, execContainer } from "../runtime";
-import { OutputSerializer, TemplateInterpolator, WorkflowParser } from "../parser";
+import {
+  OutputSerializer,
+  TemplateInterpolator,
+  WorkflowParser,
+  stripLeading,
+  stripTrailing,
+} from "../parser";
 import { createProviderFromSettings } from "../providers";
 import { parse } from "@babel/parser";
 
@@ -728,11 +734,12 @@ function safeFileName(name: string): string {
 function normalizeOutputRoot(value: string | undefined): string {
   const fallback = "_vaultore";
   if (!value) return fallback;
-  const normalized = value
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "")
-    .trim();
+  // Anchored /+ quantifiers backtrack across every offset on a long run of
+  // slashes (CodeQL js/polynomial-redos); the helpers are linear.
+  const normalized = stripTrailing(
+    stripLeading(value.replace(/\\/g, "/"), "/"),
+    "/"
+  ).trim();
   return normalized || fallback;
 }
 
