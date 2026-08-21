@@ -87,7 +87,13 @@ jobs:
         env:
           BODY: ${{ github.event.pull_request.body }}
         run: |
-          unticked="$(printf '%s' "$BODY" | grep -nE '^[[:space:]]*- \[ \]' || true)"
+          # Blank out fenced code blocks before scanning: a PR that documents a
+          # checklist, or pastes a diff containing one, must not be blocked by its
+          # own example. Lines are blanked rather than removed so grep -n still
+          # reports the real line number.
+          unticked="$(printf '%s' "$BODY" \
+            | awk '/^[[:space:]]*```/ { f = !f; print ""; next } f { print ""; next } { print }' \
+            | grep -nE '^[[:space:]]*- \[ \]' || true)"
           if [ -n "$unticked" ]; then
             echo "::error::Unticked checkboxes remain in the PR description."
             echo "$unticked"
