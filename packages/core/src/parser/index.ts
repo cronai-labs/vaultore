@@ -27,9 +27,95 @@ import {
 // =============================================================================
 
 const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---/;
-const CELL_REGEX = /```ore:(ts|shell|ai|py|go)\s*([^\n]*)\n([\s\S]*?)```/g;
-const OUTPUT_REGEX = /<!--\s*ore:output:(\S+)\n([\s\S]*?)-->/g;
-const CELL_ATTR_REGEX = /(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
+/**
+ * Strip leading/trailing separators without an anchored quantifier.
+ *
+ * `/\/+$/` and friends backtrack across every starting offset, which is
+ * quadratic on a long run of separators (CodeQL js/polynomial-redos). These
+ * loops are linear and say the same thing.
+ */
+export function stripTrailing(value: string, ...separators: string[]): string {
+  let end = value.length;
+  while (end > 0 && separators.includes(value[end - 1] as string)) end -= 1;
+  return value.slice(0, end);
+}
+
+export function stripLeading(value: string, ...separators: string[]): string {
+  let start = 0;
+  while (start < value.length && separators.includes(value[start] as string)) start += 1;
+  return value.slice(start);
+}
+
+/**
+ * First `[[…]]` target in a line, found by scanning rather than by
+ * `/\[\[([^\]]+)\]\]/` — that pattern rescans to end of input for every `[[`
+ * it fails to close (CodeQL js/polynomial-redos).
+ */
+export function extractWikilink(line: string): string | undefined {
+  const open = line.indexOf("[[");
+  if (open === -1) return undefined;
+  const close = line.indexOf("]]", open + 2);
+  if (close === -1) return undefined;
+  const inner = line.slice(open + 2, close);
+  return inner.length > 0 ? inner : undefined;
+}
+
+const OUTPUT_OPEN = "<!--";
+const OUTPUT_MARKER = "ore:output:";
+const OUTPUT_CLOSE = "-->";
+
+/**
+ * Every `<!-- ore:output:<id> … -->` block, found by scanning.
+ *
+ * This replaced a regex: `/<!--\s*ore:output:(\S+)\n([\s\S]*?)-->/g` rescans
+ * across every following marker before failing to find its newline, which is
+ * quadratic on a note full of unterminated comments (CodeQL js/polynomial-redos
+ * — 50k of them took 16.6s). Bounding the id character class made it fast in
+ * practice but left the pattern flagged, and a scan is both linear and easier
+ * to reason about.
+ */
+export function findOutputBlocks(
+  content: string
+): Array<{ cellId: string; body: string }> {
+  const blocks: Array<{ cellId: string; body: string }> = [];
+  let cursor = 0;
+
+  while (cursor < content.length) {
+    const open = content.indexOf(OUTPUT_OPEN, cursor);
+    if (open === -1) break;
+
+    let idStart = open + OUTPUT_OPEN.length;
+    while (idStart < content.length && (content[idStart] === " " || content[idStart] === "\t")) {
+      idStart += 1;
+    }
+
+    if (!content.startsWith(OUTPUT_MARKER, idStart)) {
+      cursor = open + OUTPUT_OPEN.length;
+      continue;
+    }
+    idStart += OUTPUT_MARKER.length;
+
+    const newline = content.indexOf("\n", idStart);
+    if (newline === -1) break;
+
+    const close = content.indexOf(OUTPUT_CLOSE, newline + 1);
+    if (close === -1) break;
+
+    const cellId = content.slice(idStart, newline);
+    // The original regex required a non-whitespace id, so an empty or padded
+    // one was simply not a match.
+    if (cellId.length > 0 && !/\s/.test(cellId)) {
+      blocks.push({ cellId, body: content.slice(newline + 1, close) });
+    }
+
+    cursor = close + OUTPUT_CLOSE.length;
+  }
+
+  return blocks;
+}
+
+const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;
+const CELL_ATTR_REGEX = /(?:^|[ \t])(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
 
 // =============================================================================
 // PARSER CLASS
@@ -112,7 +198,7 @@ export class WorkflowParser {
       const startLine = beforeMatch.split("\n").length;
       const endLine = startLine + rawBlock.split("\n").length - 1;
 
-      const attributes = this.parseAttributes(attrString, type, startLine);
+      const attributes = this.parseAttributes(attrString.trim(), type, startLine);
 
       cells.push({
         attributes,
@@ -203,14 +289,9 @@ export class WorkflowParser {
   parseOutputs(content: string): Map<string, CellOutput> {
     const outputs = new Map<string, CellOutput>();
 
-    let match: RegExpExecArray | null;
-    OUTPUT_REGEX.lastIndex = 0;
-
-    while ((match = OUTPUT_REGEX.exec(content)) !== null) {
-      const [, cellId, outputContent] = match;
-
+    for (const { cellId, body } of findOutputBlocks(content)) {
       try {
-        const parsed = this.parseOutputContent(outputContent);
+        const parsed = this.parseOutputContent(body);
         outputs.set(cellId, {
           cellId,
           value: parsed.value,
@@ -245,11 +326,11 @@ export class WorkflowParser {
         const nextLine = lines[j];
         if (!nextLine.startsWith(">")) break;
 
-        const trimmed = nextLine.replace(/^>\s*/, "");
+        const trimmed = stripLeading(nextLine.slice(1), " ", "\t");
         if (trimmed.startsWith("json:")) {
-          const match = trimmed.match(/\[\[([^\]]+)\]\]/);
-          if (match?.[1]) {
-            outputPath = match[1].split("|")[0]?.trim();
+          const link = extractWikilink(trimmed);
+          if (link) {
+            outputPath = link.split("|")[0]?.trim();
           }
         } else if (trimmed.startsWith("run:")) {
           runId = trimmed.replace("run:", "").trim();
@@ -352,7 +433,7 @@ export class OutputSerializer {
 
     const artifacts = output.meta.artifacts ?? extractArtifactsFromValue(output.value);
     if (artifacts?.artifactDir) {
-      const dir = artifacts.artifactDir.replace(/\/+$/, "");
+      const dir = stripTrailing(artifacts.artifactDir, "/");
       lines.push(`> artifactDir: [[${dir}/_index.md]]`);
     }
     if (artifacts?.files?.length) {
