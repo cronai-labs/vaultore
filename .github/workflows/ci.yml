@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # `edited` matters: the policy job lints the PR title and body, so it has to
+    # re-run when either changes. `ready_for_review` re-runs the checklist step,
+    # which is skipped while the PR is a draft.
+    types: [opened, synchronize, reopened, edited, ready_for_review]
 
 # CI only reads the repository: it checks out, installs and runs the gate.
 # Nothing here publishes, comments, or writes back (CodeQL
@@ -13,6 +17,86 @@ permissions:
   contents: read
 
 jobs:
+  # Enforces the merge discipline that GitHub has no setting for.
+  #
+  # Two of these rules exist because the platform cannot express them:
+  #   - "Update with rebase" cannot be made the only option; the REST endpoint
+  #     PUT /pulls/{n}/update-branch merges and takes no rebase parameter, and the
+  #     UI dropdown ignores allow_merge_commit=false. So we detect the merge
+  #     commit instead of preventing it.
+  #   - A checklist in a PR template is a reminder, not a gate. Making it a
+  #     required check is what turns it into one — auto-merge waits for required
+  #     checks, so an unticked box cannot land.
+  #
+  # This job must never be skipped: a skipped required check blocks a PR forever
+  # and stalls a merge queue. Individual STEPS are conditional; the job is not.
+  policy:
+    name: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: PR title is a Conventional Commit
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # The PR title becomes the squash subject and therefore the changelog
+          # entry, which is why it is linted rather than the branch commits.
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
+          if ! printf '%s' "$TITLE" | grep -qE "$pattern"; then
+            echo "::error::PR title is not a Conventional Commit: '$TITLE'"
+            echo "Expected e.g. 'fix(core): surface the cell error'. It becomes the squash commit subject."
+            exit 1
+          fi
+          echo "ok: $TITLE"
+
+      - name: Branch was rebased, not merged into
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --quiet origin "$BASE_REF"
+          merges="$(git log --merges --oneline "origin/$BASE_REF..$HEAD_SHA")"
+          if [ -n "$merges" ]; then
+            echo "::error::This branch contains merge commits from its base."
+            echo "$merges"
+            echo ""
+            echo "GitHub's 'Update branch' button defaults to a merge and cannot be"
+            echo "restricted to rebase. Use instead:"
+            echo "    git fetch origin && git rebase origin/$BASE_REF"
+            echo "    git push --force-with-lease"
+            exit 1
+          fi
+          echo "ok: no merge commits between origin/$BASE_REF and $HEAD_SHA"
+
+      - name: Definition of done is complete
+        # Skipped while the PR is a draft — a draft cannot merge, so unticked
+        # boxes there are work in progress rather than a defect. Also skipped for
+        # bots, which do not use the PR template.
+        if: >-
+          github.event_name == 'pull_request'
+          && github.event.pull_request.draft == false
+          && github.event.pull_request.user.type != 'Bot'
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          unticked="$(printf '%s' "$BODY" | grep -nE '^[[:space:]]*- \[ \]' || true)"
+          if [ -n "$unticked" ]; then
+            echo "::error::Unticked checkboxes remain in the PR description."
+            echo "$unticked"
+            echo ""
+            echo "Tick them, or convert the PR back to a draft while the work continues."
+            exit 1
+          fi
+          echo "ok: no unticked checkboxes"
+
   commitlint:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
