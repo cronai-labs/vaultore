@@ -540,30 +540,34 @@ export default class VaultOrePlugin extends Plugin {
     line: number,
     options: { skipDependencies?: boolean } = {}
   ): Promise<void> {
+    // Claim the path in the same turn as the check. Reading and parsing below
+    // both await, so a check-then-later-add left a window in which a second
+    // invocation passed the guard and the cell ran twice. Every early return
+    // from here on has to release it.
     if (this.runningWorkflows.has(file.path)) {
       new Notice("VaultOre: Workflow is already running");
       return;
     }
+    this.runningWorkflows.add(file.path);
 
-    const content = await this.app.vault.read(file);
+    let content: string;
     let workflow;
+    let cell;
     try {
+      content = await this.app.vault.read(file);
       workflow = this.parser.parse(content, file.path);
+      cell = workflow.cells.find((c) => line >= c.startLine && line <= c.endLine);
     } catch (err) {
+      this.runningWorkflows.delete(file.path);
       new Notice(`VaultOre: Parse error: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
 
-    const cell = workflow.cells.find(
-      (c) => line >= c.startLine && line <= c.endLine
-    );
-
     if (!cell) {
+      this.runningWorkflows.delete(file.path);
       new Notice("VaultOre: No cell found at cursor");
       return;
     }
-
-    this.runningWorkflows.add(file.path);
     const startNotice = new Notice(`VaultOre: Running cell ${cell.attributes.id}...`, 0);
 
     try {
