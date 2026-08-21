@@ -4,7 +4,7 @@
  * BRICK-016: Basic scheduling (cron in frontmatter)
  */
 
-import cronParser from "cron-parser";
+import { CronExpressionParser } from "cron-parser";
 import { ScheduledWorkflow } from "../types";
 
 export interface SchedulerOptions {
@@ -79,6 +79,6 @@ export function computeNextRun(
   cronExpression: string,
   baseDate: Date = new Date()
 ): Date {
-  const interval = cronParser.parseExpression(cronExpression, { currentDate: baseDate });
+  const interval = CronExpressionParser.parse(cronExpression, { currentDate: baseDate });
   return interval.next().toDate();
 }
