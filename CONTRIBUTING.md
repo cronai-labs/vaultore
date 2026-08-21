@@ -27,6 +27,32 @@ See the [Plugin Development Quickstart](docs/quickstart-plugin-dev.md) for loadi
 
 Core-first rule: all logic lives in `@vaultore/core`; the plugin only adapts it to Obsidian APIs via the `PlatformAdapter` interface.
 
+## Pull Requests
+
+`main` is protected: squash merge only, linear history, and CI must pass. The mechanics that
+are easy to get wrong:
+
+**Open the PR as a draft while the work is in progress.** A draft cannot be merged at all, which
+is what stops auto-merge landing something unfinished. Mark it ready only once the linked
+issue's task boxes are ticked and the gate below has actually been run.
+
+**Update a branch by rebasing, never by merging.** GitHub's *Update branch* button offers
+"Update with merge commit" and "Update with rebase" and there is no repository setting to remove
+the first, so this is enforced by CI instead — the `policy` job fails on any merge commit
+between the base and your head. Use:
+
+```bash
+git fetch origin && git rebase origin/main
+git push --force-with-lease          # never a bare --force
+```
+
+**The PR title is linted, not your branch commits.** It becomes the squash commit subject and
+therefore the changelog entry, so it must be a Conventional Commit. Write branch commits for
+whoever reads the PR.
+
+**Tick the Definition of done.** Those boxes are checked by CI once the PR leaves draft; an
+unticked box fails `policy` and blocks the merge.
+
 ## Commit Conventions
 
 This repo uses [Conventional Commits](https://www.conventionalcommits.org/), enforced by commitlint in CI. The type does not bump the version automatically — see [Release Process](#release-process) — but it does drive the generated release notes, so write the subject for someone reading the changelog.
