@@ -113,16 +113,29 @@ pre-1.0 a breaking change bumps the minor rather than jumping to 1.0.0), syncs e
 version location, regenerates `CHANGELOG.md`, then commits and tags. It refuses to run
 on a dirty tree, off `main`, or when nothing since the last tag warrants a release.
 
-Nothing is pushed. Review, then publish:
+It also refuses when the new version's `CHANGELOG.md` section has no entries, because that
+section becomes the release notes.
+
+Nothing is pushed. Review, then push the commit and the tag together:
 
 ```bash
 git show HEAD --stat
-git push origin main 0.2.0
+git push --atomic origin main 0.2.0
 ```
 
-Pushing the tag runs [`release.yml`](.github/workflows/release.yml), which re-verifies the
-tag against both manifests and `versions.json`, builds and tests, then publishes a GitHub
-release with `main.js`, `manifest.json` and `styles.css` attached.
+`--atomic` makes the push all or nothing: if `main` is rejected, the tag is not created
+either, so a release can never be built from a commit that is not on `main`.
+
+Pushing the tag runs [`release.yml`](.github/workflows/release.yml). It waits until the
+tagged commit is on `main` and its `ci-required` check has passed, re-verifies the tag
+against both manifests and `versions.json`, builds, tests, typechecks and lints, then
+creates a draft release with `main.js`, `manifest.json` and `styles.css`, attests their
+build provenance, checks the uploaded files against the build and publishes it. The
+release notes are the version's `CHANGELOG.md` section.
+
+Releases are immutable once published: neither the assets nor the tag can change. A
+re-run never replaces an asset. It succeeds only if the published files are identical to
+the build; anything else needs a new version.
 
 This deliberately needs no GitHub Actions permission to open pull requests — the release is
 prepared on your machine and CI only reacts to the tag.

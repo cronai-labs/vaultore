@@ -1,15 +1,13 @@
 name: Release Obsidian Plugin
 
-# The release path. Releases are cut by pushing a semver tag:
+# Publishes the GitHub release for a pushed X.Y.Z tag. The procedure that cuts
+# a release is documented once, in CONTRIBUTING.md ("Release Process"); this
+# workflow only checks and publishes.
 #
-#   bun run version:bump 0.2.0
-#   git commit -am "chore(release): 0.2.0"
-#   git tag 0.2.0 && git push origin main 0.2.0
-#
-# The tag must equal manifest.json's version — Obsidian's community-plugin
-# tooling matches releases to the manifest by exact version, and a mismatch
-# produces a release the directory cannot consume. The verify step below fails
-# the run rather than publishing one.
+# The tag must equal manifest.json's version, with no "v" prefix: that is the
+# release Obsidian's community directory reads (obsidian-sample-plugin README,
+# "Releasing new releases"). The build job refuses a tag that disagrees with
+# either manifest or with versions.json rather than publishing it.
 
 on:
   push:
@@ -71,12 +69,12 @@ jobs:
 
           if [ "$tag" != "$manifest" ] || [ "$tag" != "$plugin" ]; then
             echo "::error::Tag '$tag' does not match manifest.json ('$manifest') or packages/obsidian/manifest.json ('$plugin')."
-            echo "Run 'bun run version:bump $tag', commit, then re-tag."
+            echo "Cut releases with 'bun run release' (CONTRIBUTING.md, Release Process)."
             exit 1
           fi
 
           if ! node -e "process.exit(require('./versions.json')['$tag'] ? 0 : 1)"; then
-            echo "::error::versions.json has no entry for '$tag'. Run 'bun run version:bump $tag'."
+            echo "::error::versions.json has no entry for '$tag'. Cut releases with 'bun run release', which adds it."
             exit 1
           fi
 

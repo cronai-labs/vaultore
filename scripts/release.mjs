@@ -7,12 +7,14 @@
  *
  * Derives the next version with git-cliff (see cliff.toml), syncs every version
  * location via version-bump.mjs, regenerates CHANGELOG.md, then commits and
- * tags. Nothing is pushed — review the commit, then:
+ * tags. Nothing is pushed — review the commit, then push both in one go:
  *
- *   git push origin main <version>
+ *   git push --atomic origin main <version>
  *
- * Pushing the tag runs .github/workflows/release.yml, which re-verifies the tag
- * against the manifests before publishing.
+ * --atomic makes the push all or nothing: if main is rejected, the tag is not
+ * created either, so no release can be built from a commit that is not on
+ * main. Pushing the tag runs .github/workflows/release.yml, which re-verifies
+ * the tag against the manifests and CI before publishing.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -123,7 +125,7 @@ console.log(`
 Released ${version} locally. Review it, then publish:
 
   git show HEAD --stat
-  git push origin main ${version}
+  git push --atomic origin main ${version}
 
 To undo before pushing:
 
