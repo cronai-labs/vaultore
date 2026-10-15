@@ -116,9 +116,6 @@ setting applies.
 Open the note and run **VaultOre: Run all cells** from the command palette (`Cmd+P` /
 `Ctrl+P`). No hotkeys are set by default; assign them under **Settings → Hotkeys**.
 
-The first run asks about `buildNetwork`, which the fixture does not set; nothing uses it, so
-either answer works. The answer is remembered until the note changes.
-
 After a few seconds each cell has a callout under it:
 
 ```markdown

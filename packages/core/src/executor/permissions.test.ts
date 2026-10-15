@@ -243,6 +243,14 @@ describe("grants are bound to the note's content (#69)", () => {
 		return { ...v, prompts, runNote };
 	}
 
+	it("does not ask about buildNetwork, which nothing uses yet (#95)", async () => {
+		const s = session(async () => true);
+		await s.runNote(GRANTED.replace("  buildNetwork: deny\n", ""));
+		expect(s.prompts).toHaveLength(1);
+		expect(s.prompts[0]).toContain("network");
+		expect(s.prompts[0]).not.toContain("buildNetwork");
+	});
+
 	it("does not ask again for the same content", async () => {
 		const s = session(async () => true);
 		await s.runNote(GRANTED);
