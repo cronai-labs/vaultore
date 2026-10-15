@@ -48,7 +48,7 @@ const parser = new WorkflowParser();
  */
 export function stripTrailing(value: string, ...separators: string[]): string {
 	let end = value.length;
-	while (end > 0 && separators.includes(value[end - 1] as string)) end -= 1;
+	while (end > 0 && separators.includes(value[end - 1])) end -= 1;
 	return value.slice(0, end);
 }
 
@@ -114,10 +114,10 @@ export function buildScheduleManifest(
 				name: d.workflow.frontmatter.name,
 				schedule: String(d.workflow.frontmatter.schedule),
 				...(d.workflow.frontmatter.runtime
-					? { runtime: d.workflow.frontmatter.runtime as Record<string, unknown> }
+					? { runtime: d.workflow.frontmatter.runtime }
 					: {}),
 				...(d.workflow.frontmatter.permissions
-					? { permissions: d.workflow.frontmatter.permissions as Record<string, unknown> }
+					? { permissions: d.workflow.frontmatter.permissions }
 					: {}),
 				contentSha256: d.contentSha256,
 			})),
