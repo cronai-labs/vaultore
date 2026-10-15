@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildRunCommand, detectRuntimes, DETECTION_TIMEOUT_MS } from "./index";
+import { join, posix, win32 } from "node:path";
+import {
+  buildRunCommand,
+  detectRuntimes,
+  DETECTION_TIMEOUT_MS,
+  searchPathEntries,
+} from "./index";
 import type { ContainerExecOptions } from "../types";
 
 const baseOptions: ContainerExecOptions = {
@@ -132,5 +137,24 @@ describe("detectRuntimes", () => {
 
   it("has a default probe timeout", () => {
     expect(DETECTION_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+});
+
+describe("searchPathEntries", () => {
+  it("splits a Windows PATH on ';' and keeps drive letters intact", () => {
+    expect(
+      searchPathEntries("C:\\Program Files\\Docker\\bin;C:\\Windows;", win32.delimiter)
+    ).toEqual(["C:\\Program Files\\Docker\\bin", "C:\\Windows"]);
+  });
+
+  it("splits a POSIX PATH on ':'", () => {
+    expect(searchPathEntries("/usr/local/bin::/usr/bin", posix.delimiter)).toEqual([
+      "/usr/local/bin",
+      "/usr/bin",
+    ]);
+  });
+
+  it("treats an unset PATH as empty", () => {
+    expect(searchPathEntries(undefined)).toEqual([]);
   });
 });

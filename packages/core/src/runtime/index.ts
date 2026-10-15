@@ -7,7 +7,7 @@
 
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   RuntimeDetection,
   RuntimeEngine,
@@ -252,14 +252,24 @@ function runCommand(
   });
 }
 
+/**
+ * The directories of a `PATH` value. The separator is the platform's (`;` on
+ * Windows, where `:` also appears in drive letters), not a hardcoded `:`.
+ */
+export function searchPathEntries(
+  pathValue: string | undefined,
+  separator: string = delimiter
+): string[] {
+  return (pathValue ?? "").split(separator).filter(Boolean);
+}
+
 function resolveCommandPath(command: string): string {
   if (command.includes("/") || command.includes("\\")) {
     return command;
   }
 
   const candidates: string[] = [];
-  const pathEntries = (process.env.PATH ?? "").split(":").filter(Boolean);
-  for (const entry of pathEntries) {
+  for (const entry of searchPathEntries(process.env.PATH)) {
     candidates.push(join(entry, command));
   }
 
