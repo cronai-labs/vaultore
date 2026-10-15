@@ -15,6 +15,21 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # Majors held back on purpose. Each entry names what has to change before
+    # it is removed; checked with npm view on 2026-10-15.
+    ignore:
+      # eslint-plugin-obsidianmd (0.4.2) declares @eslint/js ^9.30.1 as a peer
+      # and is not yet known to work with ESLint 10. Remove both entries once
+      # a release of the plugin supports ESLint 10.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      # @babel/parser 8 is ESM-only ("type": "module", no require export),
+      # and @vaultore/core also ships a CommonJS build that requires it.
+      # Revisit after the first release.
+      - dependency-name: "@babel/parser"
+        update-types: ["version-update:semver-major"]
     groups:
       dev-dependencies:
         dependency-type: "development"
