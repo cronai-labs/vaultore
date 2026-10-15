@@ -266,6 +266,32 @@ export interface Cell {
 }
 
 /**
+ * An HTTP request sent through {@link PlatformAdapter.request}.
+ */
+export interface PlatformRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+  /**
+   * Core bounds every request by this many milliseconds whatever the
+   * transport does; a transport that can abort (fetch) should abort at the
+   * same point so the connection is released.
+   */
+  timeoutMs: number;
+}
+
+/**
+ * The answer to a {@link PlatformRequest}. Every HTTP status resolves,
+ * 4xx and 5xx included, so the caller can report the body; only a
+ * transport failure (no connection, timeout) rejects.
+ */
+export interface PlatformResponse {
+  status: number;
+  text: string;
+}
+
+/**
  * Output metadata stored with cell results
  */
 export interface OutputMeta {
@@ -423,6 +449,12 @@ export interface PlatformAdapter {
   getSecret(key: string): Promise<string | undefined>;
   setSecret(key: string, value: string): Promise<void>;
   deleteSecret(key: string): Promise<void>;
+
+  // HTTP (optional). AI providers send through this when present and through
+  // global `fetch` otherwise. The Obsidian plugin needs it: `fetch` from the
+  // renderer carries a browser Origin and is subject to CORS, `requestUrl`
+  // is not.
+  request?(request: PlatformRequest): Promise<PlatformResponse>;
 
   // UI (optional)
   showNotification?(

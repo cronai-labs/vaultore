@@ -12,6 +12,7 @@
  * - Secrets come from environment variables, never from files:
  *   `openai.apiKey`    → VAULTORE_OPENAI_APIKEY (fallback OPENAI_API_KEY)
  *   `anthropic.apiKey` → VAULTORE_ANTHROPIC_APIKEY (fallback ANTHROPIC_API_KEY)
+ * - HTTP for AI providers goes through global fetch (core's fetchRequest).
  * - Permission prompts are non-interactive: grants require an explicit
  *   `--yes` (fail closed otherwise), and decisions persist to config.
  */
@@ -19,7 +20,8 @@
 import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { PlatformAdapter } from "@vaultore/core";
+import { fetchRequest } from "@vaultore/core";
+import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
 
 const SKIP_DIRS = new Set([".git", ".obsidian", ".trash", "node_modules"]);
 
@@ -131,6 +133,13 @@ export class NodeAdapter implements PlatformAdapter {
 		throw new Error(
 			`Secrets are environment-managed in the CLI. Unset ${this.envNamesFor(key)[0]} instead.`
 		);
+	}
+
+	// ── HTTP ──────────────────────────────────────────────────────────────
+
+	/** Node has no CORS to get around: provider calls use global fetch. */
+	request(request: PlatformRequest): Promise<PlatformResponse> {
+		return fetchRequest(request);
 	}
 
 	// ── UI ────────────────────────────────────────────────────────────────

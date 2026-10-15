@@ -4,7 +4,14 @@
  * BRICK-007/008/009: AI provider abstraction
  */
 
-import { AIProvider, CompletionRequest, CompletionResponse, PlatformAdapter } from "../types";
+import {
+  AIProvider,
+  CompletionRequest,
+  CompletionResponse,
+  PlatformAdapter,
+  PlatformRequest,
+  PlatformResponse,
+} from "../types";
 
 // =============================================================================
 // WIRE FORMATS
@@ -48,6 +55,58 @@ function timeoutMsFor(platform: PlatformAdapter): number {
       ? configured
       : DEFAULT_AI_TIMEOUT_SECONDS;
   return seconds * 1000;
+}
+
+/**
+ * The transport for adapters without a `request` capability (the CLI passes
+ * this as its own). The abort signal releases the connection on timeout.
+ */
+export async function fetchRequest(request: PlatformRequest): Promise<PlatformResponse> {
+  const response = await fetch(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+    signal: AbortSignal.timeout(request.timeoutMs),
+  });
+  // Read the body here too: the abort signal stays attached to the body
+  // stream, so a body that stalls after the headers arrive is bounded as well.
+  return { status: response.status, text: await response.text() };
+}
+
+/**
+ * Send through the adapter when it can, and bound the call in core: Obsidian's
+ * `requestUrl` takes no abort signal, and an adapter that ignored `timeoutMs`
+ * would otherwise stall the workflow again.
+ */
+async function send(
+  platform: PlatformAdapter,
+  request: PlatformRequest,
+  provider: string,
+  model: string
+): Promise<PlatformResponse> {
+  const startedAt = Date.now();
+  const transport = platform.request
+    ? (req: PlatformRequest) => platform.request!(req)
+    : fetchRequest;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`Request exceeded ${request.timeoutMs}ms`);
+      err.name = "TimeoutError";
+      reject(err);
+    }, request.timeoutMs);
+  });
+  try {
+    return await Promise.race([transport(request), deadline]);
+  } catch (err) {
+    throw describeRequestFailure(err, provider, model, startedAt, request.timeoutMs);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function isSuccess(status: number): boolean {
+  return status >= 200 && status < 300;
 }
 
 /**
@@ -128,35 +187,24 @@ export function createOpenAIProvider(platform: PlatformAdapter): AIProvider {
         }
       }
 
-      const timeoutMs = timeoutMsFor(platform);
-      const startedAt = Date.now();
-      let response: Response;
-      try {
-        response = await fetch("https://api.openai.com/v1/chat/completions", {
+      const response = await send(
+        platform,
+        {
+          url: "https://api.openai.com/v1/chat/completions",
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-      } catch (err) {
-        throw describeRequestFailure(err, "OpenAI", request.model, startedAt, timeoutMs);
-      }
+          timeoutMs: timeoutMsFor(platform),
+        },
+        "OpenAI",
+        request.model
+      );
+      const bodyText = response.text;
 
-      // Read the body inside the guard too: the abort signal stays attached to
-      // the body stream, so a response whose headers arrive and whose body
-      // stalls would otherwise reject with the bare error this module exists to
-      // replace — and on the !ok path would lose the status code entirely.
-      let bodyText: string;
-      try {
-        bodyText = await response.text();
-      } catch (err) {
-        throw describeRequestFailure(err, "OpenAI", request.model, startedAt, timeoutMs);
-      }
-
-      if (!response.ok) {
+      if (!isSuccess(response.status)) {
         throw new Error(`OpenAI error: ${response.status} ${bodyText || "<empty body>"}`);
       }
 
@@ -208,11 +256,10 @@ export function createAnthropicProvider(platform: PlatformAdapter): AIProvider {
       }
 
       const maxTokens = request.maxTokens ?? 800;
-      const timeoutMs = timeoutMsFor(platform);
-      const startedAt = Date.now();
-      let response: Response;
-      try {
-        response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await send(
+        platform,
+        {
+          url: "https://api.anthropic.com/v1/messages",
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -227,20 +274,14 @@ export function createAnthropicProvider(platform: PlatformAdapter): AIProvider {
               : {}),
             messages: [{ role: "user", content: request.prompt }],
           }),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-      } catch (err) {
-        throw describeRequestFailure(err, "Anthropic", request.model, startedAt, timeoutMs);
-      }
+          timeoutMs: timeoutMsFor(platform),
+        },
+        "Anthropic",
+        request.model
+      );
+      const bodyText = response.text;
 
-      let bodyText: string;
-      try {
-        bodyText = await response.text();
-      } catch (err) {
-        throw describeRequestFailure(err, "Anthropic", request.model, startedAt, timeoutMs);
-      }
-
-      if (!response.ok) {
+      if (!isSuccess(response.status)) {
         throw new Error(`Anthropic error: ${response.status} ${bodyText || "<empty body>"}`);
       }
 

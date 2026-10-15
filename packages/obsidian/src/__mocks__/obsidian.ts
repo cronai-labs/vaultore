@@ -1,6 +1,11 @@
 // Minimal mock of the Obsidian API for unit testing.
 // Only the types/classes that VaultOre actually uses are mocked.
 
+import { vi } from "vitest";
+
+/** Tests set the response with `vi.mocked(requestUrl).mockResolvedValue(...)`. */
+export const requestUrl = vi.fn();
+
 export class Plugin {
   app: any = {
     vault: {

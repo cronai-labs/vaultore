@@ -23,6 +23,7 @@ vi.mock("@vaultore/core", () => ({
 
 // Import the plugin — obsidian is aliased via vitest.config.ts
 const { default: VaultOrePlugin } = await import("./main");
+const { requestUrl } = await import("obsidian");
 
 describe("VaultOrePlugin", () => {
   let plugin: InstanceType<typeof VaultOrePlugin>;
@@ -151,6 +152,47 @@ describe("VaultOrePlugin", () => {
       plugin.app.secretStorage = null as any;
       // getSecret returns undefined when storage is missing
       // (the adapter checks for this)
+    });
+  });
+
+  describe("HTTP requests (#78)", () => {
+    // requestUrl runs outside the renderer's CORS; global fetch from the
+    // renderer carries a browser Origin that Anthropic rejects.
+    const request = {
+      url: "https://api.anthropic.com/v1/messages",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": "k" },
+      body: "{}",
+      timeoutMs: 120_000,
+    };
+
+    function send(req: typeof request) {
+      return (plugin as unknown as {
+        adapter: { request?: (r: typeof request) => Promise<unknown> };
+      }).adapter.request!(req);
+    }
+
+    it("sends through requestUrl without throwing on an error status", async () => {
+      vi.mocked(requestUrl).mockReset();
+      vi.mocked(requestUrl).mockResolvedValue({ status: 401, text: "invalid x-api-key" } as never);
+
+      const response = await send(request);
+
+      expect(requestUrl).toHaveBeenCalledWith({
+        url: request.url,
+        method: "POST",
+        headers: request.headers,
+        body: "{}",
+        throw: false,
+      });
+      expect(response).toEqual({ status: 401, text: "invalid x-api-key" });
+    });
+
+    it("lets a transport failure reject for core to describe", async () => {
+      vi.mocked(requestUrl).mockReset();
+      vi.mocked(requestUrl).mockRejectedValue(new Error("net::ERR_NAME_NOT_RESOLVED"));
+
+      await expect(send(request)).rejects.toThrow("net::ERR_NAME_NOT_RESOLVED");
     });
   });
 
