@@ -266,8 +266,7 @@ export class WorkflowExecutor {
         "error"
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return buildOutput(cell.attributes.id, message, start, "error");
+      return buildOutput(cell.attributes.id, messageOf(err), start, "error");
     }
   }
 }
@@ -348,9 +347,8 @@ async function resolvePermissions(
     ...frontmatter.permissions,
   };
 
-  const stored = (platform.getSetting<Record<string, StoredDecision>>(
-    "vaultore.permissionDecisions"
-  ) ?? {}) as Record<string, StoredDecision>;
+  const stored =
+    platform.getSetting<Record<string, StoredDecision>>("vaultore.permissionDecisions") ?? {};
 
   // A decision applies only to the content it was given for. Without this, one
   // grant covered every later version of the file at that path — an edit
@@ -584,6 +582,15 @@ async function createRunContext(
 }
 
 /**
+ * The message of a thrown value: an Error's message, anything else as a
+ * string. Takes `unknown` on purpose: a caught value narrowed by a check such
+ * as `!== undefined` is typed `{}`, which hides that it can be anything.
+ */
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
  * Close out run.json with a terminal status and a per-cell summary.
  *
  * Best effort: a failure to write the record must not mask whatever error is
@@ -626,7 +633,7 @@ export async function finalizeRunContext(
             : {}),
           status,
           ...(runError !== undefined
-            ? { error: runError instanceof Error ? runError.message : String(runError) }
+            ? { error: messageOf(runError) }
             : {}),
           cells,
         },
@@ -1052,8 +1059,7 @@ async function executeAICell(
       try {
         return await platform.readFile(path);
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        throw new Error(`Cannot read {{note:${path}}}: ${reason}`);
+        throw new Error(`Cannot read {{note:${path}}}: ${messageOf(err)}`);
       }
     }
   );

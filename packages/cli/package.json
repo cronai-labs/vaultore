@@ -15,7 +15,7 @@
 		"dev": "tsup --watch",
 		"test": "vitest --run --passWithNoTests",
 		"typecheck": "tsc --noEmit",
-		"lint": "eslint ."
+		"lint": "cd ../.. && eslint --config packages/cli/eslint.config.mjs packages/cli"
 	},
 	"dependencies": {
 		"@vaultore/core": "workspace:*"
@@ -24,6 +24,7 @@
 		"@eslint/js": "^9.39.4",
 		"@types/node": "^26.2.0",
 		"eslint": "^9.39.4",
+		"eslint-plugin-obsidianmd": "^0.4.0",
 		"globals": "^17.11.0",
 		"tsup": "^8.0.0",
 		"typescript-eslint": "^8.67.0",
