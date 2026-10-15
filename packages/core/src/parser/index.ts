@@ -505,7 +505,10 @@ export class TemplateInterpolator {
     outputs: Map<string, CellOutput>,
     readNote: (path: string) => Promise<string>
   ): Promise<string> {
-    const pattern = /\{\{note:([^}]+)\}\}|\{\{([\w-]+)\}\}/g;
+    // `[^{}]`, not `[^}]`: a path cannot run into the next `{{`, so each match
+    // attempt stops at the next brace and the scan stays linear
+    // (js/polynomial-redos).
+    const pattern = /\{\{note:([^{}]+)\}\}|\{\{([\w-]+)\}\}/g;
 
     const notes = new Map<string, string>();
     for (const match of content.matchAll(pattern)) {
