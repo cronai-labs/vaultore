@@ -49,7 +49,7 @@ export const DEFAULT_PERMISSIONS: WorkflowPermissions = {
  * - docker/podman: standard OCI runtimes (Linux, macOS, Windows via WSL2)
  * - colima: docker-compatible runtime on macOS (uses the docker CLI)
  * - apple: Apple's `container` CLI (macOS 26+, Apple silicon) — runs each
- *   container in a lightweight VM; network isolation not yet supported
+ *   container in a lightweight VM; `network: deny` maps to `--network none`
  */
 export type RuntimeEngine = "docker" | "podman" | "colima" | "apple";
 
@@ -95,6 +95,15 @@ export interface ContainerExecOptions {
   networkEnabled?: boolean;
   mounts?: ContainerMount[];
   stdin?: string;
+  /** `uid:gid` the cell runs as; defaults to `containerUser()`. */
+  user?: string;
+  /** Process cap; defaults to `DEFAULT_PIDS_LIMIT`. Ignored by Apple container. */
+  pidsLimit?: number;
+  /**
+   * Container paths hidden behind an empty read-only tmpfs. Each must exist
+   * under a mount, or the engine has to create the mount point.
+   */
+  maskedPaths?: string[];
 }
 
 /**

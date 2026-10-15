@@ -943,6 +943,30 @@ function vaultMounts(
   ];
 }
 
+/**
+ * Vault directories no cell may see, even under a full vault mount. Obsidian's
+ * config directory holds this plugin's code and settings: a cell granted
+ * vaultWrite could otherwise rewrite the plugin that runs it (#28).
+ */
+const HIDDEN_VAULT_DIRS = [".obsidian"];
+
+/**
+ * Container paths to cover with an empty read-only tmpfs. Only under the full
+ * vault mount, the only one that reaches them, and only for directories that
+ * exist: masking a missing one would make the engine create it in the vault.
+ */
+async function maskedVaultPaths(
+  platform: PlatformAdapter,
+  permissions: Pick<ResolvedPermissions, "vaultRead">
+): Promise<string[]> {
+  if (!permissions.vaultRead) return [];
+  const masked: string[] = [];
+  for (const dir of HIDDEN_VAULT_DIRS) {
+    if (await platform.exists(dir)) masked.push(`/workspace/${dir}`);
+  }
+  return masked;
+}
+
 async function executeTypeScriptCell(
   cell: Cell,
   platform: PlatformAdapter,
@@ -972,6 +996,7 @@ async function executeTypeScriptCell(
     cpuLimit: runtime.cpuLimit,
     networkEnabled: permissions.network,
     mounts: vaultMounts(vaultRoot, permissions, runContext),
+    maskedPaths: await maskedVaultPaths(platform, permissions),
   };
 
   const result = await execContainer(runtime.engine, containerOpts);
@@ -1003,11 +1028,12 @@ async function executeShellCell(
   runContext: RunContext
 ): Promise<string> {
   const vaultRoot = await platform.getVaultRoot();
-  const image = "alpine:3.19";
   const command = ["sh", "-lc", cell.content];
 
+  // The same image as `ore:ts`: a note that sets `runtime.image` gets it for
+  // every cell. The default, oven/bun:1-alpine, ships busybox `sh`.
   const containerOpts: ContainerExecOptions = {
-    image,
+    image: runtime.image,
     command,
     workdir: "/workspace",
     env: {
@@ -1020,6 +1046,7 @@ async function executeShellCell(
     cpuLimit: runtime.cpuLimit,
     networkEnabled: permissions.network,
     mounts: vaultMounts(vaultRoot, permissions, runContext),
+    maskedPaths: await maskedVaultPaths(platform, permissions),
   };
 
   const result = await execContainer(runtime.engine, containerOpts);

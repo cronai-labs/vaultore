@@ -7,7 +7,7 @@
 
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   RuntimeDetection,
   RuntimeEngine,
@@ -19,19 +19,41 @@ import {
 // RUNTIME DETECTION
 // =============================================================================
 
-export async function detectRuntimes(): Promise<RuntimeDetection> {
+/**
+ * How long one engine probe may take before detection reports that engine as
+ * unavailable. Without a bound, a wedged daemon hangs the run forever (#26).
+ * `colima status` is the slowest probe, since it asks the VM; it answers in
+ * about a second when healthy. Override per call with `timeoutMs`.
+ */
+export const DETECTION_TIMEOUT_MS = 10_000;
+
+export interface DetectRuntimesOptions {
+  /** Per-probe timeout; defaults to `DETECTION_TIMEOUT_MS`. */
+  timeoutMs?: number;
+}
+
+export async function detectRuntimes(
+  options: DetectRuntimesOptions = {}
+): Promise<RuntimeDetection> {
   const engines: RuntimeEngine[] = ["docker", "podman", "colima", "apple"];
+  const timeoutMs = options.timeoutMs ?? DETECTION_TIMEOUT_MS;
   const available: RuntimeEngine[] = [];
   const errors = new Map<RuntimeEngine, string>();
 
-  for (const engine of engines) {
-    try {
-      await detectEngine(engine);
+  // Probed in parallel so a slow engine does not delay the others; results are
+  // collected in the fixed order above, which decides `preferred`.
+  const results = await Promise.allSettled(
+    engines.map((engine) => detectEngine(engine, timeoutMs))
+  );
+  results.forEach((result, index) => {
+    const engine = engines[index] as RuntimeEngine;
+    if (result.status === "fulfilled") {
       available.push(engine);
-    } catch (err) {
+    } else {
+      const err: unknown = result.reason;
       errors.set(engine, err instanceof Error ? err.message : String(err));
     }
-  }
+  });
 
   return {
     available,
@@ -40,19 +62,43 @@ export async function detectRuntimes(): Promise<RuntimeDetection> {
   };
 }
 
-async function detectEngine(engine: RuntimeEngine): Promise<void> {
+async function detectEngine(engine: RuntimeEngine, timeoutMs: number): Promise<void> {
   if (engine === "colima") {
-    await runCommand("colima", ["status"]);
+    await probe("colima", ["status"], timeoutMs);
     return;
   }
 
   if (engine === "apple") {
+    // Windows ships a `container.exe` alias for WSL containers, so a binary of
+    // that name is Apple's CLI only on macOS.
+    if (process.platform !== "darwin") {
+      throw new Error("Apple container is available only on macOS");
+    }
     // Apple's `container` CLI requires its background service to be running
-    await runCommand("container", ["system", "status"]);
+    await probe("container", ["system", "status"], timeoutMs);
     return;
   }
 
-  await runCommand(engine, ["version"]);
+  await probe(engine, ["version"], timeoutMs);
+}
+
+/**
+ * An engine is available only when its probe exits 0 in time. `docker version`
+ * against a stopped daemon still prints the client version, so output alone
+ * proves nothing.
+ */
+async function probe(command: string, args: string[], timeoutMs: number): Promise<void> {
+  const invocation = [command, ...args].join(" ");
+  const result = await runCommand(command, args, undefined, timeoutMs);
+  if (result.timedOut) {
+    throw new Error(`\`${invocation}\` did not answer within ${timeoutMs} ms`);
+  }
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim();
+    throw new Error(
+      `\`${invocation}\` exited with code ${result.exitCode}` + (detail ? `: ${detail}` : "")
+    );
+  }
 }
 
 // =============================================================================
@@ -76,26 +122,89 @@ export async function execContainer(
   };
 }
 
+/**
+ * Process cap per cell container. It stops a fork bomb from exhausting the
+ * host or VM while leaving ample room for ordinary tools (a Bun cell runs a
+ * handful of processes). Override per call with `pidsLimit`.
+ */
+export const DEFAULT_PIDS_LIMIT = 256;
+
+/**
+ * The only writable path in the container's own filesystem, which is
+ * otherwise read-only. Also HOME: a uid without a passwd entry gets HOME=/,
+ * and Bun writes its install cache under $HOME, failing with EROFS instead of
+ * the real error.
+ */
+export const CONTAINER_TMP = "/tmp";
+
+const TMP_TMPFS = `${CONTAINER_TMP}:rw,noexec,nosuid,nodev,mode=1777`;
+const MASK_TMPFS_OPTIONS = "ro,noexec,nosuid,nodev";
+
+/**
+ * The user a cell runs as when the host offers no usable uid: Windows has no
+ * POSIX ids, and a host running as root must not run cells as root. 65534 is
+ * `nobody` in common base images. Writes into the vault may then fail on
+ * permissions, which surfaces as a cell error.
+ */
+export const FALLBACK_CONTAINER_USER = "65534:65534";
+
+/**
+ * The host's `uid:gid`, so files a cell writes through a read-write vault mount
+ * belong to the vault's owner on Linux. On macOS the VM's file share maps
+ * ownership to the host user whatever the container uid, and the host uid is
+ * the owner the share presents the files as, so permission checks inside the
+ * VM pass.
+ */
+export function containerUser(
+  ids: { uid: number | undefined; gid: number | undefined } = {
+    uid: process.getuid?.(),
+    gid: process.getgid?.(),
+  }
+): string {
+  if (ids.uid === undefined || ids.gid === undefined || ids.uid === 0) {
+    return FALLBACK_CONTAINER_USER;
+  }
+  return `${ids.uid}:${ids.gid}`;
+}
+
+/**
+ * Every cell container runs with a read-only root filesystem, a tmpfs /tmp,
+ * no capabilities and a non-root user. Docker, Podman and Colima (docker CLI)
+ * also get no-new-privileges and a pids limit; Apple's `container` CLI has no
+ * flag for either and its micro-VM is the boundary there.
+ */
 export function buildRunCommand(
   engine: RuntimeEngine,
   options: ContainerExecOptions
 ): { command: string; args: string[] } {
   const runtime = engineBinary(engine);
+  const apple = engine === "apple";
   const args: string[] = ["run", "--rm"];
 
   if (!options.networkEnabled) {
-    if (engine === "apple") {
-      // Apple's container CLI has no --network=none equivalent yet; every
-      // container gets its own network interface. Fail closed rather than
-      // silently running a network-denied workflow with network access.
-      throw new Error(
-        "Apple container does not support disabling network access yet. " +
-          "Use Docker or Podman for workflows with 'network: deny', or set " +
-          "'permissions.network: allow' in the workflow frontmatter."
-      );
+    if (apple) {
+      // `--network none` attaches no network at all (apple/container #739,
+      // since 0.6). Never an `--internal` network: those still allow
+      // outbound TCP (apple/container #2062).
+      args.push("--network", "none");
+    } else {
+      args.push("--network=none");
     }
-    args.push("--network=none");
   }
+
+  const user = options.user ?? containerUser();
+  args.push("--read-only", "--tmpfs", TMP_TMPFS);
+  if (apple) {
+    args.push("--cap-drop", "ALL", "--user", user);
+  } else {
+    args.push(
+      "--cap-drop=ALL",
+      "--security-opt=no-new-privileges",
+      `--pids-limit=${options.pidsLimit ?? DEFAULT_PIDS_LIMIT}`,
+      `--user=${user}`
+    );
+  }
+  args.push("-e", `HOME=${CONTAINER_TMP}`);
 
   if (options.stdin) {
     args.push("-i");
@@ -126,6 +235,12 @@ export function buildRunCommand(
     }
   }
 
+  // After the mounts they cover: Docker sorts mounts by depth anyway, but an
+  // engine that mounts in argument order would otherwise bury the tmpfs.
+  for (const path of options.maskedPaths ?? []) {
+    args.push("--tmpfs", `${path}:${MASK_TMPFS_OPTIONS}`);
+  }
+
   args.push(options.image);
   args.push(...options.command);
 
@@ -151,6 +266,8 @@ interface CommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /** The command was killed after `timeoutMs`; `exitCode` is then 1. */
+  timedOut: boolean;
 }
 
 function runCommand(
@@ -165,6 +282,14 @@ function runCommand(
     let stdout = "";
     let stderr = "";
     let timeout: NodeJS.Timeout | undefined;
+    let settled = false;
+
+    const settle = (result: Omit<CommandResult, "stdout" | "stderr">) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      resolve({ ...result, stdout, stderr });
+    };
 
     if (stdin) {
       child.stdin.write(stdin);
@@ -181,19 +306,35 @@ function runCommand(
     if (timeoutMs > 0) {
       timeout = setTimeout(() => {
         child.kill("SIGKILL");
+        // Settle now rather than on "close": a killed CLI's helper processes
+        // can hold its stdout open long after it is gone.
+        child.stdout.destroy();
+        child.stderr.destroy();
+        settle({ exitCode: 1, timedOut: true });
       }, timeoutMs);
     }
 
-    child.on("error", reject);
-    child.on("close", (code) => {
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
       if (timeout) clearTimeout(timeout);
-      resolve({
-        exitCode: code ?? 1,
-        stdout,
-        stderr,
-      });
+      reject(err);
+    });
+    child.on("close", (code) => {
+      settle({ exitCode: code ?? 1, timedOut: false });
     });
   });
+}
+
+/**
+ * The directories of a `PATH` value. The separator is the platform's (`;` on
+ * Windows, where `:` also appears in drive letters), not a hardcoded `:`.
+ */
+export function searchPathEntries(
+  pathValue: string | undefined,
+  separator: string = delimiter
+): string[] {
+  return (pathValue ?? "").split(separator).filter(Boolean);
 }
 
 function resolveCommandPath(command: string): string {
@@ -202,8 +343,7 @@ function resolveCommandPath(command: string): string {
   }
 
   const candidates: string[] = [];
-  const pathEntries = (process.env.PATH ?? "").split(":").filter(Boolean);
-  for (const entry of pathEntries) {
+  for (const entry of searchPathEntries(process.env.PATH)) {
     candidates.push(join(entry, command));
   }
 

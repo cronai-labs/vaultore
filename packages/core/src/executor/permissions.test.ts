@@ -43,7 +43,8 @@ function vault(files: Record<string, string>) {
 		writeFile: async (path: string, content: string) => {
 			files[path] = content;
 		},
-		exists: async (path: string) => path in files,
+		exists: async (path: string) =>
+			path in files || Object.keys(files).some((file) => file.startsWith(`${path}/`)),
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
 		getVaultRoot: async () => "/vault",
@@ -293,4 +294,89 @@ describe("grants are bound to the note's content (#69)", () => {
 		await s.runNote(GRANTED);
 		expect(s.prompts).toHaveLength(1);
 	});
+});
+
+describe("container image (#26)", () => {
+	async function imageFor(type: "ts" | "shell", runtime: string) {
+		vi.mocked(execContainer).mockResolvedValue({
+			exitCode: 0,
+			stdout: "1",
+			stderr: "",
+		} as never);
+		const content = `---
+ore: true
+name: repro
+${runtime}permissions:
+  network: deny
+---
+
+\`\`\`ore:${type} id=c
+1
+\`\`\`
+`;
+		const { workflow } = await run(content);
+		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as { image: string };
+		return opts.image;
+	}
+
+	for (const type of ["ts", "shell"] as const) {
+		it(`${type}: runs the default image when the note sets none`, async () => {
+			expect(await imageFor(type, "")).toBe("oven/bun:1-alpine");
+		});
+
+		it(`${type}: runs the note's runtime.image`, async () => {
+			expect(await imageFor(type, "runtime:\n  image: example/custom:2\n")).toBe(
+				"example/custom:2"
+			);
+		});
+	}
+});
+
+describe(".obsidian is hidden from cells (#28)", () => {
+	const PLUGIN = { ".obsidian/plugins/vaultore/data.json": "{}" };
+
+	async function maskedFor(
+		type: "ts" | "shell",
+		read: string,
+		write: string,
+		files: Record<string, string>
+	) {
+		vi.mocked(execContainer).mockResolvedValue({
+			exitCode: 0,
+			stdout: "1",
+			stderr: "",
+		} as never);
+		const { workflow } = await run(
+			note(
+				`  network: deny\n  vaultRead: ${read}\n  vaultWrite: ${write}`,
+				`\`\`\`ore:${type} id=c\n1\n\`\`\``
+			),
+			files
+		);
+		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as { maskedPaths?: string[] };
+		return opts.maskedPaths ?? [];
+	}
+
+	for (const type of ["ts", "shell"] as const) {
+		for (const write of ["deny", "allow"]) {
+			it(`${type}: masks /workspace/.obsidian under the full vault mount (vaultWrite: ${write})`, async () => {
+				expect(await maskedFor(type, "allow", write, PLUGIN)).toEqual(["/workspace/.obsidian"]);
+			});
+		}
+
+		it(`${type}: masks nothing when the vault is not mounted`, async () => {
+			expect(await maskedFor(type, "deny", "deny", PLUGIN)).toEqual([]);
+		});
+
+		it(`${type}: masks nothing when only the run directory is mounted`, async () => {
+			expect(await maskedFor(type, "deny", "allow", PLUGIN)).toEqual([]);
+		});
+
+		it(`${type}: masks nothing in a vault without .obsidian`, async () => {
+			// Masking a missing directory would make the engine create it in the vault.
+			expect(await maskedFor(type, "allow", "allow", {})).toEqual([]);
+		});
+	}
 });
