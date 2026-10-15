@@ -9,5 +9,6 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    setupFiles: ["../core/src/testing/no-network.ts"],
   },
 });
