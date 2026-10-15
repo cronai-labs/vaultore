@@ -135,7 +135,7 @@ VaultOre is core-first: the engine is editor-agnostic, and Obsidian is one of se
 
 - **Standalone CLI** — `vaultore run <workflow.md>` executes any workflow headless, no Obsidian required; `vaultore agent` is a local scheduler daemon ([@vaultore/cli](packages/cli), build from source — not on npm yet)
 - **CronAI handover** — `vaultore schedules export` emits a manifest that hands scheduled jobs to always-on CronAI infrastructure ([spec](specs/cronai-handover-spec.md))
-- **Open Knowledge Format** — run outputs and artifact indexes are [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.1 concepts out of the box, so any OKF consumer can ingest VaultOre's output tree as an agent-ready knowledge bundle
+- **Open Knowledge Format** — run outputs and artifact indexes are [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.2 concepts out of the box, so any OKF consumer can ingest VaultOre's output tree as an agent-ready knowledge bundle
 - **Obsidian CLI & Quarto** — composes with the official Obsidian CLI (1.12+) and maps cleanly onto Quarto's QMD cells; a `quarto-vaultore` engine extension is planned
 
 Details in [docs/interoperability.md](docs/interoperability.md).

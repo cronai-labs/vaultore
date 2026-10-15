@@ -72,11 +72,14 @@ semantics are specified in
 Google released OKF v0.1 in June 2026
 ([announcement](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/),
 [spec](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md),
-Apache 2.0): an open specification for agent-ready knowledge as **markdown
-files with YAML frontmatter**, organized in directory "bundles", linked
-into a graph — only `type` is required; `title`, `description`,
-`resource`, `tags`, `timestamp` are recommended; unknown fields must be
-preserved.
+Apache 2.0) and v0.2 in July 2026: an open specification for agent-ready
+knowledge as **markdown files with YAML frontmatter**, organized in
+directory "bundles", linked into a graph with standard markdown links —
+only `type` is required; `title`, `description`, `resource`, `tags` are
+recommended; unknown fields must be preserved. v0.2 adds provenance
+(`generated: { by, at }`, which supersedes v0.1's `timestamp`), trust
+(`verified`) and lifecycle (`status: draft | stable | deprecated`,
+`stale_after`), with every timestamp an ISO 8601 datetime with an offset.
 
 ### Impact assessment
 
@@ -88,11 +91,13 @@ interchange target:
    frontmatter'd markdown with links. The deltas are small: OKF requires a
    `type` field per concept and uses standard markdown links, where
    Obsidian favors `[[wikilinks]]`.
-2. **VaultOre run outputs are now OKF concepts** (shipped). Output views
-   and artifact indexes carry `type`, `title`, `description`,
-   `timestamp`, and `tags` in their frontmatter, so the `_vaultore/`
-   output tree is consumable by any OKF consumer — including Google's
-   reference enrichment agent — with zero conversion.
+2. **VaultOre run outputs are now OKF v0.2 concepts** (shipped). Output
+   views and artifact indexes carry `type`, `title`, `description`,
+   `tags` and `generated: { by: vaultore/<version>, at }` in their
+   frontmatter; the cell's run state is `cellStatus`, leaving `status` to
+   OKF's lifecycle, and artifact indexes link their files with markdown
+   links. The `_vaultore/` output tree is consumable by any OKF consumer —
+   including Google's reference enrichment agent — with zero conversion.
 3. **Workflows can produce and consume knowledge bundles.** An `ore:ts`
    cell can read an OKF bundle as structured context for `ore:ai` cells
    today (it's just files); a first-class `vault.okf.*` helper and an

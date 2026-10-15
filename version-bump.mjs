@@ -75,7 +75,7 @@ updateJson("versions.json", (versions) => {
 });
 
 // 7. The VERSION constant the CLI and library report at runtime
-const versionModule = "packages/core/src/index.ts";
+const versionModule = "packages/core/src/version.ts";
 const source = readFileSync(versionModule, "utf8");
 const pattern = /^export const VERSION = "\d+\.\d+\.\d+";$/m;
 
