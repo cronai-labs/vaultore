@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { execContainer } from "../runtime";
+import { resolveInVaultRoot } from "../vault/confine";
 import type { PlatformAdapter, RuntimeEngine } from "../types";
 
 /** The engine the integration tests run on. colima unless overridden. */
@@ -55,6 +56,7 @@ export function filesystemPlatform(
 		},
 		listFiles: async () => [],
 		getVaultRoot: async () => root,
+		resolveInVault: (path: string) => resolveInVaultRoot(root, path),
 		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
 			settings.set(key, value);
@@ -74,11 +76,14 @@ export function filesystemPlatform(
  * Wait until a container sees `path` with exactly `expected` in it.
  *
  * On colima (QEMU, sshfs mount) a container can read a file the host has just
- * rewritten with its old size: the new text cut off where the old text ended.
- * Seen in the smart-inbox test after a container's write and a host edit:
- * stale for 0.3-0.9 s of polling, and a fixed 1.5 s delay before the run was
- * not enough. A test that edits a note between container cells waits here
- * rather than guessing a delay.
+ * rewritten with its old size: the new text cut off where the old text ended
+ * (#83). Seen in the smart-inbox test after a host edit: stale for 0.3-0.9 s
+ * of polling, and a fixed 1.5 s delay before the run was not enough.
+ *
+ * `vault.write` no longer persists such a copy: the host refuses a write whose
+ * base is not the note on disk. A cell that only reads still sees it, so a test
+ * that asserts what a cell read after a host edit waits here rather than
+ * guessing a delay.
  */
 export async function waitForContainerView(
 	root: string,

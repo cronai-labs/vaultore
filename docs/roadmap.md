@@ -65,9 +65,10 @@ Everything in this section is in the code on `main`. The specs describe each par
 ## Next: the first release, 0.1.0
 
 - [#83](https://github.com/cronai-labs/vaultore/issues/83): Colima with sshfs file sharing
-  can serve a container a stale copy of a note; a read-modify-write cell can truncate it.
-  `vault.write` becomes a host-applied write that is refused when the note changed since the
-  cell read it.
+  can serve a container a stale copy of a note. `vault.write` is now applied by the host and
+  refused when the note changed since the cell read it, so a stale copy is never saved; reads,
+  shell cells and raw writes through the mount stay exposed
+  ([#124](https://github.com/cronai-labs/vaultore/issues/124)).
 - A live test in a real vault (AI providers through Obsidian's `requestUrl`, the secret
   selection, the settings screens), then the release and the submission to the Obsidian
   community directory.
@@ -129,6 +130,8 @@ in principle; the order is not fixed. Grouped:
   ([#121](https://github.com/cronai-labs/vaultore/issues/121)), the provider switch keeping
   the old default model ([#115](https://github.com/cronai-labs/vaultore/issues/115)),
   fixtures ([#120](https://github.com/cronai-labs/vaultore/issues/120)).
+- Stale container reads beyond `vault.write`
+  ([#124](https://github.com/cronai-labs/vaultore/issues/124)).
 - Platform coverage for Windows and rootless engines
   ([#122](https://github.com/cronai-labs/vaultore/issues/122)); the adapter contract
   ([#117](https://github.com/cronai-labs/vaultore/issues/117)); formatting

@@ -55,7 +55,11 @@ export class WorkflowExecutor {
 
   async runWorkflow(options: ExecuteOptions): Promise<Workflow> {
     const workflow = this.parser.parse(options.content, options.workflowPath);
-    const runContext = await createRunContext(options.platform, workflow.path);
+    const platform = confinedPlatform(options.platform);
+    // Before any cell runs: the output is written back into this note, which
+    // is refused when its path leads out of the vault through a link.
+    await platform.resolveInVault(workflow.path);
+    const runContext = await createRunContext(platform, workflow.path);
 
     const outputs = new Map<string, CellOutput>(workflow.outputs);
     let updatedContent = workflow.rawContent;
@@ -71,7 +75,7 @@ export class WorkflowExecutor {
     // just wrote stuck at "running" forever.
     try {
       const permissions = await resolvePermissions(
-        options.platform,
+        platform,
         workflow.path,
         workflow.frontmatter,
         await grantHash(this.parser, workflow)
@@ -79,7 +83,7 @@ export class WorkflowExecutor {
 
       const engineChoice = resolveEngine(
         workflow.frontmatter.runtime?.engine,
-        options.platform.getSetting<string>("vaultore.runtimeEngine")
+        platform.getSetting<string>("vaultore.runtimeEngine")
       );
       const runtime = {
         ...DEFAULT_RUNTIME,
@@ -99,7 +103,7 @@ export class WorkflowExecutor {
         : orderedCells;
       await hydrateOutputsFromStubs(
         this.parser,
-        options.platform,
+        platform,
         workflow.rawContent,
         outputs
       );
@@ -108,7 +112,7 @@ export class WorkflowExecutor {
         options.emitEvent?.("cell:started", { cellId: cell.attributes.id });
         const result = await this.runCell({
           cell,
-          platform: options.platform,
+          platform: platform,
           permissions,
           outputs,
           runtime,
@@ -116,7 +120,7 @@ export class WorkflowExecutor {
         });
 
         const outputPath = await persistCellOutput(
-          options.platform,
+          platform,
           runContext,
           workflow.path,
           result
@@ -128,7 +132,7 @@ export class WorkflowExecutor {
         ran.push(cell.attributes.id);
 
         updatedContent = await this.writeBackOutput(
-          options.platform,
+          platform,
           workflow.path,
           updatedContent,
           result
@@ -141,7 +145,7 @@ export class WorkflowExecutor {
       runError = err;
       throw err;
     } finally {
-      await finalizeRunContext(options.platform, runContext, ran, outputs, runError);
+      await finalizeRunContext(platform, runContext, ran, outputs, runError);
     }
 
     return {
@@ -274,6 +278,39 @@ export class WorkflowExecutor {
 // =============================================================================
 // EXECUTION HELPERS
 // =============================================================================
+
+/**
+ * The platform as the executor uses it: every vault path it reads, writes,
+ * tests or creates goes through `resolveInVault` first. Cells can plant
+ * symbolic links through their mount, and the host follows them where the
+ * container could not: a link to `~/.ssh` would otherwise let `vault.write`,
+ * `{{note:}}`, the output files or the note's write-back reach outside the
+ * vault. Paths that pass are used as resolved, so no link is followed again.
+ */
+function confinedPlatform(platform: PlatformAdapter): PlatformAdapter {
+  if (typeof (platform as Partial<PlatformAdapter>).resolveInVault !== "function") {
+    throw new Error(
+      "This platform cannot check where a vault path leads (it has no resolveInVault), " +
+        "so VaultOre does not read or write vault files through it."
+    );
+  }
+  const resolve = (path: string) => platform.resolveInVault(path.replace(/^[\\/]+/, ""));
+  const confined: Partial<PlatformAdapter> = {
+    readFile: async (path) => platform.readFile(await resolve(path)),
+    writeFile: async (path, content) => platform.writeFile(await resolve(path), content),
+    exists: async (path) => platform.exists(await resolve(path)),
+    mkdirp: async (path) => platform.mkdirp(await resolve(path)),
+  };
+  return new Proxy(platform, {
+    get(target, prop) {
+      if (typeof prop === "string" && prop in confined) {
+        return confined[prop as keyof typeof confined];
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
 
 interface ResolvedPermissions {
   network: boolean;
@@ -656,10 +693,19 @@ async function hydrateOutputsFromStubs(
   for (const [cellId, stub] of stubs.entries()) {
     if (outputs.has(cellId)) continue;
     if (!stub.outputPath) continue;
-    if (!(await platform.exists(stub.outputPath))) continue;
+
+    // The link in the note is text a cell can rewrite, and the path may lead
+    // through a symbolic link a cell planted: the platform refuses those.
+    let raw: string;
+    try {
+      if (!(await platform.exists(stub.outputPath))) continue;
+      raw = await platform.readFile(stub.outputPath);
+    } catch (err) {
+      platform.log("warn", `Not reading the recorded output of ${cellId}: ${messageOf(err)}`);
+      continue;
+    }
 
     try {
-      const raw = await platform.readFile(stub.outputPath);
       const record = JSON.parse(raw) as {
         cellId?: string;
         value?: unknown;
@@ -852,16 +898,6 @@ async function ensureArtifactIndex(
   );
 }
 
-function extractVaultoreOutput(stdout: string): { found: boolean; payload: string } {
-  const match = stdout.match(
-    /__VAULTORE_OUTPUT_START__\s*([\s\S]*?)\s*__VAULTORE_OUTPUT_END__/
-  );
-  if (!match?.[1]) {
-    return { found: false, payload: "" };
-  }
-  return { found: true, payload: match[1].trim() };
-}
-
 /**
  * What of the vault a container sees. The mount is the enforcement: the TS
  * runtime's `vault.read` check runs inside the cell, which can bypass it
@@ -911,6 +947,16 @@ const HIDDEN_VAULT_DIRS = [".obsidian"];
 const VAULTORE_STATE_DIR = ".vaultore";
 
 /**
+ * The directory hidden from cells that a vault-relative path lies in, if any.
+ * Case-insensitive: on a case-insensitive file system `.Obsidian` is
+ * `.obsidian`.
+ */
+function hiddenDirOf(path: string): string | undefined {
+  const top = (path.split(/[\\/]/).find((segment) => segment !== "" && segment !== ".") ?? "").toLowerCase();
+  return [...HIDDEN_VAULT_DIRS, VAULTORE_STATE_DIR].includes(top) ? top : undefined;
+}
+
+/**
  * Container paths to cover with an empty read-only tmpfs. Only under the full
  * vault mount, the only one that reaches them.
  */
@@ -928,6 +974,292 @@ async function maskedVaultPaths(
   return masked;
 }
 
+// =============================================================================
+// VAULT WRITES, APPLIED BY THE HOST (#83)
+// =============================================================================
+
+/**
+ * `vault.write` in a TS cell does not write through the mount. The cell
+ * collects its writes and hands them over after its output (see
+ * parseCellStdout); the host applies them once the container has exited
+ * successfully.
+ *
+ * Why: a cell that reads a note and writes it back can persist a stale copy.
+ * Colima's sshfs sharing can show a container a file the host just rewrote
+ * cut off at its old length (#83), and on any engine the user may edit the
+ * note while the cell runs. Each write carries the hash of what the cell read
+ * from that path (`base`); the host compares it with the note as it is now
+ * and refuses the cell's writes when they differ.
+ */
+
+/**
+ * What the cell knew of a path when it wrote it: the SHA-256 of the text it
+ * last read there, that it found nothing there, or nothing at all (`null`: a
+ * blind write, which the host applies as given).
+ */
+type WriteBase = { sha256: string } | { absent: true } | null;
+
+interface PendingVaultWrite {
+  path: string;
+  content: string;
+  base: WriteBase;
+}
+
+function handOffError(detail: string): Error {
+  return new Error(
+    `The cell's vault.write hand-off is malformed (${detail}); none of its writes were applied.`
+  );
+}
+
+/**
+ * The lines that frame a TS cell's output and its writes on stdout. Each run
+ * of a cell gets its own random nonce in them, so text the cell logs (a
+ * fetched page, a note) cannot pass for a block: it would have to contain
+ * this nonce, which only the cell's own code can know (#125).
+ */
+interface CellFrame {
+  outputStart: string;
+  outputEnd: string;
+  writesStart: string;
+  writesEnd: string;
+}
+
+function newCellFrame(): CellFrame {
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
+  return {
+    outputStart: `__VAULTORE_OUTPUT_START_${nonce}__`,
+    outputEnd: `__VAULTORE_OUTPUT_END_${nonce}__`,
+    writesStart: `__VAULTORE_WRITES_START_${nonce}__`,
+    writesEnd: `__VAULTORE_WRITES_END_${nonce}__`,
+  };
+}
+
+function frameError(detail: string): Error {
+  return new Error(
+    `The cell's output framing is broken (${detail}); none of its writes were applied.`
+  );
+}
+
+/**
+ * A TS cell's value and pending writes from its stdout. The runtime prints
+ * the output block (start line, the value as one line of JSON, end line) and
+ * then the writes block (the same shape, a list of writes); JSON.stringify
+ * never emits a raw newline, so a marker can only match a whole line.
+ *
+ * Exactly one output block and at most one writes block, after it, are
+ * accepted; anything else carrying this run's nonce fails the cell. Lines
+ * without the nonce are the cell's own logging and are ignored. Stdout with
+ * no framing at all, as from a cell that exited early, is taken whole as the
+ * value and applies no writes.
+ */
+function parseCellStdout(
+  stdout: string,
+  frame: CellFrame
+): { value: unknown; writes: PendingVaultWrite[] } {
+  const lines = stdout.split("\n").map((line) => line.replace(/\r$/, ""));
+  const at = (marker: string) =>
+    lines.flatMap((line, index) => (line === marker ? [index] : []));
+  const outputStart = at(frame.outputStart);
+  const outputEnd = at(frame.outputEnd);
+  const writesStart = at(frame.writesStart);
+  const writesEnd = at(frame.writesEnd);
+
+  if (outputStart.length + outputEnd.length + writesStart.length + writesEnd.length === 0) {
+    const whole = stdout.trim();
+    try {
+      return { value: JSON.parse(whole), writes: [] };
+    } catch {
+      return { value: whole, writes: [] };
+    }
+  }
+
+  const [start] = outputStart;
+  if (outputStart.length !== 1 || outputEnd.length !== 1 || start === undefined || outputEnd[0] !== start + 2) {
+    throw frameError("expected exactly one output block");
+  }
+  const payload = lines[start + 1] ?? "";
+  let value: unknown;
+  try {
+    value = JSON.parse(payload);
+  } catch {
+    value = payload;
+  }
+
+  if (writesStart.length === 0 && writesEnd.length === 0) return { value, writes: [] };
+  const [writes] = writesStart;
+  if (
+    writesStart.length !== 1 ||
+    writesEnd.length !== 1 ||
+    writes === undefined ||
+    writes < start + 3 ||
+    writesEnd[0] !== writes + 2
+  ) {
+    throw frameError("expected at most one writes block, after the output block");
+  }
+  return { value, writes: parsePendingWrites(lines[writes + 1] ?? "") };
+}
+
+function parsePendingWrites(line: string): PendingVaultWrite[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    throw handOffError("not JSON");
+  }
+  if (!Array.isArray(parsed)) throw handOffError("not a list");
+
+  const seen = new Set<string>();
+  return parsed.map((entry: unknown, i) => {
+    const write = entry as Partial<PendingVaultWrite> | null;
+    if (!write || typeof write.path !== "string" || typeof write.content !== "string") {
+      throw handOffError(`entry ${i} needs a path and text content`);
+    }
+    if (!isWriteBase(write.base)) throw handOffError(`entry ${i} has an invalid base`);
+    if (seen.has(write.path)) throw handOffError(`${write.path} appears twice`);
+    seen.add(write.path);
+    return { path: write.path, content: write.content, base: write.base };
+  });
+}
+
+function isWriteBase(base: unknown): base is WriteBase {
+  if (base === null) return true;
+  if (!base || typeof base !== "object") return false;
+  const record = base as Record<string, unknown>;
+  if (record.absent === true) return Object.keys(record).length === 1;
+  return (
+    Object.keys(record).length === 1 &&
+    typeof record.sha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(record.sha256)
+  );
+}
+
+/**
+ * SHA-256 of a note's text, hex. A leading byte-order mark is left out on both
+ * sides: Bun's `text()` drops it, Node's `readFile` keeps it.
+ */
+async function textSha256(text: string): Promise<string> {
+  const unmarked = text.startsWith("\uFEFF") ? text.slice(1) : text;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(unmarked));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The vault-relative path a write may go to, or an error saying why not. The
+ * host is the enforcement point for `vault.write`: the runtime's own checks
+ * run inside the cell, which can hand over anything.
+ */
+function writablePath(
+  path: string,
+  permissions: Pick<ResolvedPermissions, "vaultRead" | "vaultWrite">,
+  runDir: string
+): string {
+  if (!permissions.vaultWrite) {
+    throw new Error(`Vault write permission denied: ${path}`);
+  }
+  if (/^[\\/]/.test(path) || /^[A-Za-z]:/.test(path)) {
+    throw new Error(`Vault write outside the vault refused: ${path}`);
+  }
+  const segments = path.split(/[\\/]/).filter((segment) => segment !== "" && segment !== ".");
+  if (segments.length === 0 || segments.includes("..")) {
+    throw new Error(`Vault write outside the vault refused: ${JSON.stringify(path)}`);
+  }
+  const hidden = hiddenDirOf(segments.join("/"));
+  if (hidden) {
+    throw new Error(`Vault write into ${hidden}/ refused: ${path}`);
+  }
+
+  const rel = segments.join("/");
+  if (!permissions.vaultRead && rel !== runDir && !rel.startsWith(`${runDir}/`)) {
+    throw new Error(
+      `Vault write outside this run's directory (${runDir}) needs vaultRead: ${path}`
+    );
+  }
+  return rel;
+}
+
+/**
+ * Apply a cell's writes, all or none. Every path and every base is checked
+ * before the first write, so a refusal leaves the vault as the cell found it.
+ * A write without a base is applied as given.
+ *
+ * The check and the write are separate calls, so an edit landing in between
+ * (milliseconds, against the seconds a container runs) is not caught.
+ */
+async function applyVaultWrites(
+  platform: PlatformAdapter,
+  permissions: Pick<ResolvedPermissions, "vaultRead" | "vaultWrite">,
+  runContext: Pick<RunContext, "runDir">,
+  writes: readonly PendingVaultWrite[]
+): Promise<void> {
+  if (writes.length === 0) return;
+
+  const checked = writes.map((write) => ({
+    ...write,
+    path: writablePath(write.path, permissions, runContext.runDir),
+  }));
+
+  // Where each path really leads, before anything is read or written: a cell
+  // can plant a symbolic link through the mount. The rules above apply again
+  // to the real path, so an in-vault link cannot reach .obsidian/ either.
+  const resolved: PendingVaultWrite[] = [];
+  for (const write of checked) {
+    let real: string;
+    try {
+      real = await platform.resolveInVault(write.path);
+    } catch (err) {
+      throw new Error(
+        `Vault write refused: ${messageOf(err)}. None of this cell's writes were applied.`
+      );
+    }
+    const path = writablePath(real, permissions, runContext.runDir);
+    if (resolved.some((other) => other.path === path)) {
+      throw new Error(
+        `Vault write refused: ${write.path} is ${path}, which this cell also writes under another path. ` +
+          "None of this cell's writes were applied."
+      );
+    }
+    resolved.push({ ...write, path });
+  }
+
+  const conflicts: string[] = [];
+  for (const write of resolved) {
+    if (write.base === null) continue;
+    const present = await platform.exists(write.path);
+    if ("absent" in write.base) {
+      if (present) conflicts.push(`${write.path} exists now; the cell found it missing`);
+      continue;
+    }
+    if (!present) {
+      conflicts.push(`${write.path} no longer exists`);
+      continue;
+    }
+    const current = await platform.readFile(write.path);
+    if ((await textSha256(current)) !== write.base.sha256) {
+      conflicts.push(`${write.path} changed since this cell read it`);
+    }
+  }
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Vault write refused: ${conflicts.join("; ")}. ` +
+        "Either the note was edited during the run, or the container saw a stale copy of it (#83). " +
+        "None of this cell's writes were applied; run it again."
+    );
+  }
+
+  const applied: string[] = [];
+  for (const write of resolved) {
+    try {
+      await platform.writeFile(write.path, write.content);
+    } catch (err) {
+      const done = applied.length > 0 ? `already written: ${applied.join(", ")}` : "nothing was written before it";
+      throw new Error(`Vault write to ${write.path} failed: ${messageOf(err)} (${done}).`);
+    }
+    applied.push(write.path);
+  }
+}
+
 async function executeTypeScriptCell(
   cell: Cell,
   platform: PlatformAdapter,
@@ -937,10 +1269,11 @@ async function executeTypeScriptCell(
   runContext: RunContext
 ): Promise<unknown> {
   const vaultRoot = await platform.getVaultRoot();
-  const runtimeScript = buildTypeScriptRuntime(outputs, permissions, runContext);
+  const frame = newCellFrame();
+  const runtimeScript = buildTypeScriptRuntime(outputs, permissions, runContext, frame);
   const { body, lastExpression } = extractLastExpression(cell.content);
 
-  const script = `${runtimeScript}\n\nconst __vaultore_value = await (async () => {\n${body}\nreturn ${lastExpression};\n})();\nconst __vaultore_payload = JSON.stringify(__vaultore_value);\nconsole.log("__VAULTORE_OUTPUT_START__");\nconsole.log(__vaultore_payload);\nconsole.log("__VAULTORE_OUTPUT_END__");\n`;
+  const script = `${runtimeScript}\n\nconst __vaultore_value = await (async () => {\n${body}\nreturn ${lastExpression};\n})();\nconst __vaultore_payload = JSON.stringify(__vaultore_value);\nconsole.log(${JSON.stringify(frame.outputStart)});\nconsole.log(__vaultore_payload);\nconsole.log(${JSON.stringify(frame.outputEnd)});\n__vaultore_handOff();\n`;
 
   const containerOpts: ContainerExecOptions = {
     image: runtime.image,
@@ -965,20 +1298,11 @@ async function executeTypeScriptCell(
     throw new Error(result.stderr.trim() || `ts cell failed: exit ${result.exitCode}`);
   }
 
-  const extracted = extractVaultoreOutput(result.stdout);
-  if (extracted.found) {
-    try {
-      return JSON.parse(extracted.payload);
-    } catch {
-      return extracted.payload;
-    }
-  }
-
-  try {
-    return JSON.parse(result.stdout.trim());
-  } catch {
-    return result.stdout.trim();
-  }
+  // Only a cell that succeeded gets its writes applied: one that failed part
+  // way leaves the vault as it was.
+  const { value, writes } = parseCellStdout(result.stdout, frame);
+  await applyVaultWrites(platform, permissions, runContext, writes);
+  return value;
 }
 
 async function executeShellCell(
@@ -1057,7 +1381,15 @@ async function executeAICell(
         throw new Error(`Vault read permission denied: {{note:${path}}}`);
       }
       try {
-        return await platform.readFile(path);
+        // .obsidian/ and .vaultore/ are hidden from cells (#28, #94): the
+        // plugin's settings and the CLI's stored decisions must not reach a
+        // provider either. Checked on the real path, after any link.
+        const real = await platform.resolveInVault(path);
+        const hidden = hiddenDirOf(real);
+        if (hidden) {
+          throw new Error(`${hidden}/ is hidden from cells`);
+        }
+        return await platform.readFile(real);
       } catch (err) {
         throw new Error(`Cannot read {{note:${path}}}: ${messageOf(err)}`);
       }
@@ -1077,7 +1409,8 @@ async function executeAICell(
 function buildTypeScriptRuntime(
   outputs: Map<string, CellOutput>,
   permissions: ResolvedPermissions,
-  runContext: RunContext
+  runContext: RunContext,
+  frame: Pick<CellFrame, "writesStart" | "writesEnd">
 ): string {
   const outputsJson = JSON.stringify(
     Object.fromEntries(
@@ -1110,16 +1443,18 @@ function cell(id) {
   return __vaultore_outputs[id];
 }
 
-// Advisory only: the mounts are the enforcement (see vaultMounts). These
-// checks turn a doomed access into a clear error. Without vaultRead only this
-// run's directory is mounted, so a write elsewhere would land in the
-// container's own filesystem and vanish.
+// Advisory: these checks turn a doomed access into a clear error where the
+// cell made it. The mounts enforce reads (see vaultMounts); the host enforces
+// vault.write, which it applies itself (applyVaultWrites).
 const __vaultore_permissions = { vaultRead: ${vaultRead}, vaultWrite: ${vaultWrite} };
+function __vaultore_rel(path) {
+  return String(path).replace(/^\\//, "");
+}
 function __vaultore_writable(path) {
   if (!__vaultore_permissions.vaultWrite) {
     throw new Error("Vault write permission denied");
   }
-  const rel = path.replace(/^\\//, "");
+  const rel = __vaultore_rel(path);
   if (__vaultore_permissions.vaultRead) return "/workspace/" + rel;
   const inRun = rel === vaultore.runDir || rel.startsWith(vaultore.runDir + "/");
   if (!inRun || rel.split("/").includes("..")) {
@@ -1129,21 +1464,76 @@ function __vaultore_writable(path) {
   }
   return "/workspace/" + rel;
 }
+
+// vault.write does not write through the mount: it records the write, and the
+// host applies it after the cell succeeded, provided the note still holds what
+// this cell read from it (#83). __vaultore_bases holds what the cell last saw
+// on disk per path: the SHA-256 of the text it read, or that nothing was there.
+const __vaultore_pending = new Map();
+const __vaultore_bases = new Map();
+let __vaultore_handedOff = false;
+function __vaultore_sha256(text) {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(text.startsWith("\\uFEFF") ? text.slice(1) : text);
+  return hasher.digest("hex");
+}
+function __vaultore_handOff() {
+  console.log(${JSON.stringify(frame.writesStart)});
+  console.log(JSON.stringify(Array.from(__vaultore_pending.values())));
+  console.log(${JSON.stringify(frame.writesEnd)});
+  __vaultore_handedOff = true;
+}
+// A cell that ends with process.exit() never reaches the hand-off; fail it
+// rather than drop its writes without a word.
+process.on("exit", () => {
+  if (__vaultore_handedOff || __vaultore_pending.size === 0) return;
+  require("node:fs").writeSync(
+    2,
+    "The cell exited before VaultOre could apply its " + __vaultore_pending.size +
+      " vault.write call(s); nothing was written. Do not call process.exit() in a TS cell.\\n"
+  );
+  process.exitCode = 1;
+});
 const vault = {
   async read(path) {
     if (!__vaultore_permissions.vaultRead) {
       throw new Error("Vault read permission denied");
     }
-    return await Bun.file("/workspace/" + path.replace(/^\\//, "")).text();
+    const rel = __vaultore_rel(path);
+    const pending = __vaultore_pending.get(rel);
+    if (pending) return pending.content;
+    let text;
+    try {
+      text = await Bun.file("/workspace/" + rel).text();
+    } catch (err) {
+      if (err && err.code === "ENOENT") __vaultore_bases.set(rel, { absent: true });
+      throw err;
+    }
+    __vaultore_bases.set(rel, { sha256: __vaultore_sha256(text) });
+    return text;
   },
   async write(path, content) {
-    await Bun.write(__vaultore_writable(path), content);
+    __vaultore_writable(path);
+    if (typeof content !== "string") {
+      throw new TypeError(
+        "vault.write takes text; got " + (content === null ? "null" : typeof content) + ": " + path
+      );
+    }
+    const rel = __vaultore_rel(path);
+    // A second write to the same path keeps the base of the first: the cell
+    // has not seen the note on disk since.
+    const base = __vaultore_pending.get(rel)?.base ?? __vaultore_bases.get(rel) ?? null;
+    __vaultore_pending.set(rel, { path: rel, content, base });
   },
   async exists(path) {
     if (!__vaultore_permissions.vaultRead) {
       throw new Error("Vault read permission denied");
     }
-    return await Bun.file("/workspace/" + path.replace(/^\\//, "")).exists();
+    const rel = __vaultore_rel(path);
+    if (__vaultore_pending.has(rel)) return true;
+    const found = await Bun.file("/workspace/" + rel).exists();
+    if (!found) __vaultore_bases.set(rel, { absent: true });
+    return found;
   },
   async mkdirp(path) {
     const proc = Bun.spawn(["mkdir", "-p", __vaultore_writable(path)]);

@@ -187,7 +187,8 @@ and loading it in the next is a proposed feature
 `vault.read(cell("path"))`.
 
 `{{note:path}}` is a vault read. Under `vaultRead: deny`, or when the note cannot be read, the
-cell fails before anything is sent.
+cell fails before anything is sent; that includes a path that leads out of the vault through a
+symbolic link, or ends in one (permissions-spec §3.4).
 
 ---
 
@@ -220,16 +221,50 @@ x + y;          // output: 3
 | Global | Behaviour |
 |--------|-----------|
 | `cell(id)` | The output value of cell `id`, from this run or, if it did not run, from its last recorded output. Throws if there is none. Declare the cell in `depends` so this cell waits for it and does not run when it failed |
-| `vault.read(path)` | Reads `/workspace/<path>`. Needs `vaultRead` |
-| `vault.exists(path)` | Needs `vaultRead` |
-| `vault.write(path, content)` | Writes through the mount, not through Obsidian. Needs `vaultWrite`; without `vaultRead`, only inside this run's directory |
-| `vault.mkdirp(path)` | Same rule as `vault.write` |
+| `vault.read(path)` | Reads `/workspace/<path>`, or this cell's pending write to it. Needs `vaultRead` |
+| `vault.exists(path)` | True for this cell's pending writes. Needs `vaultRead` |
+| `vault.write(path, content)` | Records a write of the string `content`; the host applies it after the cell (below). Needs `vaultWrite`; without `vaultRead`, only inside this run's directory |
+| `vault.mkdirp(path)` | Creates the directory through the mount. Same rule as `vault.write`; `vault.write` creates parent directories itself |
 | `vault.readRaw(path)` | Reads any path inside the container, such as `/proc/meminfo`. No permission check |
 | `vaultore` | `{ runId, outputRoot, runDir, workflowPath }` for this run |
 
-The permission checks in these helpers only turn a doomed access into a clear error; the mount
-is what enforces them (permissions-spec §3.3). Bun's own APIs and `fetch` are available;
-`fetch` reaches the network only under `network: allow`.
+The permission checks in these helpers only turn a doomed access into a clear error. The mount
+enforces reads (permissions-spec §3.3); the host enforces `vault.write` (§3.4). Bun's own APIs
+and `fetch` are available; `fetch` reaches the network only under `network: allow`.
+
+**What `vault.write` guarantees** ([#83](https://github.com/cronai-labs/vaultore/issues/83)).
+Nothing reaches the vault while the cell runs. Each write records the SHA-256 of the text the
+cell last read from that path with `vault.read`, or that `vault.read` or `vault.exists` found
+nothing there. After the cell has exited successfully, the host checks every such write
+against the file as it is now, and only if all match applies the cell's writes in the order it
+made them. Otherwise the cell fails, naming each note that changed, and none of its writes are
+applied: the note was edited during the run, or the container saw a stale copy of it (Colima
+with sshfs). Run the cell again. Within a cell, a second write to a path replaces the first and
+keeps its base.
+
+- A write to a path the cell never read is applied as given. That blind write is the cell's
+  choice; read the note first to have it checked.
+- A cell that fails, or ends with `process.exit()` before its writes are handed over, writes
+  nothing.
+- A byte-order mark at the start of a note is ignored by the check and, as before, dropped by
+  `vault.read`.
+- The check and the write are two steps on the host, so an edit landing between them, within
+  milliseconds, is not caught.
+- Not covered: shell cells, `vault.mkdirp()` and raw writes to `/workspace` (`Bun.write`,
+  `node:fs`) go straight through the mount, and a cell sees its own `vault.write` only through
+  `vault.read`/`vault.exists`, not on disk. A cell that only reads can still see a stale copy.
+  Read-modify-write belongs in `vault.read` and `vault.write`.
+
+**Framing on stdout.** The host gives each cell run a random 128-bit nonce, written into its
+script. The runtime prints the value as one line of JSON between
+`__VAULTORE_OUTPUT_START_<nonce>__` and `__VAULTORE_OUTPUT_END_<nonce>__` lines, then the writes
+the same way between `__VAULTORE_WRITES_START_<nonce>__` and `__VAULTORE_WRITES_END_<nonce>__`:
+a list of `{ path, content, base }`, where `base` is `{ "sha256": "<hex>" }`,
+`{ "absent": true }` or `null`. Lines without the nonce are the cell's own logging, so text it
+prints, such as a fetched page, cannot pass for a block. Exactly one output block and at most
+one writes block after it are accepted; a second block, or a writes block before the output,
+fails the cell and applies nothing. Stdout without any framing, as from a cell that exited
+early, is the value as a whole and applies no writes.
 
 The environment has `VAULTORE_RUN_ID`, `VAULTORE_OUTPUT_ROOT`, `VAULTORE_RUN_DIR` and
 `HOME=/tmp`.

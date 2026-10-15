@@ -101,7 +101,9 @@ output without seeing the vault or earlier runs; `vault.write()` elsewhere throw
 `vault.readRaw()` reads paths inside the container (`/proc`), not the vault, and is not
 checked.
 
-`.obsidian/` and `.vaultore/` are hidden (§4.1). Other dot-directories in the vault are visible
+`.obsidian/` and `.vaultore/` are hidden (§4.1), from AI cells too: a `{{note:path}}` whose real
+path, after any symbolic link, lies in either (in any letter case) fails the cell before
+anything is sent. Other dot-directories in the vault are visible
 under a full mount, and writable with `vaultWrite`.
 
 ### 3.4 `vaultWrite`
@@ -110,8 +112,27 @@ under a full mount, and writable with `vaultWrite`.
 `vault.mkdirp()` throw.
 
 **`allow`:** cells can create, modify and delete any file in the vault except under
-`.obsidian/`. Writes go through the mount, not through Obsidian, so Obsidian sees them as
-external changes.
+`.obsidian/` and `.vaultore/`.
+
+`vault.write()` does not write through the mount. The host applies it after the cell has
+exited successfully, through the platform (Obsidian's vault API in the plugin, the file system
+in the CLI), and the host is where its rules are enforced: it refuses paths outside the vault
+(absolute, or with a `..` segment), under `.obsidian/` or `.vaultore/` (any letter case), every
+write under `vaultWrite: deny`, and without `vaultRead` any path outside the run directory. It
+also refuses a write to a note that is no longer what the cell read (workflow-note-spec §5.1).
+One refused write fails the cell and none of its writes are applied.
+
+**Symbolic links.** A cell with `vaultWrite` can create links through its mount, which the host
+would follow outside the vault. So every vault path the host reads or writes (`vault.write`,
+`{{note:path}}`, recorded outputs, output files, run records, the workflow note) is resolved
+first (`PlatformAdapter.resolveInVault`): a link as the last component is refused wherever it
+points, a directory link on the way is followed only if its real target lies inside the vault,
+and the rules above then apply to the real path. A platform without `resolveInVault` cannot run
+workflows.
+
+Shell cells, `vault.mkdirp()` and raw writes to `/workspace` (`Bun.write`, `node:fs`) go
+through the mount, limited only by the mount and the masks (§3.3, §4.1). Obsidian sees them as
+external changes, and nothing checks them against what the cell read.
 
 Output callouts, output files and run records are written by the host, not by cells, whatever
 this permission says.
@@ -355,7 +376,7 @@ Specified in earlier versions of this document and **not built**.
 | AI cell | ✓ | | |
 | `vault.read()`, `vault.exists()`, reading `/workspace` in a shell cell | | ✓ | |
 | `{{note:path}}` in an AI cell | | ✓ | |
-| `vault.write()`, `vault.mkdirp()`, writing `/workspace` | | ✓ for paths outside the run directory | ✓ |
+| `vault.write()` (host-applied), `vault.mkdirp()`, writing `/workspace` | | ✓ for paths outside the run directory | ✓ |
 | `vault.readRaw()` (container paths) | | | |
 | Output callouts, output files, run records (host) | | | |
 

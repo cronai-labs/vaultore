@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ---- Core module mock (before importing main) ----
 // The scheduler, cron parsing, the workflow check and the model defaults are
@@ -23,13 +26,14 @@ vi.mock("@vaultore/core", async () => {
     WorkflowScheduler: actual.WorkflowScheduler,
     computeNextRun: actual.computeNextRun,
     isWorkflowFrontmatter: actual.isWorkflowFrontmatter,
+    resolveInVaultRoot: actual.resolveInVaultRoot,
   };
 });
 
 // Import the plugin — obsidian is aliased via vitest.config.ts
 const { default: VaultOrePlugin } = await import("./main");
 // Typed as the mock, which records notices and event handlers for assertions.
-const { Notice, TFile, requestUrl } = (await import("obsidian")) as unknown as typeof import("./__mocks__/obsidian");
+const { FileSystemAdapter, Notice, TFile, requestUrl } = (await import("obsidian")) as unknown as typeof import("./__mocks__/obsidian");
 const { DEFAULT_MODELS, DEFAULT_PROVIDER, WorkflowScheduler } = await import("@vaultore/core");
 type RecordedSetting = import("./__mocks__/obsidian").Setting;
 
@@ -287,6 +291,42 @@ describe("VaultOrePlugin", () => {
       vi.mocked(requestUrl).mockRejectedValue(new Error("net::ERR_NAME_NOT_RESOLVED"));
 
       await expect(send(request)).rejects.toThrow("net::ERR_NAME_NOT_RESOLVED");
+    });
+  });
+
+  describe("vault paths a cell may have linked out of the vault", () => {
+    let base: string;
+
+    beforeEach(() => {
+      base = mkdtempSync(join(tmpdir(), "vaultore-obsidian-"));
+      mkdirSync(join(base, "vault/notes"), { recursive: true });
+      mkdirSync(join(base, "outside"));
+      symlinkSync(join(base, "outside"), join(base, "vault/notes/x"));
+    });
+
+    afterEach(() => {
+      rmSync(base, { recursive: true, force: true });
+    });
+
+    function resolveInVault(path: string) {
+      return (plugin as unknown as {
+        adapter: { resolveInVault: (p: string) => Promise<string> };
+      }).adapter.resolveInVault(path);
+    }
+
+    it("refuses a path through a symlink that leads outside the vault folder", async () => {
+      const adapter = new FileSystemAdapter();
+      vi.spyOn(adapter, "getBasePath").mockReturnValue(join(base, "vault"));
+      plugin.app.vault.adapter = adapter as never;
+
+      await expect(resolveInVault("notes/x/authorized_keys")).rejects.toThrow(/outside the vault/);
+      expect(await resolveInVault("/notes/new.md")).toBe("notes/new.md");
+    });
+
+    it("refuses every path when the vault has no folder on disk", async () => {
+      plugin.app.vault.adapter = {} as never;
+
+      await expect(resolveInVault("notes/new.md")).rejects.toThrow(/file system access/);
     });
   });
 

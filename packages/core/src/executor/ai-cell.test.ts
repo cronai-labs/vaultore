@@ -44,6 +44,7 @@ function vault(settings: Record<string, unknown> = {}) {
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
 		getVaultRoot: async () => "/vault",
+		resolveInVault: async (path: string) => path,
 		getSetting: <T>(key: string) => settings[key] as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
 			settings[key] = value;

@@ -99,8 +99,10 @@ and structured outputs is [#80](https://github.com/cronai-labs/vaultore/issues/8
   line edited during the run is left alone and listed under `notTicked`
 - A second run files only items added since
 
-On Colima, use virtiofs file sharing: with sshfs, `tickInbox` can read a stale copy of the
-inbox and write it back cut off ([#83](https://github.com/cronai-labs/vaultore/issues/83)).
+On Colima, use virtiofs file sharing. With sshfs, a cell can read a stale copy of the inbox
+([#83](https://github.com/cronai-labs/vaultore/issues/83)): `readInbox` then misses items added
+a moment before the run, which the next run files, and `tickInbox`'s write is refused, so the
+cell fails and the inbox stays as it was.
 
 ---
 
