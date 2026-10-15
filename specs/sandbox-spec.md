@@ -24,6 +24,11 @@ Apple container network rule below).
 Full-machine isolation via lightweight VMs or namespaces. Required for
 `ore:shell` (arbitrary binaries) and any cell needing a real Linux userland.
 
+`ore:ts` and `ore:shell` cells both run in the workflow's `runtime.image`
+(default `oven/bun:1-alpine`, whose busybox provides `sh`). A workflow that
+sets a custom image gets it for every container cell, so that image must
+provide `sh` (shell cells run `sh -lc`) and, for `ore:ts`, `bun`.
+
 | Engine | Platform | Isolation | Network deny | Notes |
 |--------|----------|-----------|--------------|-------|
 | Docker | all | namespaces / VM | `--network=none` | Reference engine |

@@ -294,3 +294,40 @@ describe("grants are bound to the note's content (#69)", () => {
 		expect(s.prompts).toHaveLength(1);
 	});
 });
+
+describe("container image (#26)", () => {
+	async function imageFor(type: "ts" | "shell", runtime: string) {
+		vi.mocked(execContainer).mockResolvedValue({
+			exitCode: 0,
+			stdout: "1",
+			stderr: "",
+		} as never);
+		const content = `---
+ore: true
+name: repro
+${runtime}permissions:
+  network: deny
+---
+
+\`\`\`ore:${type} id=c
+1
+\`\`\`
+`;
+		const { workflow } = await run(content);
+		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as { image: string };
+		return opts.image;
+	}
+
+	for (const type of ["ts", "shell"] as const) {
+		it(`${type}: runs the default image when the note sets none`, async () => {
+			expect(await imageFor(type, "")).toBe("oven/bun:1-alpine");
+		});
+
+		it(`${type}: runs the note's runtime.image`, async () => {
+			expect(await imageFor(type, "runtime:\n  image: example/custom:2\n")).toBe(
+				"example/custom:2"
+			);
+		});
+	}
+});

@@ -1003,11 +1003,12 @@ async function executeShellCell(
   runContext: RunContext
 ): Promise<string> {
   const vaultRoot = await platform.getVaultRoot();
-  const image = "alpine:3.19";
   const command = ["sh", "-lc", cell.content];
 
+  // The same image as `ore:ts`: a note that sets `runtime.image` gets it for
+  // every cell. The default, oven/bun:1-alpine, ships busybox `sh`.
   const containerOpts: ContainerExecOptions = {
-    image,
+    image: runtime.image,
     command,
     workdir: "/workspace",
     env: {
