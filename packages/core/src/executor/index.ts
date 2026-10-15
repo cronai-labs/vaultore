@@ -979,10 +979,22 @@ async function executeAICell(
   const maxTokens =
     cell.attributes.maxTokens ??
     platform.getSetting<number>("vaultore.aiMaxTokens");
+  // `{{note:}}` is a vault read: gate it here, where the path is known, so a
+  // denial fails the cell before anything is sent (permissions-spec §3.3).
   const prompt = await interpolator.interpolateAsync(
     cell.content,
     outputs,
-    (path) => platform.readFile(path)
+    async (path) => {
+      if (!permissions.vaultRead) {
+        throw new Error(`Vault read permission denied: {{note:${path}}}`);
+      }
+      try {
+        return await platform.readFile(path);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(`Cannot read {{note:${path}}}: ${reason}`);
+      }
+    }
   );
 
   const response = await provider.complete({

@@ -260,6 +260,15 @@ Inside cell content (especially AI prompts), use double braces for interpolation
 | `{{note:Path/To/Note.md}}` | Content of a vault note |
 | `{{block:Note#^blockId}}` | Specific block from a note |
 
+Variables are resolved in one pass over the cell's own text. Inserted text is not scanned
+again: an output that contains `{{note:…}}` reaches the prompt as those literal characters,
+so fetched text cannot pull a note into a prompt. Building a note path in one cell and loading
+it in the next is tracked as a future feature (#71); until then, use `vault.read()` in an
+`ore:ts` cell.
+
+`{{note:path}}` is a vault read. Under `vaultRead: deny`, or when the note cannot be read, the
+cell fails before anything is sent.
+
 ### 4.1 Examples
 
 ```markdown
