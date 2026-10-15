@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { buildRunCommand } from "./index";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildRunCommand, detectRuntimes, DETECTION_TIMEOUT_MS } from "./index";
 import type { ContainerExecOptions } from "../types";
 
 const baseOptions: ContainerExecOptions = {
@@ -66,5 +69,68 @@ describe("buildRunCommand", () => {
 
     expect(args.join(" ")).toContain("-e FOO=bar");
     expect(args.join(" ")).toContain("/vault:/workspace:rw");
+  });
+});
+
+describe("detectRuntimes", () => {
+  const engines = ["docker", "podman", "colima", "container"] as const;
+  let bin: string;
+  let savedPath: string | undefined;
+
+  /** Every engine binary on PATH is a script with the given body. */
+  function fakeEngines(body: string) {
+    for (const name of engines) {
+      const file = join(bin, name);
+      writeFileSync(file, `#!/bin/sh\n${body}\n`);
+      chmodSync(file, 0o755);
+    }
+  }
+
+  beforeEach(() => {
+    bin = mkdtempSync(join(tmpdir(), "vaultore-detect-"));
+    savedPath = process.env.PATH;
+    process.env.PATH = bin;
+  });
+
+  afterEach(() => {
+    process.env.PATH = savedPath;
+    rmSync(bin, { recursive: true, force: true });
+  });
+
+  it("reports an engine whose probe exits non-zero as unavailable", async () => {
+    fakeEngines('echo "Cannot connect to the Docker daemon" >&2\nexit 1');
+
+    const detection = await detectRuntimes();
+
+    expect(detection.available).toEqual([]);
+    expect(detection.preferred).toBeNull();
+    expect(detection.errors.get("docker")).toMatch(/exited with code 1/);
+    expect(detection.errors.get("docker")).toMatch(/Cannot connect to the Docker daemon/);
+  });
+
+  it("reports an engine whose probe exits zero as available", async () => {
+    fakeEngines("exit 0");
+
+    const detection = await detectRuntimes();
+
+    expect(detection.available).toContain("docker");
+    expect(detection.preferred).toBe("docker");
+  });
+
+  it("gives up on a probe that does not answer in time", async () => {
+    // No `exec`: the shell is killed but its `sleep` child keeps the pipes
+    // open, as a wedged CLI's helper processes would.
+    fakeEngines("/bin/sleep 30");
+
+    const started = Date.now();
+    const detection = await detectRuntimes({ timeoutMs: 200 });
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(detection.available).toEqual([]);
+    expect(detection.errors.get("docker")).toMatch(/did not answer within 200 ms/);
+  });
+
+  it("has a default probe timeout", () => {
+    expect(DETECTION_TIMEOUT_MS).toBeGreaterThan(0);
   });
 });
