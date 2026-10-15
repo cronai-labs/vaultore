@@ -16,8 +16,14 @@ on:
     tags:
       - "[0-9]+.[0-9]+.[0-9]+"
 
-permissions:
-  contents: write
+# Every job declares the permissions it needs; nothing is granted by default.
+permissions: {}
+
+# One release run per tag at a time, and never cancel one halfway: a run cut
+# short between creating the draft and publishing it leaves a draft behind.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # A tag can point at any commit. Only a commit on main whose ci-required
@@ -33,7 +39,7 @@ jobs:
       actions: read # the CI workflow run, to tell "not yet" from "never"
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -42,12 +48,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/release-gate.sh "$GITHUB_REPOSITORY" "$(git rev-parse 'HEAD^{commit}')"
 
+  # Builds and checks the release files with a read-only token. Install, build
+  # and tests run third-party code, so they never share a job with the token
+  # that can write the release.
   build:
     needs: gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Verify tag matches manifest version
         run: |
@@ -69,7 +83,7 @@ jobs:
           echo "Tag $tag matches both manifests and versions.json."
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.3.14"
 
@@ -85,29 +99,139 @@ jobs:
       - name: Package plugin
         run: bun run obsidian:package
 
-      # The curated CHANGELOG.md section, not GitHub's generated list of merged
-      # pull requests (#48). Fails the run when the section is missing or empty.
-      - name: Release notes
-        run: node scripts/release-notes.mjs "${GITHUB_REF#refs/tags/}" > "$RUNNER_TEMP/release-notes.md"
-
-      - name: Create or update release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The three files Obsidian installs, plus the release notes: the curated
+      # CHANGELOG.md section, not GitHub's generated list of merged pull
+      # requests (#48). release-notes.mjs fails when the section is missing or
+      # empty.
+      - name: Stage release files
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
+          set -euo pipefail
+          staging="$RUNNER_TEMP/release"
+          mkdir -p "$staging"
+          cp packages/obsidian/package/vaultore/main.js \
+            packages/obsidian/package/vaultore/manifest.json \
+            packages/obsidian/package/vaultore/styles.css \
+            "$staging/"
+          node scripts/release-notes.mjs "${GITHUB_REF#refs/tags/}" > "$staging/release-notes.md"
+          {
+            echo '```'
+            (cd "$staging" && sha256sum main.js manifest.json styles.css)
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
-          # Create release if it doesn't exist, or upload to existing
-          if gh release view "$tag" &>/dev/null; then
-            gh release upload "$tag" \
-              packages/obsidian/package/vaultore/main.js \
-              packages/obsidian/package/vaultore/manifest.json \
-              packages/obsidian/package/vaultore/styles.css \
-              --clobber
-          else
-            gh release create "$tag" \
-              --title "$tag" \
-              --notes-file "$RUNNER_TEMP/release-notes.md" \
-              packages/obsidian/package/vaultore/main.js \
-              packages/obsidian/package/vaultore/manifest.json \
-              packages/obsidian/package/vaultore/styles.css
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Immutable releases are on for this repository: once a release is published,
+  # neither its assets nor its tag can change. So the release is created as a
+  # draft, its assets are uploaded and checked against the build, and it is
+  # published last. Nothing here ever replaces an asset; there is no --clobber.
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the draft release, upload its assets, publish it
+      id-token: write # the Sigstore signing certificate for the attestation
+      attestations: write # store the attestation
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+
+    # No checkout: nothing from the repository runs while this token can write.
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release
+
+      # A re-run never replaces anything. If the release is already published,
+      # the run succeeds only when the published assets are byte-identical to
+      # this build, and otherwise fails and says to cut a new version. A draft
+      # left by a failed run is not touched either: a person decides about it.
+      - name: Look for an existing release
+        id: existing
+        run: |
+          set -euo pipefail
+          release="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            | jq -s --arg tag "$TAG" '[.[][] | select(.tag_name == $tag)] | first // empty')"
+          if [ -z "$release" ]; then
+            echo "No release for $TAG yet."
+            echo "state=none" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          if [ "$(jq -r '.draft' <<<"$release")" = true ]; then
+            echo "::error::A draft release for $TAG already exists, most likely left by an earlier run that failed before publishing. Check it, delete it with 'gh release delete $TAG' (the tag stays), then re-run this workflow."
+            exit 1
+          fi
+
+          mismatch=0
+          for file in main.js manifest.json styles.css; do
+            built="sha256:$(sha256sum "release/$file" | cut -d' ' -f1)"
+            published="$(jq -r --arg name "$file" \
+              '[.assets[] | select(.name == $name) | .digest // "no digest"] | first // "missing"' <<<"$release")"
+            echo "$file: published $published, built $built"
+            [ "$published" = "$built" ] || mismatch=1
+          done
+          if [ "$mismatch" -ne 0 ]; then
+            echo "::error::Release $TAG is already published and its assets differ from this build. A published release is immutable and is never replaced; cut a new version."
+            exit 1
+          fi
+          echo "::notice::Release $TAG is already published with assets identical to this build. Nothing to do."
+          echo "state=published" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance
+        if: steps.existing.outputs.state == 'none'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release/main.js
+            release/manifest.json
+            release/styles.css
+
+      - name: Create draft, upload and verify assets, publish
+        if: steps.existing.outputs.state == 'none'
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --draft \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file release/release-notes.md \
+            release/main.js \
+            release/manifest.json \
+            release/styles.css
+
+          draft="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            | jq -s --arg tag "$TAG" '[.[][] | select(.tag_name == $tag and .draft)] | first // empty')"
+          [ -n "$draft" ] || { echo "::error::The draft release for $TAG was not found after creating it."; exit 1; }
+          id="$(jq -r '.id' <<<"$draft")"
+
+          # GitHub computes each asset's sha256 on upload; compare it with the
+          # build before the release becomes public and unchangeable.
+          [ "$(jq '.assets | length' <<<"$draft")" -eq 3 ] \
+            || { echo "::error::The draft for $TAG has $(jq '.assets | length' <<<"$draft") assets, expected 3. It stays a draft."; exit 1; }
+          for file in main.js manifest.json styles.css; do
+            built="sha256:$(sha256sum "release/$file" | cut -d' ' -f1)"
+            uploaded="$(jq -r --arg name "$file" \
+              '[.assets[] | select(.name == $name) | .digest // "no digest"] | first // "missing"' <<<"$draft")"
+            echo "$file: uploaded $uploaded, built $built"
+            [ "$uploaded" = "$built" ] \
+              || { echo "::error::$file on the draft does not match the build. The release stays a draft; delete it and re-run."; exit 1; }
+          done
+
+          gh api -X PATCH "repos/$GH_REPO/releases/$id" -F draft=false > /dev/null
+
+          # Read back what was published rather than trusting the PATCH.
+          published="$(gh api "repos/$GH_REPO/releases/$id")"
+          jq -r '"published \(.tag_name): draft=\(.draft) immutable=\(.immutable) \(.html_url)"' <<<"$published"
+          [ "$(jq -r '.draft' <<<"$published")" = false ] \
+            || { echo "::error::$TAG is still a draft after publishing."; exit 1; }
+          [ "$(jq -r '.immutable' <<<"$published")" = true ] \
+            || { echo "::error::$TAG was published but GitHub does not report it as immutable. Check the repository's immutable releases setting."; exit 1; }
