@@ -34,7 +34,9 @@ export interface WorkflowPermissions {
 
 export const DEFAULT_PERMISSIONS: WorkflowPermissions = {
   network: "deny",
-  buildNetwork: "ask",
+  // Nothing uses it until Python or Go cells download dependencies; `ask` would
+  // prompt every workflow for a capability that does nothing (#95).
+  buildNetwork: "deny",
   vaultWrite: "deny",
   vaultRead: "allow",
 };

@@ -22,8 +22,6 @@ Create a note with this content:
 ---
 ore: true
 name: Hello World
-permissions:
-  buildNetwork: deny   # unused today; set so the first run does not ask about it
 ---
 
 ```ore:ts id=hello
@@ -171,7 +169,7 @@ The defaults ([permissions spec](specs/permissions-spec.md), the single source):
 | `network` | `deny` | Network for container cells; required by AI cells |
 | `vaultRead` | `allow` | Whether the vault is mounted into containers; `{{note:}}` |
 | `vaultWrite` | `deny` | Whether that mount is writable |
-| `buildNetwork` | `ask` | Nothing yet (reserved for planned Python and Go cells) |
+| `buildNetwork` | `deny` | Nothing yet (reserved for planned Python and Go cells) |
 
 **The mount enforces them.** A container cell sees the whole vault read-only, the whole vault
 read-write, only its own run directory, or nothing, depending on `vaultRead` and `vaultWrite`.
@@ -200,8 +198,6 @@ are used for the provider request only, not passed to containers.
   written a moment earlier, so a cell that reads a note and writes it back can truncate it
   ([#83](https://github.com/cronai-labs/vaultore/issues/83)). Use virtiofs:
   `colima start --vm-type vz --mount-type virtiofs`.
-- **`buildNetwork` is asked for** on the first run of every workflow that does not set it,
-  although nothing uses it. Add `buildNetwork: deny` to the note's `permissions`.
 - **Dependency cycles are not detected**: the cells run in document order
   ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
 - **A cell timeout stops the engine's CLI, not the container**, which may keep running until it

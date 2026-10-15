@@ -35,7 +35,7 @@ sync, means trusting what it declares.
 | Permission | Default | Controls |
 |------------|---------|----------|
 | `network` | `deny` | Network access for container cells; required by AI cells (§3.1) |
-| `buildNetwork` | `ask` | Nothing yet: reserved for dependency downloads of planned Python and Go cells (§3.2) |
+| `buildNetwork` | `deny` | Nothing yet: reserved for dependency downloads of planned Python and Go cells (§3.2) |
 | `vaultRead` | `allow` | Whether the vault is mounted into containers, and `{{note:}}` in AI cells (§3.3) |
 | `vaultWrite` | `deny` | Whether the mount is writable (§3.4) |
 
@@ -45,7 +45,6 @@ A workflow sets any of them in frontmatter; unset ones take the default:
 permissions:
   network: allow
   vaultWrite: ask
-  buildNetwork: deny
 ```
 
 ### 2.2 Permission Values
@@ -55,10 +54,6 @@ permissions:
 | `allow` | Granted, without a prompt |
 | `deny` | Refused, without a prompt |
 | `ask` | Resolved to `allow` or `deny` by a prompt, and the answer stored for this content of the note (§5) |
-
-Because `buildNetwork` defaults to `ask`, a workflow that does not set it is asked about it
-once per content version, although nothing uses it yet. Set `buildNetwork: deny` to avoid the
-prompt.
 
 ---
 
@@ -78,9 +73,10 @@ by this permission.
 
 ### 3.2 `buildNetwork`
 
-No cell type uses it. It is resolved, prompted for when `ask`, and stored like the others, then
-ignored. It is reserved for dependency downloads (`go mod download`, `pip install`) of the
-planned `ore:go` and `ore:py` cells.
+No cell type uses it. It defaults to `deny`, so it never prompts unless a workflow sets it to
+`ask`; it is resolved and stored like the others, then ignored. It is reserved for dependency
+downloads (`go mod download`, `pip install`) of the planned `ore:go` and `ore:py` cells, and its
+default becomes `ask` when they ship (#95).
 
 ### 3.3 `vaultRead`
 
@@ -206,8 +202,7 @@ code on the host.
 
 ### 5.1 When a Prompt Appears
 
-At the start of each run, every permission that resolves to `ask` (from the frontmatter, or
-`buildNetwork` by default) is looked up in the stored decisions. A stored `allow` or `deny`
+At the start of each run, every permission the frontmatter sets to `ask` is looked up in the stored decisions. A stored `allow` or `deny`
 for the same note and the same content (§5.3) is used. Otherwise the user is asked, once per
 permission.
 

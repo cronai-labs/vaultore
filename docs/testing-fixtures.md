@@ -34,8 +34,7 @@ bun run --cwd packages/core test:canonical -t hello-world
 | [smart-inbox.md](../fixtures/canonical/smart-inbox.md) | Inbox triage with one AI call and strictly checked output | ts ×2, ai, ts ×3 | `network`, `vaultWrite: allow` | Yes, with a stubbed provider |
 
 Four fixtures set `runtime.engine: docker` in their frontmatter, which overrides the engine
-setting; on another engine, delete that line. Only `sys-snapshot.md` sets `buildNetwork`; the others
-are asked about it on their first run ([permissions spec](../specs/permissions-spec.md#22-permission-values)).
+setting; on another engine, delete that line.
 
 ---
 
