@@ -26,8 +26,9 @@ vi.mock("@vaultore/core", async (importOriginal) => ({
 
 // Import the plugin — obsidian is aliased via vitest.config.ts
 const { default: VaultOrePlugin } = await import("./main");
-const { requestUrl } = await import("obsidian");
+const { Notice, requestUrl } = await import("obsidian");
 const { DEFAULT_MODELS, DEFAULT_PROVIDER } = await import("@vaultore/core");
+type RecordedSetting = import("./__mocks__/obsidian").Setting;
 
 describe("VaultOrePlugin", () => {
   let plugin: InstanceType<typeof VaultOrePlugin>;
@@ -48,6 +49,14 @@ describe("VaultOrePlugin", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  // Renders the settings tab the plugin registered and returns what it showed.
+  function renderSettings(): RecordedSetting[] {
+    const calls = (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls;
+    const tab = calls[0][0];
+    tab.display();
+    return tab.containerEl.settings;
+  }
 
   describe("onload", () => {
     it("registers three commands", () => {
@@ -78,7 +87,6 @@ describe("VaultOrePlugin", () => {
       expect(plugin.settings.defaultProvider).toBe(DEFAULT_PROVIDER);
       expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS[DEFAULT_PROVIDER]);
       expect(plugin.settings.runtimeEngine).toBe("docker");
-      expect(plugin.settings.enableWarmPool).toBe(false);
       expect(plugin.settings.outputRoot).toBe("_vaultore");
     });
 
@@ -102,6 +110,21 @@ describe("VaultOrePlugin", () => {
 
       expect(plugin.saveData).toHaveBeenCalledWith(
         expect.objectContaining({ defaultProvider: "anthropic" })
+      );
+    });
+
+    it("has no warm container pool setting: it was a visible no-op", async () => {
+      const names = renderSettings().map((setting) => setting.name);
+      expect(names).not.toContain("Warm container pool");
+
+      // A key saved by an earlier version is dropped, not carried forward.
+      (plugin.loadData as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        enableWarmPool: true,
+      });
+      await plugin.loadSettings();
+      await plugin.saveSettings();
+      expect(plugin.saveData).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ enableWarmPool: expect.anything() })
       );
     });
 

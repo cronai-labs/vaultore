@@ -27,7 +27,6 @@ interface VaultOreSettings {
   aiTimeoutSeconds?: number;
   runtimeEngine: "docker" | "podman" | "colima" | "apple";
   permissionDecisions: Record<string, unknown>;
-  enableWarmPool: boolean;
   outputRoot: string;
 }
 
@@ -38,9 +37,11 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   aiTimeoutSeconds: 120,
   runtimeEngine: "docker",
   permissionDecisions: {},
-  enableWarmPool: false,
   outputRoot: "_vaultore",
 };
+
+// enableWarmPool: a "future feature" toggle that never did anything.
+const REMOVED_SETTINGS = ["enableWarmPool"];
 
 const SCHEDULER_DEBOUNCE_MS = 2000;
 
@@ -167,8 +168,6 @@ class ObsidianAdapter implements PlatformAdapter {
         return this.plugin.settings.runtimeEngine as T;
       case "vaultore.permissionDecisions":
         return this.plugin.settings.permissionDecisions as T;
-      case "vaultore.enableWarmPool":
-        return this.plugin.settings.enableWarmPool as T;
       case "vaultore.outputRoot":
         return this.plugin.settings.outputRoot as T;
       default:
@@ -200,9 +199,6 @@ class ObsidianAdapter implements PlatformAdapter {
         break;
       case "vaultore.permissionDecisions":
         this.plugin.settings.permissionDecisions = value as Record<string, unknown>;
-        break;
-      case "vaultore.enableWarmPool":
-        this.plugin.settings.enableWarmPool = value as boolean;
         break;
       case "vaultore.outputRoot":
         this.plugin.settings.outputRoot = value as string;
@@ -468,7 +464,12 @@ export default class VaultOrePlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const data = (await this.loadData()) as Partial<VaultOreSettings> | null;
-    this.settings = { ...DEFAULT_SETTINGS, ...(data ?? {}) };
+    const settings = { ...DEFAULT_SETTINGS, ...(data ?? {}) };
+    // Settings that no longer exist, dropped so data.json stops carrying them.
+    for (const key of REMOVED_SETTINGS) {
+      delete (settings as Record<string, unknown>)[key];
+    }
+    this.settings = settings;
   }
 
   async saveSettings(): Promise<void> {
@@ -736,17 +737,6 @@ class VaultOreSettingsTab extends PluginSettingTab {
         dropdown.setValue(this.plugin.settings.runtimeEngine);
         dropdown.onChange(async (value) => {
           this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("Warm container pool")
-      .setDesc("Pre-start containers for faster execution (future feature).")
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.settings.enableWarmPool);
-        toggle.onChange(async (value) => {
-          this.plugin.settings.enableWarmPool = value;
           await this.plugin.saveSettings();
         });
       });
