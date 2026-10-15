@@ -158,7 +158,7 @@ prepared on your machine and CI only reacts to the tag.
 
 `bun run release` (via `version-bump.mjs`) is the only supported way to change the version.
 It updates the root `package.json`, both `manifest.json` files, all three package manifests,
-`versions.json`, and the `VERSION` constant in `packages/core/src/index.ts`. A test fails the
+`versions.json`, and the `VERSION` constant in `packages/core/src/version.ts`. A test fails the
 build if that constant ever drifts from the package version.
 
 `CHANGELOG.md` is generated — edit `cliff.toml` rather than the file itself. The commit type
