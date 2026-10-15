@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TemplateInterpolator, WorkflowParser, isWorkflowFrontmatter } from "./index";
+import type { CellOutput } from "../types";
 
 describe("WorkflowParser", () => {
   it("parses frontmatter, cells, and outputs", () => {
@@ -69,7 +70,7 @@ describe("isWorkflowFrontmatter", () => {
 
 describe("TemplateInterpolator", () => {
   it("replaces hyphenated cell IDs", () => {
-    const outputs = new Map([
+    const outputs = new Map<string, CellOutput>([
       [
         "fetch-pages",
         {

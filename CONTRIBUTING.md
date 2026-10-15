@@ -99,7 +99,7 @@ docs: clarify permission model in README
 
 ```bash
 bun run test              # unit tests (all packages)
-bun run typecheck         # TypeScript across all packages
+bun run typecheck         # TypeScript across all packages, tests included
 bun run lint              # the Obsidian review's ESLint config (obsidianmd recommended), all packages
 bun run test:canonical    # parse every canonical fixture (no container needed)
 VAULTORE_IT_ENGINE=docker bun run --cwd packages/core test:integration   # against a real container engine (default engine: colima)
