@@ -62,6 +62,11 @@ jobs:
       - name: Package plugin
         run: bun run obsidian:package
 
+      # The curated CHANGELOG.md section, not GitHub's generated list of merged
+      # pull requests (#48). Fails the run when the section is missing or empty.
+      - name: Release notes
+        run: node scripts/release-notes.mjs "${GITHUB_REF#refs/tags/}" > "$RUNNER_TEMP/release-notes.md"
+
       - name: Create or update release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -78,7 +83,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "$tag" \
-              --generate-notes \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
               packages/obsidian/package/vaultore/main.js \
               packages/obsidian/package/vaultore/manifest.json \
               packages/obsidian/package/vaultore/styles.css

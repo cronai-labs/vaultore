@@ -102,6 +102,18 @@ if (manifest.version !== version) {
 	fail(`manifest.json is ${manifest.version} after the bump, expected ${version}`);
 }
 
+// release.yml publishes this version's CHANGELOG.md section as the release
+// notes and refuses an empty one. Check it here, while the version is unspent:
+// once the tag is pushed, fixing the changelog means a new version.
+try {
+	run("node", ["scripts/release-notes.mjs", version], { capture: true });
+} catch (error) {
+	fail(
+		`CHANGELOG.md has no usable section for ${version}: ${String(error.stderr ?? error.message).trim()}\n` +
+			`       Nothing is committed or tagged. Inspect the working tree before retrying.`
+	);
+}
+
 console.log("\nCommitting and tagging...");
 run("git", ["add", "-A"]);
 run("git", ["commit", "-m", `chore(release): ${version}`]);
