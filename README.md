@@ -1,62 +1,20 @@
 # VaultOre
 
-**A Markdown-native AI workflow engine for Obsidian**
-
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Obsidian](https://img.shields.io/badge/Obsidian-1.11.4+-purple.svg)](https://obsidian.md)
+[![Obsidian](https://img.shields.io/badge/Obsidian-1.11.4%2B%20desktop-purple.svg)](https://obsidian.md)
 
-VaultOre turns your Obsidian vault into an automation platform. Create **notebook-style workflows** with AI, TypeScript, and shell steps — all defined in plain Markdown files inside your vault.
+VaultOre runs workflows written as Markdown notes: a note holds TypeScript, shell and AI cells,
+and VaultOre runs them in order, each code cell in its own container, and writes every result
+back under the cell. Workflows can read and write your notes, call OpenAI or Anthropic with
+your own key, and run on a cron schedule while Obsidian is open.
 
-> **"Mine value from your vault."** — Your notes are the data source. Workflows are the refinery. Knowledge artifacts are the output.
+> [!WARNING]
+> **VaultOre runs code from your notes.** A workflow note is executable content: it starts
+> containers through your container engine and can, if it declares the permissions, reach the
+> network and change files in your vault. A permission a note sets to `allow` applies without
+> asking. Only run workflows you have read and trust, including notes that arrive through sync.
 
-## ✨ Features
-
-- **📝 Markdown-native** — Workflows are `.md` files that live in your vault
-- **🤖 AI-powered** — OpenAI and Anthropic support (bring your own API key)
-- **🔒 Sandboxed** — All code runs in isolated containers, network disabled by default
-- **📅 Time-triggered** — Cron scheduling for automated workflows while Obsidian is open
-- **🔗 Vault-integrated** — Workflows read from and write to your notes
-- **🧱 Git-friendly** — Workflows are plain Markdown that diff cleanly
-
-## ⚙️ Requirements
-
-| Requirement | Notes |
-|-------------|-------|
-| **Obsidian 1.11.4+ (desktop only)** | Uses the desktop file system and secret storage; not available on mobile |
-| **A container runtime** | [Docker](https://docker.com), [Podman](https://podman.io), [Colima](https://github.com/abiosoft/colima), or [Apple container](https://github.com/apple/container) (macOS 26+, Apple silicon) must be installed and running |
-| **AI provider API key** *(optional)* | Only needed for `ore:ai` cells — OpenAI or Anthropic |
-
-**Windows:** use Docker Desktop with the WSL2 backend, or install Docker Engine/Podman directly inside a WSL2 distro.
-
-**Apple container note:** Apple's `container` CLI does not support disabling network access yet, so workflows with `network: deny` (the default) refuse to run on that engine rather than running un-isolated — use Docker or Podman for those, or grant `network: allow` explicitly.
-
-> A container-free WASM sandbox tier for TypeScript cells is planned for v0.2 — see the [Sandbox Spec](specs/sandbox-spec.md).
-
-## 🚀 Installation
-
-VaultOre is pre-release: it is not yet in the Obsidian community plugin directory, and
-there is no published release to download. Build it from source:
-
-```bash
-git clone https://github.com/cronai-labs/vaultore.git
-cd vaultore
-bun install
-bun run build
-bun run obsidian:package
-```
-
-That writes `main.js`, `manifest.json`, and `styles.css` to
-`packages/obsidian/package/vaultore/`. Then:
-
-1. Copy that `vaultore/` folder into `<your-vault>/.obsidian/plugins/`
-2. In Obsidian: **Settings → Community plugins → Enable "VaultOre"**
-3. Open **Settings → VaultOre** to pick your container runtime and (optionally) select the secret that holds your AI provider API key
-
-Once the plugin is released and listed, downloadable builds will appear under
-[Releases](https://github.com/cronai-labs/vaultore/releases) and you will be able to
-install directly from **Settings → Community plugins → Browse**.
-
-## 🏃 Your First Workflow
+## Example
 
 Create a note with this content:
 
@@ -64,153 +22,235 @@ Create a note with this content:
 ---
 ore: true
 name: Hello World
-runtime:
-  image: oven/bun:1-alpine
+permissions:
+  buildNetwork: deny   # unused today; set so the first run does not ask about it
 ---
-
-# Hello World
 
 ```ore:ts id=hello
 const message = "Hello from VaultOre!";
 message;
 ```
 
-```ore:ts id=transform depends=[hello]
-const msg = cell("hello");
-msg.toUpperCase();
+```ore:ts id=shout depends=[hello]
+cell("hello").toUpperCase();
 ```
 ````
 
-Then open the command palette (`Cmd+P` / `Ctrl+P`) and run **"VaultOre: Run all cells"**.
+Open the command palette and run **VaultOre: Run all cells**. Each cell runs in a container,
+and a callout with its result appears under it; the full output is stored under `_vaultore/`.
+This example needs a container engine and no API key.
 
-> **Note:** the example deliberately omits `runtime.engine`, so it uses the engine you
-> picked in settings. A workflow that *does* set `engine:` overrides your setting — useful
-> for a note that genuinely requires one runtime, surprising otherwise. Output callouts appear below each cell, with results persisted under your configured output folder.
+## Requirements
 
-> **Tip:** No default hotkeys are set to avoid conflicts. Assign your own under **Settings → Hotkeys** (search for "VaultOre").
+| | |
+|---|---|
+| **Obsidian 1.11.4 or later, desktop only** | VaultOre starts programs and reads the vault from disk; it does not load on mobile |
+| **A container engine, installed and running** | [Docker](https://www.docker.com), [Podman](https://podman.io), [Colima](https://github.com/abiosoft/colima) (macOS), or [Apple `container`](https://github.com/apple/container) (macOS 26+, Apple silicon). Every run needs it, even a workflow with only AI cells |
+| **An OpenAI or Anthropic API key** *(optional)* | Only for `ore:ai` cells |
+
+Colima users: see [Known limitations](#known-limitations) for the file-sharing mode to use.
+Windows has not been tested; there, VaultOre looks for Docker Desktop or Podman.
+
+## Disclosures
+
+**Network use.**
+
+- **AI cells** send their prompt to `api.openai.com` or `api.anthropic.com`, with your API
+  key, when a workflow with an `ore:ai` cell runs and is granted `network`. The prompt can
+  contain note contents (`{{note:…}}`) and other cells' outputs.
+- **Container images** that are not on your machine yet are downloaded by your container
+  engine from its registry (the default image, `oven/bun:1-alpine`, from Docker Hub). VaultOre
+  does not contact registries itself.
+- **Workflow code** in TS and shell cells reaches the network only when the workflow is
+  granted `network: allow`, and can then contact any host.
+- Nothing else: no telemetry, no analytics, no update checks.
+
+**Accounts and payment.** AI cells need an account with OpenAI or Anthropic that has paid API
+access, and your own API key; the provider bills you for each request. Everything else
+(TypeScript and shell cells, scheduling, the CLI) works without an account.
+
+**Runs external programs.** VaultOre starts your container engine's command-line tool
+(`docker`, `podman`, `colima` or `container`) to detect it and to run each code cell, and the
+cell runs the code written in the note. See the warning above.
+
+**Files outside the vault.** VaultOre reads and writes files only inside the vault. Outside it,
+it looks for the engine's command-line tool in the directories on your `PATH` and in fixed
+install locations (macOS: `/usr/local/bin`, `/opt/homebrew/bin`,
+`/Applications/Docker.app/Contents/Resources/bin/docker`; Linux: `/usr/bin`; Windows: the
+Docker Desktop and Podman folders under `C:\Program Files`), and starts it. The engine mounts
+the vault folder into containers as the workflow's permissions allow; what the engine itself
+reads, such as its own configuration and image store, is the engine's business.
+
+## Installation
+
+- **From the community plugin directory**, once VaultOre is listed there: **Settings →
+  Community plugins → Browse**, search for "VaultOre", install and enable.
+- **From a release:** download `main.js`, `manifest.json` and `styles.css` from a
+  [release](https://github.com/cronai-labs/vaultore/releases) into
+  `<your vault>/.obsidian/plugins/vaultore/`, then enable VaultOre under **Settings →
+  Community plugins**.
+- **From source**, if no release is listed yet:
+
+  ```bash
+  git clone https://github.com/cronai-labs/vaultore.git
+  cd vaultore
+  bun install
+  bun run build
+  bun run obsidian:package   # writes packages/obsidian/package/vaultore/
+  ```
+
+  Copy `packages/obsidian/package/vaultore/` into `<your vault>/.obsidian/plugins/` and enable
+  the plugin.
+
+Then open **Settings → VaultOre**, pick your container engine, and, for AI cells, select the
+secret that holds your API key.
+
+## Using VaultOre
 
 ### Commands
 
+Offered only on workflow notes (frontmatter `ore: true`). No hotkeys are set; assign them under
+**Settings → Hotkeys**.
+
 | Command | What it does |
 |---------|--------------|
-| **Run all cells** | Execute every cell in the active workflow note, in dependency order |
-| **Run cell** | Execute the cell under the cursor, including its dependencies |
-| **Run cell only (skip dependencies)** | Execute just the cell under the cursor |
+| **Run all cells** | Runs every cell of the note, in dependency order |
+| **Run cell** | Runs the cell under the cursor and the cells it depends on |
+| **Run cell only (skip dependencies)** | Runs the cell under the cursor, with its dependencies' last outputs |
 
-### Cell Types
+### Cells
 
-| Type | Syntax | Runs in |
-|------|--------|---------|
-| TypeScript | ` ```ore:ts ` | Bun container |
-| Shell | ` ```ore:shell ` | Alpine container |
-| AI | ` ```ore:ai ` | Your configured AI provider (network) |
+| Cell | Runs | Notes |
+|------|------|-------|
+| ` ```ore:ts ` | TypeScript on Bun, in a container | The last expression is the output. `cell("id")` reads another cell's output; `vault.read`, `vault.write`, `vault.exists`, `vault.mkdirp` work on notes |
+| ` ```ore:shell ` | `sh` in a container | stdout is the output |
+| ` ```ore:ai ` | One request to your AI provider | `{{cellId}}` inserts an output, `{{note:Path/To/Note.md}}` a note. Needs `network: allow` |
 
-Inside `ore:ts` cells you get `vault.read()`, `vault.write()`, `vault.exists()`, `vault.mkdirp()`, and `cell("other-id")` to access other cells' outputs. Prompts in `ore:ai` cells can interpolate outputs with `{{cellId}}` and note contents with `{{note:Path/To/Note.md}}`.
+Both container cells use the workflow's `runtime.image` (default `oven/bun:1-alpine`). The
+[workflow note spec](specs/workflow-note-spec.md) has the full format, including cell
+attributes (`depends`, `timeout`, `model`, `temperature`, `maxTokens`) and the output files.
+
+### Settings
+
+| Setting | Default | |
+|---------|---------|---|
+| Default provider | OpenAI | OpenAI or Anthropic, for every `ore:ai` cell |
+| Default model | `gpt-5-mini` | Used when a cell sets no `model=`. Clearing the field sets the current provider's default (`claude-haiku-5-5` for Anthropic) |
+| Temperature | provider default | |
+| Max tokens | 800 | |
+| AI request timeout | 120 seconds | |
+| Default runtime engine | Docker | A workflow's `runtime.engine` overrides it |
+| Output folder | `_vaultore` | Where run outputs are written |
+| OpenAI API key, Anthropic API key | none | The name of a secret in Obsidian's secret storage |
+| Run scheduled workflows | off | See [Scheduling](#scheduling) |
 
 ### Scheduling
-
-Add a cron expression to run a workflow automatically while Obsidian is open:
 
 ```yaml
 ---
 ore: true
 name: Daily Summary
-schedule: "0 18 * * *"   # every day at 6pm
+schedule: "0 18 * * *"   # every day at 18:00, local time
 ---
 ```
 
 Nothing runs on a schedule until you opt in. **Settings → VaultOre → Scheduled workflows**
-lists every note with a schedule, its next run or why its schedule is invalid. Turn on
+lists every note with a schedule, with its next run or why the schedule is invalid. Turn on
 **Run scheduled workflows**, then approve each note you want to run. An approval covers that
 note's path and exact schedule: a changed schedule, a renamed note, or a note that arrives
-later through sync is listed but does not run until you approve it.
+through sync is listed but does not run until you approve it. Scheduled runs happen only while
+Obsidian is open.
 
-## 🔐 Security & Privacy
+## Security Model
 
-- **Code execution is sandboxed.** `ore:ts` and `ore:shell` cells run inside containers with **network disabled by default**, memory/CPU limits, and your vault mounted read-only unless a workflow is granted write permission.
-- **Permissions are explicit.** Workflows declare `network`, `vaultRead`, and `vaultWrite` permissions in frontmatter. Anything marked `ask` triggers a confirmation dialog, and your decision is remembered per workflow.
-- **AI cells call external services.** When a workflow contains `ore:ai` cells, the cell's prompt — including any interpolated cell outputs and note contents — is sent to the AI provider you configured (OpenAI or Anthropic) using your own API key. Nothing is sent anywhere unless a workflow with AI cells runs.
-- **API keys stay local.** Keys live in Obsidian's secret storage on your device. VaultOre's settings hold only the name of the secret you selected, never the key.
-- **No telemetry.** VaultOre makes no network requests of its own.
+**Permissions** are declared per workflow in frontmatter, each `allow`, `deny` or `ask`.
+The defaults ([permissions spec](specs/permissions-spec.md), the single source):
 
-See the [Permissions Spec](specs/permissions-spec.md) for the full security model.
+| Permission | Default | Controls |
+|------------|---------|----------|
+| `network` | `deny` | Network for container cells; required by AI cells |
+| `vaultRead` | `allow` | Whether the vault is mounted into containers; `{{note:}}` |
+| `vaultWrite` | `deny` | Whether that mount is writable |
+| `buildNetwork` | `ask` | Nothing yet (reserved for planned Python and Go cells) |
 
-## 🔌 Interoperability
+**The mount enforces them.** A container cell sees the whole vault read-only, the whole vault
+read-write, only its own run directory, or nothing, depending on `vaultRead` and `vaultWrite`.
+`.obsidian/`, which holds the plugin and its settings, is hidden from every cell.
 
-VaultOre is core-first: the engine is editor-agnostic, and Obsidian is one of several surfaces.
+**Containers are hardened** on every engine: read-only root filesystem, a `noexec` `/tmp`, no
+Linux capabilities, a non-root user, no network unless granted, and memory and CPU limits.
+Docker, Podman and Colima also get `no-new-privileges` and a limit of 256 processes, which
+Apple's `container` cannot express (it runs each container in its own VM). Exact flags per
+engine: [sandbox spec](specs/sandbox-spec.md) and permissions spec §4.
 
-- **Standalone CLI** — `vaultore run <workflow.md>` executes any workflow headless, no Obsidian required; `vaultore agent` is a local scheduler daemon ([@vaultore/cli](packages/cli), build from source — not on npm yet)
-- **CronAI handover** — `vaultore schedules export` emits a manifest that hands scheduled jobs to always-on CronAI infrastructure ([spec](specs/cronai-handover-spec.md))
-- **Open Knowledge Format** — run outputs and artifact indexes are [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.2 concepts out of the box, so any OKF consumer can ingest VaultOre's output tree as an agent-ready knowledge bundle
-- **Obsidian CLI & Quarto** — composes with the official Obsidian CLI (1.12+) and maps cleanly onto Quarto's QMD cells; a `quarto-vaultore` engine extension is planned
+**`ask` is asked once per content.** The decision is stored for that note and bound to a hash
+of its frontmatter and cells; when either changes, including through sync, you are asked
+again. A permission set to `allow` or `deny` in the note is applied without a prompt.
 
-Details in [docs/interoperability.md](docs/interoperability.md).
+**Scheduling needs consent**, off by default, per note and schedule (above).
 
-## 🎯 Why VaultOre?
+**API keys** live in Obsidian's secret storage. VaultOre's settings hold only the name of the
+secret you selected, never the key, and the plugin never writes to the secret storage. Keys
+are used for the provider request only, not passed to containers.
 
-| If you want... | Use... |
-|----------------|--------|
-| Chat inside Obsidian | Copilot, Smart Connections |
-| AI coding agents | Claude Code, OpenProse |
-| Visual automation builders | n8n, Zapier |
-| **AI + code execution + your vault + scheduling** | **VaultOre** |
+## Known Limitations
 
-1. **Knowledge-first** — Your vault is the data source, not just storage
-2. **Time-triggered** — Cron scheduling, not just reactive automation
-3. **Obsidian-native** — Outputs become linkable notes in your graph
-4. **Git-friendly** — Workflows diff cleanly and are easy to share
+- **Colima with sshfs file sharing** can show a container a stale, cut-off copy of a file
+  written a moment earlier, so a cell that reads a note and writes it back can truncate it
+  ([#83](https://github.com/cronai-labs/vaultore/issues/83)). Use virtiofs:
+  `colima start --vm-type vz --mount-type virtiofs`.
+- **`buildNetwork` is asked for** on the first run of every workflow that does not set it,
+  although nothing uses it. Add `buildNetwork: deny` to the note's `permissions`.
+- **Dependency cycles are not detected**: the cells run in document order
+  ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
+- **A cell timeout stops the engine's CLI, not the container**, which may keep running until it
+  exits; the error reads `exit 1`.
+- **Only `.obsidian/` is hidden** from cells. Obsidian's "Override config folder" setting is
+  not followed.
+- **Switching the provider keeps the default model** of the other provider; AI cells then fail
+  with a message saying so, until you change the model.
+- **The Apple `container` engine** is covered by unit tests only, not yet by runs against a
+  real installation.
 
-## 🗺️ Roadmap
+## Command-Line Interface
 
-| Version | Theme | Key Features |
-|---------|-------|--------------|
-| **v0.1 (current)** | MVP | TypeScript, shell, and AI cells; scheduling; permissions; Docker/Podman/Colima/Apple container engines; standalone CLI + headless agent; OKF-conformant outputs |
-| v0.2 | Notebooks that don't rot | **WASM sandbox tier (no container required for TS cells)**, Python cells, dependency graph, staleness detection, semantic conditions, warm container pool, OKF bundle export |
-| v0.3 | Go + control flow | Go cells with build caching (WASI lane under evaluation), loop/parallel blocks |
-| v0.4 | Automation | CronAI cloud execution, event triggers, Quarto engine extension, more AI providers |
-| v0.5 | Portability | VS Code and Zed extensions |
-
-Each version is additive — no breaking changes to the workflow format.
-
-## 📖 Documentation
-
-- [Plugin Development Quickstart](docs/quickstart-plugin-dev.md) — build and hack on VaultOre
-- [Documentation Index](docs/index.md) — all docs in one place
-- [Workflow Note Spec](specs/workflow-note-spec.md) — the full workflow format
-- [Permissions Spec](specs/permissions-spec.md) — security model
-- [Sandbox Spec](specs/sandbox-spec.md) — execution tiers: containers today, WASM next
-- [Architecture](ARCHITECTURE.md) — system design
-
-## 🏗️ Architecture
+`@vaultore/cli` runs the same workflows without Obsidian, on any folder of Markdown. It is not
+on npm yet; build it from source (`bun run build`) and run `node packages/cli/dist/cli.js`.
 
 ```
-vaultore/
-├── packages/
-│   ├── core/        # @vaultore/core - Editor-agnostic engine
-│   ├── obsidian/    # Obsidian plugin
-│   └── cli/         # @vaultore/cli - Standalone CLI + headless agent
-├── containers/      # Runtime container images
-├── specs/           # Specifications (TDD anchors)
-├── fixtures/        # Canonical test workflows
-└── docs/            # Documentation
+vaultore run <workflow.md> [--vault <dir>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
+vaultore list [--vault <dir>]
+vaultore agent [--vault <dir>] [--yes] [--rescan <seconds>] [--quiet]
+vaultore schedules export [--vault <dir>] [--out <file>]
 ```
 
-## 🤝 Contributing
+- Settings come from `<vault>/.vaultore/config.json` (`defaultProvider`, `defaultModel`,
+  `runtimeEngine`, `outputRoot`, `aiTimeoutSeconds`, …), API keys from the environment
+  (`VAULTORE_OPENAI_APIKEY` or `OPENAI_API_KEY`, `VAULTORE_ANTHROPIC_APIKEY` or
+  `ANTHROPIC_API_KEY`).
+- Permissions at `ask` are denied unless you pass `--yes`, and the decision is stored in the
+  config file. A `deny` stored that way sticks until the note changes
+  ([#28](https://github.com/cronai-labs/vaultore/issues/28)).
+- `vaultore agent` is a scheduler daemon. **It runs every workflow in the vault that has a
+  schedule; it has no approval step.**
+- `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
+  ([handover spec](specs/cronai-handover-spec.md)).
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, commit conventions, and the release process.
+More in [docs/interoperability.md](docs/interoperability.md).
 
-```bash
-git clone https://github.com/cronai-labs/vaultore.git
-cd vaultore
-bun install
-bun run build
-bun run test
-```
+## Documentation
 
-## 📄 License
+- [Workflow note spec](specs/workflow-note-spec.md): the format, and what is planned
+- [Permissions spec](specs/permissions-spec.md): permissions, mounts, stored decisions
+- [Sandbox spec](specs/sandbox-spec.md): container engines and hardening
+- [Roadmap](docs/roadmap.md): what exists, what is next
+- [All documentation](docs/index.md)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions and the release process, and the
+[plugin development quickstart](docs/quickstart-plugin-dev.md) for running a dev build.
+
+## License
 
 MIT © [CronAI UG](https://cronai.de)
-
----
-
-Made with ❤️ for the Obsidian community
