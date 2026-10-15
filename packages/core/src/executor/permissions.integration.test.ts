@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WorkflowExecutor } from "./index";
-import { filesystemPlatform, makeIntegrationVaultRoot } from "../testing/integration-vault";
+import { IT_ENGINE, filesystemPlatform, makeIntegrationVaultRoot } from "../testing/integration-vault";
 
 /**
  * vaultRead enforced at the mount (#68) and the container hardening (#28),
@@ -180,7 +180,7 @@ grep -E '^(CapEff|NoNewPrivs):' /proc/self/status | tr -d ' \t'`)
 		expect(out).not.toContain("the plugin settings");
 		expect(out).toMatch(/^CapEff:0+$/m);
 		// Apple's CLI has no no-new-privileges flag (permissions-spec §4.1).
-		if (ENGINE !== "apple") expect(out).toMatch(/^NoNewPrivs:1$/m);
+		if (IT_ENGINE !== "apple") expect(out).toMatch(/^NoNewPrivs:1$/m);
 
 		const written = join(root, String(field("runDir")), "sh.txt");
 		expect(readFileSync(written, "utf8")).toBe("from shell\n");
