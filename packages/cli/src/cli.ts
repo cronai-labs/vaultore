@@ -13,8 +13,15 @@ import { promises as fs } from "node:fs";
 import { resolve } from "node:path";
 import { WorkflowExecutor, WorkflowScheduler, VERSION } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
+import { createSingleFlightRunner } from "./agent";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
-import { hasExplicitVault, parseArgs, toVaultRelative, vaultRootFrom } from "./args";
+import {
+	hasExplicitVault,
+	parseArgs,
+	rescanSecondsFrom,
+	toVaultRelative,
+	vaultRootFrom,
+} from "./args";
 import type { ParsedArgs } from "./args";
 
 function usage(): string {
@@ -128,6 +135,14 @@ async function cmdList(args: ParsedArgs): Promise<number> {
 }
 
 async function cmdAgent(args: ParsedArgs): Promise<number> {
+	let rescanSeconds: number;
+	try {
+		rescanSeconds = rescanSecondsFrom(args.flags);
+	} catch (err) {
+		process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n\n` + usage());
+		return 2;
+	}
+
 	const vaultRoot = vaultRootFrom(args.flags);
 	const adapter = new NodeAdapter({
 		vaultRoot,
@@ -135,20 +150,26 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		quiet: args.flags["quiet"] === true,
 	});
 	const executor = new WorkflowExecutor();
-	const rescanSeconds = Number(args.flags["rescan"] ?? 300) || 300;
 
-	const runByPath = async (path: string): Promise<void> => {
-		try {
-			const content = await adapter.readFile(path);
-			process.stdout.write(`[vaultore:agent] running ${path}\n`);
-			await executor.runWorkflow({ platform: adapter, workflowPath: path, content });
-			process.stdout.write(`[vaultore:agent] completed ${path}\n`);
-		} catch (err) {
+	const runByPath = createSingleFlightRunner(
+		async (path: string): Promise<void> => {
+			try {
+				const content = await adapter.readFile(path);
+				process.stdout.write(`[vaultore:agent] running ${path}\n`);
+				await executor.runWorkflow({ platform: adapter, workflowPath: path, content });
+				process.stdout.write(`[vaultore:agent] completed ${path}\n`);
+			} catch (err) {
+				process.stderr.write(
+					`[vaultore:agent] failed ${path}: ${err instanceof Error ? err.message : String(err)}\n`
+				);
+			}
+		},
+		(path) => {
 			process.stderr.write(
-				`[vaultore:agent] failed ${path}: ${err instanceof Error ? err.message : String(err)}\n`
+				`[vaultore:agent] skipped ${path}: the previous run is still in progress\n`
 			);
 		}
-	};
+	);
 
 	const scheduler = new WorkflowScheduler({
 		tickIntervalMs: 60 * 1000,

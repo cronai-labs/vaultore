@@ -1,6 +1,13 @@
 import { resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import { hasExplicitVault, parseArgs, toVaultRelative, vaultRootFrom } from "./args";
+import {
+	DEFAULT_RESCAN_SECONDS,
+	hasExplicitVault,
+	parseArgs,
+	rescanSecondsFrom,
+	toVaultRelative,
+	vaultRootFrom,
+} from "./args";
 import { stripTrailing } from "./scan";
 
 describe("parseArgs", () => {
@@ -109,5 +116,24 @@ describe("stripTrailing", () => {
 		const started = performance.now();
 		expect(stripTrailing("x" + "/".repeat(200_000), "/")).toBe("x");
 		expect(performance.now() - started).toBeLessThan(1_000);
+	});
+});
+
+describe("rescanSecondsFrom", () => {
+	it("defaults when --rescan is absent", () => {
+		expect(rescanSecondsFrom({})).toBe(DEFAULT_RESCAN_SECONDS);
+	});
+
+	it("accepts a positive number of seconds", () => {
+		expect(rescanSecondsFrom(parseArgs(["agent", "--rescan", "60"]).flags)).toBe(60);
+		expect(rescanSecondsFrom(parseArgs(["agent", "--rescan=2.5"]).flags)).toBe(2.5);
+	});
+
+	// A bad value used to become 300 silently (NaN || 300), and a negative one
+	// went straight to setInterval, which fires it back to back.
+	it.each(["-5", "0", "abc", "", "Infinity", "1e10"])("rejects --rescan=%s", (value) => {
+		expect(() => rescanSecondsFrom(parseArgs(["agent", `--rescan=${value}`]).flags)).toThrow(
+			new RegExp(`--rescan must be .*got '${value.replace("+", "\\+")}'`)
+		);
 	});
 });

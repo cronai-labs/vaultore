@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NodeAdapter } from "./adapter";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 
@@ -41,6 +41,38 @@ afterEach(() => {
 });
 
 describe("NodeAdapter", () => {
+	// The CLI keeps global fetch for provider calls (#78); the plugin uses
+	// requestUrl. Both go through the adapter's request capability.
+	it("sends provider requests with fetch and resolves error statuses", async () => {
+		const seen: Array<{ url: string; init: RequestInit }> = [];
+		vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+			seen.push({ url, init });
+			return new Response("rate limited", { status: 429 });
+		});
+		try {
+			const adapter = new NodeAdapter({ vaultRoot: vault, quiet: true });
+			const response = await adapter.request({
+				url: "https://api.openai.com/v1/chat/completions",
+				method: "POST",
+				headers: { Authorization: "Bearer k" },
+				body: "{}",
+				timeoutMs: 5000,
+			});
+
+			expect(response).toEqual({ status: 429, text: "rate limited" });
+			expect(seen).toHaveLength(1);
+			expect(seen[0]?.url).toBe("https://api.openai.com/v1/chat/completions");
+			expect(seen[0]?.init).toMatchObject({
+				method: "POST",
+				headers: { Authorization: "Bearer k" },
+				body: "{}",
+			});
+			expect(seen[0]?.init.signal).toBeInstanceOf(AbortSignal);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it("reads and writes vault-relative files", async () => {
 		const adapter = new NodeAdapter({ vaultRoot: vault, quiet: true });
 		await adapter.writeFile("Notes/hello.md", "# Hi");

@@ -59,6 +59,31 @@ export function parseArgs(argv: string[]): ParsedArgs {
 	return { positional, flags };
 }
 
+export const DEFAULT_RESCAN_SECONDS = 300;
+
+/**
+ * Longest interval setInterval honours: Node clamps anything above 2^31-1 ms
+ * to 1 ms, which would rescan back to back.
+ */
+const MAX_RESCAN_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
+
+/**
+ * The agent's rescan interval in seconds. A value that is not a positive
+ * number of seconds is a usage error: it used to become 300 silently (NaN)
+ * or reach setInterval as is (negative), which fires back to back.
+ */
+export function rescanSecondsFrom(flags: Record<string, string | boolean>): number {
+	const flag = flags["rescan"];
+	if (flag === undefined) return DEFAULT_RESCAN_SECONDS;
+	const seconds = typeof flag === "string" && flag.trim() !== "" ? Number(flag) : Number.NaN;
+	if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_RESCAN_SECONDS) {
+		throw new Error(
+			`--rescan must be a positive number of seconds up to ${MAX_RESCAN_SECONDS}, got '${String(flag)}'`
+		);
+	}
+	return seconds;
+}
+
 export function hasExplicitVault(flags: Record<string, string | boolean>): boolean {
 	return typeof flags["vault"] === "string";
 }

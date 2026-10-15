@@ -5,5 +5,6 @@ import { configDefaults, defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     exclude: [...configDefaults.exclude, "**/*.integration.{test,spec}.ts"],
+    setupFiles: ["./src/testing/no-network.ts"],
   },
 });

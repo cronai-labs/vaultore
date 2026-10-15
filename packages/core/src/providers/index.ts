@@ -4,7 +4,14 @@
  * BRICK-007/008/009: AI provider abstraction
  */
 
-import { AIProvider, CompletionRequest, CompletionResponse, PlatformAdapter } from "../types";
+import {
+  AIProvider,
+  CompletionRequest,
+  CompletionResponse,
+  PlatformAdapter,
+  PlatformRequest,
+  PlatformResponse,
+} from "../types";
 
 // =============================================================================
 // WIRE FORMATS
@@ -51,6 +58,58 @@ function timeoutMsFor(platform: PlatformAdapter): number {
 }
 
 /**
+ * The transport for adapters without a `request` capability (the CLI passes
+ * this as its own). The abort signal releases the connection on timeout.
+ */
+export async function fetchRequest(request: PlatformRequest): Promise<PlatformResponse> {
+  const response = await fetch(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+    signal: AbortSignal.timeout(request.timeoutMs),
+  });
+  // Read the body here too: the abort signal stays attached to the body
+  // stream, so a body that stalls after the headers arrive is bounded as well.
+  return { status: response.status, text: await response.text() };
+}
+
+/**
+ * Send through the adapter when it can, and bound the call in core: Obsidian's
+ * `requestUrl` takes no abort signal, and an adapter that ignored `timeoutMs`
+ * would otherwise stall the workflow again.
+ */
+async function send(
+  platform: PlatformAdapter,
+  request: PlatformRequest,
+  provider: string,
+  model: string
+): Promise<PlatformResponse> {
+  const startedAt = Date.now();
+  const transport = platform.request
+    ? (req: PlatformRequest) => platform.request!(req)
+    : fetchRequest;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`Request exceeded ${request.timeoutMs}ms`);
+      err.name = "TimeoutError";
+      reject(err);
+    }, request.timeoutMs);
+  });
+  try {
+    return await Promise.race([transport(request), deadline]);
+  } catch (err) {
+    throw describeRequestFailure(err, provider, model, startedAt, request.timeoutMs);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function isSuccess(status: number): boolean {
+  return status >= 200 && status < 300;
+}
+
+/**
  * Turn transport failures into something a user can act on. `fetch` rejects
  * with a bare "Failed to fetch" in Obsidian's renderer, which does not
  * distinguish no-network from a blocked origin from a timeout.
@@ -83,15 +142,72 @@ function describeRequestFailure(
 // PROVIDER FACTORY
 // =============================================================================
 
+export const AI_PROVIDERS = ["openai", "anthropic"] as const;
+export type AIProviderName = (typeof AI_PROVIDERS)[number];
+
+export const DEFAULT_PROVIDER: AIProviderName = "openai";
+
+/**
+ * The model an `ore:ai` cell uses when neither the cell (`model=`) nor the
+ * settings (`defaultModel`) name one. The one place these are defined: the
+ * plugin's settings defaults and the CLI both come through here.
+ */
+export const DEFAULT_MODELS: Readonly<Record<AIProviderName, string>> = {
+  openai: "gpt-5-mini",
+  anthropic: "claude-haiku-5-5",
+};
+
+const PROVIDER_LABELS: Record<AIProviderName, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+};
+
+/** A missing setting means the default provider; an unknown one is an error. */
+export function resolveProviderName(value: string | undefined): AIProviderName {
+  if (value === undefined) return DEFAULT_PROVIDER;
+  if ((AI_PROVIDERS as readonly string[]).includes(value)) {
+    return value as AIProviderName;
+  }
+  throw new Error(
+    `Unknown AI provider "${value}". Set defaultProvider to one of: ${AI_PROVIDERS.join(", ")}.`
+  );
+}
+
+/** The provider a model id clearly belongs to, if any. */
+function ownerOf(model: string): AIProviderName | undefined {
+  const normalized = model.toLowerCase();
+  if (normalized.startsWith("claude-")) return "anthropic";
+  if (/^(gpt-|o1|o3|o4)/.test(normalized)) return "openai";
+  return undefined;
+}
+
+/**
+ * The provider comes from settings, never from the model (#78): a Claude
+ * model sent to OpenAI used to come back as a provider 4xx. Fail before the
+ * request instead, and say how to fix it; the cell is not re-routed.
+ */
+export function assertModelMatchesProvider(provider: AIProviderName, model: string): void {
+  const owner = ownerOf(model);
+  if (!owner || owner === provider) return;
+  const ownerLabel = PROVIDER_LABELS[owner];
+  throw new Error(
+    `Model "${model}" is an ${ownerLabel} model, but the configured provider is ` +
+      `${PROVIDER_LABELS[provider]}. VaultOre does not switch providers per cell: set ` +
+      `the default provider to ${ownerLabel} (plugin: Settings → VaultOre → Default ` +
+      `provider; CLI: "defaultProvider": "${owner}" in .vaultore/config.json), or use ` +
+      `a ${PROVIDER_LABELS[provider]} model (model= on the cell, or the default model ` +
+      `setting).`
+  );
+}
+
 export async function createProviderFromSettings(
   platform: PlatformAdapter,
-  providerName: string
+  providerName: AIProviderName
 ): Promise<AIProvider> {
   switch (providerName) {
     case "anthropic":
       return createAnthropicProvider(platform);
     case "openai":
-    default:
       return createOpenAIProvider(platform);
   }
 }
@@ -128,35 +244,24 @@ export function createOpenAIProvider(platform: PlatformAdapter): AIProvider {
         }
       }
 
-      const timeoutMs = timeoutMsFor(platform);
-      const startedAt = Date.now();
-      let response: Response;
-      try {
-        response = await fetch("https://api.openai.com/v1/chat/completions", {
+      const response = await send(
+        platform,
+        {
+          url: "https://api.openai.com/v1/chat/completions",
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-      } catch (err) {
-        throw describeRequestFailure(err, "OpenAI", request.model, startedAt, timeoutMs);
-      }
+          timeoutMs: timeoutMsFor(platform),
+        },
+        "OpenAI",
+        request.model
+      );
+      const bodyText = response.text;
 
-      // Read the body inside the guard too: the abort signal stays attached to
-      // the body stream, so a response whose headers arrive and whose body
-      // stalls would otherwise reject with the bare error this module exists to
-      // replace — and on the !ok path would lose the status code entirely.
-      let bodyText: string;
-      try {
-        bodyText = await response.text();
-      } catch (err) {
-        throw describeRequestFailure(err, "OpenAI", request.model, startedAt, timeoutMs);
-      }
-
-      if (!response.ok) {
+      if (!isSuccess(response.status)) {
         throw new Error(`OpenAI error: ${response.status} ${bodyText || "<empty body>"}`);
       }
 
@@ -208,11 +313,10 @@ export function createAnthropicProvider(platform: PlatformAdapter): AIProvider {
       }
 
       const maxTokens = request.maxTokens ?? 800;
-      const timeoutMs = timeoutMsFor(platform);
-      const startedAt = Date.now();
-      let response: Response;
-      try {
-        response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await send(
+        platform,
+        {
+          url: "https://api.anthropic.com/v1/messages",
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -227,20 +331,14 @@ export function createAnthropicProvider(platform: PlatformAdapter): AIProvider {
               : {}),
             messages: [{ role: "user", content: request.prompt }],
           }),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-      } catch (err) {
-        throw describeRequestFailure(err, "Anthropic", request.model, startedAt, timeoutMs);
-      }
+          timeoutMs: timeoutMsFor(platform),
+        },
+        "Anthropic",
+        request.model
+      );
+      const bodyText = response.text;
 
-      let bodyText: string;
-      try {
-        bodyText = await response.text();
-      } catch (err) {
-        throw describeRequestFailure(err, "Anthropic", request.model, startedAt, timeoutMs);
-      }
-
-      if (!response.ok) {
+      if (!isSuccess(response.status)) {
         throw new Error(`Anthropic error: ${response.status} ${bodyText || "<empty body>"}`);
       }
 

@@ -53,6 +53,8 @@ export type {
 
   // Platform types
   PlatformAdapter,
+  PlatformRequest,
+  PlatformResponse,
   ProgressHandle,
 
   // Event types
@@ -105,7 +107,17 @@ export { detectRuntimes, execContainer } from "./runtime";
 // PROVIDERS
 // =============================================================================
 
-export { createProviderFromSettings } from "./providers";
+export {
+  createProviderFromSettings,
+  fetchRequest,
+  assertModelMatchesProvider,
+  resolveProviderName,
+  AI_PROVIDERS,
+  DEFAULT_MODELS,
+  DEFAULT_PROVIDER,
+} from "./providers";
+
+export type { AIProviderName } from "./providers";
 
 // =============================================================================
 // SCHEDULER

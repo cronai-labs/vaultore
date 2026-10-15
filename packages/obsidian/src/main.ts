@@ -8,9 +8,16 @@ import {
   Notice,
   TFile,
   SecretComponent,
+  requestUrl,
 } from "obsidian";
-import { WorkflowExecutor, WorkflowParser, WorkflowScheduler } from "@vaultore/core";
-import type { PlatformAdapter } from "@vaultore/core";
+import {
+  DEFAULT_MODELS,
+  DEFAULT_PROVIDER,
+  WorkflowExecutor,
+  WorkflowParser,
+  WorkflowScheduler,
+} from "@vaultore/core";
+import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
 
 interface VaultOreSettings {
   defaultProvider: "openai" | "anthropic";
@@ -25,8 +32,8 @@ interface VaultOreSettings {
 }
 
 const DEFAULT_SETTINGS: VaultOreSettings = {
-  defaultProvider: "openai",
-  defaultModel: "gpt-5-mini",
+  defaultProvider: DEFAULT_PROVIDER,
+  defaultModel: DEFAULT_MODELS[DEFAULT_PROVIDER],
   aiMaxTokens: 800,
   aiTimeoutSeconds: 120,
   runtimeEngine: "docker",
@@ -231,6 +238,24 @@ class ObsidianAdapter implements PlatformAdapter {
     const existing = storage.getSecret(secretId);
     if (existing == null) return;
     storage.setSecret(secretId, "");
+  }
+
+  /**
+   * Provider calls go through requestUrl, which runs outside the renderer's
+   * CORS: `fetch` from here carries a browser Origin that Anthropic rejects.
+   * `throw: false` keeps the status and body of a 4xx/5xx for the error
+   * message. requestUrl takes no abort signal; core bounds the call by
+   * `timeoutMs`.
+   */
+  async request(req: PlatformRequest): Promise<PlatformResponse> {
+    const response = await requestUrl({
+      url: req.url,
+      method: req.method,
+      headers: req.headers,
+      body: req.body,
+      throw: false,
+    });
+    return { status: response.status, text: response.text };
   }
 
   showNotification(message: string, type: "info" | "warning" | "error"): void {
@@ -631,7 +656,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
         text.setValue(this.plugin.settings.defaultModel);
         text.onChange(async (value) => {
           this.plugin.settings.defaultModel =
-            value.trim() || DEFAULT_SETTINGS.defaultModel;
+            value.trim() || DEFAULT_MODELS[this.plugin.settings.defaultProvider];
           await this.plugin.saveSettings();
         });
       });
