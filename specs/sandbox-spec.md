@@ -1,7 +1,8 @@
 # Sandbox Integration Specification
 
 > **Version:** 0.1.0 (draft)
-> **Status:** Design — targets v0.2 (Tier 2) and v0.3+ (Tier 3)
+> **Status:** Tier 1 describes the code. Tiers 2 and 3 are proposals, not built
+> ([roadmap](../docs/roadmap.md#under-consideration)).
 > **Last Updated:** 2026-10-15
 
 ## Motivation
@@ -18,7 +19,7 @@ enforce a permission, execution fails closed with a clear error.
 
 ## Tier Model
 
-### Tier 1 — OCI Containers (shipped, v0.1)
+### Tier 1 — OCI Containers (shipped)
 
 Full-machine isolation via lightweight VMs or namespaces. Required for
 `ore:shell` (arbitrary binaries) and any cell needing a real Linux userland.
@@ -41,11 +42,11 @@ Apple `container` gets all but the two its CLI lacks. The exact flags per engine
 are in `permissions-spec.md` §4.1.
 
 Windows guidance: Docker Desktop (WSL2 backend), Docker Engine installed
-inside a WSL2 distro, or Podman. Microsoft's native WSL containers (`wslc`,
-public preview June 2026) may become a first-class engine once it reaches GA
-and exposes network isolation flags.
+inside a WSL2 distro, or Podman. On Windows the Apple engine is never probed,
+and cells run as `65534:65534` because there are no POSIX ids
+(permissions-spec §4.2).
 
-### Tier 2 — In-Process WASM Sandbox for `ore:ts` (planned, v0.2)
+### Tier 2 — In-Process WASM Sandbox for `ore:ts` (proposed)
 
 A JavaScript engine compiled to WebAssembly (QuickJS family:
 `quickjs-emscripten` / QuickJS-NG builds) embedded in the plugin. WASM linear
@@ -102,21 +103,21 @@ explicitly inject.
   `vault` API is the supported surface. The spec'd cell API (`vault.*`,
   `cell()`) is identical across tiers so workflows stay portable.
 
-### Tier 3 — WASI Components for Compiled Cells (exploratory, v0.3+)
+### Tier 3 — WASI Components for Compiled Cells (exploratory)
 
-WASI 0.2 and the component model are now stable, with Wasmtime as the
-reference runtime and `jco` maturing for JavaScript hosts. This opens a lane
-for:
+WASI components (Wasmtime as a reference runtime, `jco` for JavaScript hosts)
+could open a lane for:
 
 - `ore:go` cells compiled via TinyGo to WASI, executed in-process with
   capability-scoped preopens instead of a Go builder container
-- `ore:py` via Pyodide (Emscripten build runs in Node/Electron today) or
-  CPython's tier-2 WASI target
+- `ore:py` via Pyodide (an Emscripten build of CPython) or CPython's WASI
+  target
 - Cached compiled components keyed by source hash (mirrors the existing Go
   build-cache design in `go-cell-spec.md`)
 
-This tier is research-stage: the component-model JS host story (`jco`) and
-Pyodide-in-Electron packaging need prototyping before committing to a version.
+This tier is research-stage: hosting components from JavaScript (`jco`) and
+packaging Pyodide inside Electron need prototyping, against the WASI and
+Pyodide releases current at that time, before anything is committed to.
 
 ## Permission Mapping Summary
 
@@ -143,12 +144,14 @@ Pyodide-in-Electron packaging need prototyping before committing to a version.
    apple/container 0.6.0 (#739). `--internal` networks stay unusable for
    isolation until apple/container #2062 is fixed.
 
-## Rollout Plan
+## Proposed Order
 
-| Step | Deliverable | Target |
-|------|-------------|--------|
-| 1 | `SandboxProvider` interface in `@vaultore/core` abstracting Tier 1 exec | v0.2 |
-| 2 | QuickJS wasm provider for `ore:ts` with capability bridge | v0.2 |
-| 3 | `engine: auto` fallback chain + settings UI | v0.2 |
-| 4 | Pyodide spike for `ore:py` | v0.3 |
-| 5 | TinyGo→WASI spike for `ore:go` | v0.3+ |
+None of these steps has started.
+
+| Step | Deliverable |
+|------|-------------|
+| 1 | `SandboxProvider` interface in `@vaultore/core` abstracting Tier 1 exec |
+| 2 | QuickJS wasm provider for `ore:ts` with capability bridge |
+| 3 | `engine: auto` fallback chain + settings UI |
+| 4 | Pyodide spike for `ore:py` |
+| 5 | TinyGo→WASI spike for `ore:go` |

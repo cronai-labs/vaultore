@@ -1,9 +1,10 @@
 # Go Cell Specification v0.1
 
-> **Status:** Future (v0.3+)  
+> **Status:** A design; not built. The parser accepts `ore:go` fences and a `go:` frontmatter
+> block, and the executor fails every `ore:go` cell as unsupported.  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-01-10  
-> **Roadmap:** See [Roadmap](../docs/roadmap.md#v03-go--control-flow-month-2-3)
+> **Last Updated:** 2026-10-15  
+> **Roadmap:** [Under consideration](../docs/roadmap.md#under-consideration)
 
 ## Overview
 
@@ -32,17 +33,15 @@ Go cells compile to cached binaries and run in a container sandbox, offering:
 
 - **TS/Bun:** Orchestration, interactive notebooks, rapid iteration, prompt hacking, web APIs
 - **Go:** Fast, cached steps for stable tooling (parsers, extractors, deterministic transforms, heavy compute)
-- **Python:** Data science, analytics, visualization (v0.2+)
+- **Python:** Data science, analytics, visualization (`ore:py`, also not built)
 
 **Best model:** TS orchestrates; Go accelerates stable hot-path steps.
 
-See [Roadmap](../docs/roadmap.md#v03-go--control-flow-month-2-3) for version timeline.
-
-### Non-Goals (v0.1)
+### Non-Goals (first version)
 
 - Full multi-file Go projects in-note
 - Distributed cache / remote build farm
-- Automatic DAG re-run (staleness belongs to core v0.2+)
+- Automatic DAG re-run (staleness tracking would belong to core)
 
 ---
 
@@ -110,7 +109,7 @@ runtime:
 
 go:
   version: "1.23"
-  builderImage: "ghcr.io/vaultore/go-builder:1.23"
+  builderImage: "ghcr.io/vaultore/go-builder:1.23"  # not published; see §11.2
   cgo: 0
   tags: ""
   ldflags: "-s -w"
@@ -396,7 +395,7 @@ console.log(result.sum);
 ```
 ```
 
-### 10.2 Go → Python Pattern (v0.2+)
+### 10.2 Go → Python Pattern
 
 ```markdown
 ```ore:go id=compute stdout=json
@@ -425,10 +424,11 @@ data = json.loads(cell("compute"))
 
 ### 11.2 Container Images
 
-**Builder image:** `ghcr.io/vaultore/go-builder:1.23`
-- Based on `golang:1.23-alpine`
-- Includes: git, ca-certificates
-- Non-root user configured
+**Builder image:** `containers/go-builder/Dockerfile` defines it: `golang:1.23-alpine` with
+git, ca-certificates and tzdata, and a non-root user. **No image is built or published.**
+`ghcr.io/vaultore/go-builder:1.23`, the default `builderImage` in the examples above and in
+`DEFAULT_GO_CONFIG` (`packages/core/src/types/index.ts`), is the intended name, not an image
+that exists; a registry location is decided when Go cells are built.
 
 **Optional runner image (future):**
 - `scratch` or `distroless` for minimal runtime
