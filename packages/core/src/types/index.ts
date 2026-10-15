@@ -95,6 +95,15 @@ export interface ContainerExecOptions {
   networkEnabled?: boolean;
   mounts?: ContainerMount[];
   stdin?: string;
+  /** `uid:gid` the cell runs as; defaults to `containerUser()`. */
+  user?: string;
+  /** Process cap; defaults to `DEFAULT_PIDS_LIMIT`. Ignored by Apple container. */
+  pidsLimit?: number;
+  /**
+   * Container paths hidden behind an empty read-only tmpfs. Each must exist
+   * under a mount, or the engine has to create the mount point.
+   */
+  maskedPaths?: string[];
 }
 
 /**

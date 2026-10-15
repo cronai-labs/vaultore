@@ -4,10 +4,14 @@ import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import {
   buildRunCommand,
+  containerUser,
+  DEFAULT_PIDS_LIMIT,
   detectRuntimes,
   DETECTION_TIMEOUT_MS,
+  FALLBACK_CONTAINER_USER,
   searchPathEntries,
 } from "./index";
+import type { RuntimeEngine } from "../types";
 import type { ContainerExecOptions } from "../types";
 
 const baseOptions: ContainerExecOptions = {
@@ -180,5 +184,103 @@ describe("searchPathEntries", () => {
 
   it("treats an unset PATH as empty", () => {
     expect(searchPathEntries(undefined)).toEqual([]);
+  });
+});
+
+describe("container hardening (#28)", () => {
+  const dockerFamily: RuntimeEngine[] = ["docker", "podman", "colima"];
+  const hardened = { ...baseOptions, user: "501:20" };
+
+  /** The value following `flag`, or undefined. */
+  function valueOf(args: string[], flag: string): string | undefined {
+    const at = args.indexOf(flag);
+    return at === -1 ? undefined : args[at + 1];
+  }
+
+  for (const engine of dockerFamily) {
+    for (const networkEnabled of [false, true]) {
+      it(`${engine}, network ${networkEnabled ? "allow" : "deny"}: emits every hardening flag`, () => {
+        const { args } = buildRunCommand(engine, { ...hardened, networkEnabled });
+
+        expect(args).toContain("--read-only");
+        expect(valueOf(args, "--tmpfs")).toBe("/tmp:rw,noexec,nosuid,nodev,mode=1777");
+        expect(args).toContain("--cap-drop=ALL");
+        expect(args).toContain("--security-opt=no-new-privileges");
+        expect(args).toContain(`--pids-limit=${DEFAULT_PIDS_LIMIT}`);
+        expect(args).toContain("--user=501:20");
+        expect(args.join(" ")).toContain("-e HOME=/tmp");
+        expect(args.includes("--network=none")).toBe(!networkEnabled);
+      });
+    }
+  }
+
+  for (const networkEnabled of [false, true]) {
+    it(`apple, network ${networkEnabled ? "allow" : "deny"}: emits only the flags its CLI supports`, () => {
+      const { args } = buildRunCommand("apple", { ...hardened, networkEnabled });
+
+      expect(args).toContain("--read-only");
+      expect(valueOf(args, "--tmpfs")).toBe("/tmp:rw,noexec,nosuid,nodev,mode=1777");
+      expect(valueOf(args, "--cap-drop")).toBe("ALL");
+      expect(valueOf(args, "--user")).toBe("501:20");
+      expect(args.join(" ")).toContain("-e HOME=/tmp");
+      // No equivalent in apple/container's command reference.
+      expect(args.some((arg) => arg.startsWith("--pids-limit"))).toBe(false);
+      expect(args.some((arg) => arg.startsWith("--security-opt"))).toBe(false);
+      expect(valueOf(args, "--network") === "none").toBe(!networkEnabled);
+    });
+  }
+
+  it("puts the hardening flags before the image", () => {
+    const { args } = buildRunCommand("docker", hardened);
+    const image = args.indexOf("oven/bun:1-alpine");
+    for (const flag of ["--read-only", "--cap-drop=ALL", "--user=501:20"]) {
+      expect(args.indexOf(flag)).toBeGreaterThan(-1);
+      expect(args.indexOf(flag)).toBeLessThan(image);
+    }
+  });
+
+  it("takes a pids limit override", () => {
+    const { args } = buildRunCommand("podman", { ...hardened, pidsLimit: 64 });
+    expect(args).toContain("--pids-limit=64");
+    expect(args).not.toContain(`--pids-limit=${DEFAULT_PIDS_LIMIT}`);
+  });
+
+  it("runs as containerUser() when no user is given", () => {
+    const { args } = buildRunCommand("docker", baseOptions);
+    expect(args).toContain(`--user=${containerUser()}`);
+  });
+
+  for (const engine of [...dockerFamily, "apple"] as RuntimeEngine[]) {
+    it(`${engine}: hides masked paths behind an empty read-only tmpfs`, () => {
+      const { args } = buildRunCommand(engine, {
+        ...hardened,
+        maskedPaths: ["/workspace/.obsidian"],
+      });
+      const tmpfs = args.filter((_, i) => args[i - 1] === "--tmpfs");
+      expect(tmpfs).toEqual([
+        "/tmp:rw,noexec,nosuid,nodev,mode=1777",
+        "/workspace/.obsidian:ro,noexec,nosuid,nodev",
+      ]);
+      // After the vault mount it covers, so engines that mount in argument
+      // order also get it right.
+      const vault = args.indexOf("/vault:/workspace:ro");
+      expect(args.indexOf("/workspace/.obsidian:ro,noexec,nosuid,nodev")).toBeGreaterThan(vault);
+    });
+  }
+});
+
+describe("containerUser", () => {
+  it("uses the host's uid:gid", () => {
+    expect(containerUser({ uid: 1000, gid: 1000 })).toBe("1000:1000");
+    expect(containerUser({ uid: 501, gid: 20 })).toBe("501:20");
+  });
+
+  it("falls back to an unprivileged user on hosts without POSIX ids", () => {
+    expect(containerUser({ uid: undefined, gid: undefined })).toBe(FALLBACK_CONTAINER_USER);
+  });
+
+  it("never maps a root host user to root in the container", () => {
+    expect(containerUser({ uid: 0, gid: 0 })).toBe(FALLBACK_CONTAINER_USER);
+    expect(FALLBACK_CONTAINER_USER.startsWith("0:")).toBe(false);
   });
 });

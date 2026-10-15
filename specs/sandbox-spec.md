@@ -2,7 +2,7 @@
 
 > **Version:** 0.1.0 (draft)
 > **Status:** Design — targets v0.2 (Tier 2) and v0.3+ (Tier 3)
-> **Last Updated:** 2026-07-20
+> **Last Updated:** 2026-10-15
 
 ## Motivation
 
@@ -28,12 +28,17 @@ Full-machine isolation via lightweight VMs or namespaces. Required for
 sets a custom image gets it for every container cell, so that image must
 provide `sh` (shell cells run `sh -lc`) and, for `ore:ts`, `bun`.
 
-| Engine | Platform | Isolation | Network deny | Notes |
-|--------|----------|-----------|--------------|-------|
-| Docker | all | namespaces / VM | `--network=none` | Reference engine |
-| Podman | all | namespaces / VM | `--network=none` | Rootless supported |
-| Colima | macOS | VM | `--network=none` | Uses the docker CLI |
-| Apple `container` | macOS 26+, Apple silicon | per-container micro-VM | `--network none` | Each container boots its own VM. `--network none` (apple/container #739, CLI 0.6.0+) attaches no network. VaultOre never uses an `--internal` network for this: those still allow outbound TCP (apple/container #2062). Probed only on macOS. |
+| Engine | Platform | Isolation | Network deny | Hardening | Notes |
+|--------|----------|-----------|--------------|-----------|-------|
+| Docker | all | namespaces / VM | `--network=none` | full | Reference engine |
+| Podman | all | namespaces / VM | `--network=none` | full | Rootless engines map the container uid to a subordinate uid (permissions-spec §4.2) |
+| Colima | macOS | VM | `--network=none` | full | Uses the docker CLI |
+| Apple `container` | macOS 26+, Apple silicon | per-container micro-VM | `--network none` | partial: no `no-new-privileges`, no pids limit | Each container boots its own VM. `--network none` (apple/container #739, CLI 0.6.0+) attaches no network. VaultOre never uses an `--internal` network for this: those still allow outbound TCP (apple/container #2062). Probed only on macOS. Unit-tested on the emitted arguments only. |
+
+"Full" hardening is `--read-only` with a tmpfs `/tmp`, `--cap-drop=ALL`,
+`--security-opt=no-new-privileges`, `--pids-limit=256` and a non-root `--user`;
+Apple `container` gets all but the two its CLI lacks. The exact flags per engine
+are in `permissions-spec.md` §4.1.
 
 Windows guidance: Docker Desktop (WSL2 backend), Docker Engine installed
 inside a WSL2 distro, or Podman. Microsoft's native WSL containers (`wslc`,

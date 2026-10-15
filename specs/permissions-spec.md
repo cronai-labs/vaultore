@@ -2,7 +2,7 @@
 
 > **Status:** Canonical  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-01-09
+> **Last Updated:** 2026-10-15
 
 ## Overview
 
@@ -143,34 +143,68 @@ Controls writing/creating notes in the vault.
 
 ### 4.1 Default Container Flags
 
-All cells run with these Docker/Podman flags:
+Every container cell (`ore:ts` and `ore:shell`) gets these flags from `buildRunCommand`
+(`packages/core/src/runtime/index.ts`). They are not configurable per workflow, except the
+limits in §4.3. Docker, Podman and Colima (which drives the docker CLI) get:
 
 ```bash
-docker run \
-  --rm \
-  --network=none \           # Unless network: allow
-  --read-only \              # Except /tmp and /workspace
-  --memory=512m \
-  --cpus=1 \
-  --pids-limit=256 \
-  --user=1000:1000 \         # Non-root
-  --security-opt=no-new-privileges \
+docker run --rm \
+  --network=none \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,mode=1777 \
   --cap-drop=ALL \
-  -v /vault:/workspace:ro \  # Vault mounted read-only
-  -v /tmp:/tmp:rw \          # Temp directory writable
+  --security-opt=no-new-privileges \
+  --pids-limit=256 \
+  --user=<uid>:<gid> \
+  -e HOME=/tmp \
+  --memory 512m --cpus 1 \
+  --workdir /workspace \
+  -v <vault>:/workspace:ro \
   $IMAGE $COMMAND
 ```
 
-### 4.2 Configurable Limits
+| Flag | Docker / Podman / Colima | Apple `container` | Purpose |
+|------|--------------------------|-------------------|---------|
+| Network | `--network=none` unless `network: allow` | `--network none` unless `network: allow` | No network attachment at all (§3.1) |
+| Root filesystem | `--read-only` | `--read-only` | Cells cannot modify the image (`/etc`, `/usr`) |
+| Scratch space | `--tmpfs /tmp:rw,noexec,nosuid,nodev,mode=1777` | same | The only writable path outside the mounts; TS cells write their script to `/tmp/vaultore.ts`. Its pages count against the memory limit |
+| `HOME` | `-e HOME=/tmp` | same | The cell's uid has no passwd entry, so `HOME` would be `/`, which is read-only; Bun writes its install cache under `$HOME` and fails with `EROFS` |
+| Capabilities | `--cap-drop=ALL` | `--cap-drop ALL` | No Linux capabilities |
+| Privilege escalation | `--security-opt=no-new-privileges` | **not supported** by the CLI | setuid binaries cannot gain privileges |
+| Process limit | `--pids-limit=256` (`DEFAULT_PIDS_LIMIT`) | **not supported** by the CLI | Stops a fork bomb |
+| User | `--user=<uid>:<gid>` (§4.2) | `--user <uid>:<gid>` | Never root |
+| Memory / CPU | `--memory` / `--cpus` from `runtime.memoryLimit` / `runtime.cpuLimit` | same | §4.3 |
+| Vault | §3.3, §3.4: no mount, the run directory only, or the vault read-only or read-write | same | |
+
+On Apple `container` each container is its own micro-VM, which is the isolation boundary for
+what the CLI cannot express (no `no-new-privileges`, no pids limit; checked against
+apple/container's `docs/command-reference.md`, release 1.5.0). Apple paths are covered by unit
+tests on the emitted arguments only; they have not been run against a real `container` install.
+
+### 4.2 Container User
+
+Cells run as the host's `uid:gid` (`containerUser()`), never as root:
+
+- **Linux:** files a cell writes through a read-write vault mount belong to the vault's owner.
+  This holds for rootful Docker and Podman. Rootless engines map container uids through a user
+  namespace, so a non-zero uid lands on the host as a subordinate uid.
+- **macOS (Colima, Docker Desktop):** the VM's file share maps ownership to the host user
+  whatever the container uid (observed with Colima's sshfs mounts), and the host uid is the owner
+  the share presents the files as, so permission checks inside the VM pass.
+- **No POSIX ids (Windows) or a host running as root:** `65534:65534` (`nobody`,
+  `FALLBACK_CONTAINER_USER`). Writes into the vault may then fail on permissions; that surfaces
+  as a cell error.
+
+### 4.3 Configurable Limits
 
 | Limit | Default | Configurable |
 |-------|---------|--------------|
-| Memory | 512MB | Yes, in settings |
-| CPU | 1 core | Yes, in settings |
-| Timeout | 60s | Yes, per-cell or settings |
-| PIDs | 256 | Yes, in settings |
+| Memory | 512m | Per workflow: `runtime.memoryLimit` |
+| CPU | 1 core | Per workflow: `runtime.cpuLimit` |
+| Timeout | 60s | Per workflow (`runtime.timeout`) or per cell (`timeout`) |
+| PIDs | 256 | No; `DEFAULT_PIDS_LIMIT`, overridable only through the `pidsLimit` option of `execContainer` |
 
-### 4.3 No Unsafe Fallback
+### 4.4 No Unsafe Fallback
 
 If no container runtime is available:
 - Show error message with setup instructions

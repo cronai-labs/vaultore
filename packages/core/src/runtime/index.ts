@@ -122,15 +122,67 @@ export async function execContainer(
   };
 }
 
+/**
+ * Process cap per cell container. It stops a fork bomb from exhausting the
+ * host or VM while leaving ample room for ordinary tools (a Bun cell runs a
+ * handful of processes). Override per call with `pidsLimit`.
+ */
+export const DEFAULT_PIDS_LIMIT = 256;
+
+/**
+ * The only writable path in the container's own filesystem, which is
+ * otherwise read-only. Also HOME: a uid without a passwd entry gets HOME=/,
+ * and Bun writes its install cache under $HOME, failing with EROFS instead of
+ * the real error.
+ */
+export const CONTAINER_TMP = "/tmp";
+
+const TMP_TMPFS = `${CONTAINER_TMP}:rw,noexec,nosuid,nodev,mode=1777`;
+const MASK_TMPFS_OPTIONS = "ro,noexec,nosuid,nodev";
+
+/**
+ * The user a cell runs as when the host offers no usable uid: Windows has no
+ * POSIX ids, and a host running as root must not run cells as root. 65534 is
+ * `nobody` in common base images. Writes into the vault may then fail on
+ * permissions, which surfaces as a cell error.
+ */
+export const FALLBACK_CONTAINER_USER = "65534:65534";
+
+/**
+ * The host's `uid:gid`, so files a cell writes through a read-write vault mount
+ * belong to the vault's owner on Linux. On macOS the VM's file share maps
+ * ownership to the host user whatever the container uid, and the host uid is
+ * the owner the share presents the files as, so permission checks inside the
+ * VM pass.
+ */
+export function containerUser(
+  ids: { uid: number | undefined; gid: number | undefined } = {
+    uid: process.getuid?.(),
+    gid: process.getgid?.(),
+  }
+): string {
+  if (ids.uid === undefined || ids.gid === undefined || ids.uid === 0) {
+    return FALLBACK_CONTAINER_USER;
+  }
+  return `${ids.uid}:${ids.gid}`;
+}
+
+/**
+ * Every cell container runs with a read-only root filesystem, a tmpfs /tmp,
+ * no capabilities and a non-root user. Docker, Podman and Colima (docker CLI)
+ * also get no-new-privileges and a pids limit; Apple's `container` CLI has no
+ * flag for either and its micro-VM is the boundary there.
+ */
 export function buildRunCommand(
   engine: RuntimeEngine,
   options: ContainerExecOptions
 ): { command: string; args: string[] } {
   const runtime = engineBinary(engine);
+  const apple = engine === "apple";
   const args: string[] = ["run", "--rm"];
 
   if (!options.networkEnabled) {
-    if (engine === "apple") {
+    if (apple) {
       // `--network none` attaches no network at all (apple/container #739,
       // since 0.6). Never an `--internal` network: those still allow
       // outbound TCP (apple/container #2062).
@@ -139,6 +191,20 @@ export function buildRunCommand(
       args.push("--network=none");
     }
   }
+
+  const user = options.user ?? containerUser();
+  args.push("--read-only", "--tmpfs", TMP_TMPFS);
+  if (apple) {
+    args.push("--cap-drop", "ALL", "--user", user);
+  } else {
+    args.push(
+      "--cap-drop=ALL",
+      "--security-opt=no-new-privileges",
+      `--pids-limit=${options.pidsLimit ?? DEFAULT_PIDS_LIMIT}`,
+      `--user=${user}`
+    );
+  }
+  args.push("-e", `HOME=${CONTAINER_TMP}`);
 
   if (options.stdin) {
     args.push("-i");
@@ -167,6 +233,12 @@ export function buildRunCommand(
       const mode = mount.readonly ? "ro" : "rw";
       args.push("-v", `${mount.source}:${mount.target}:${mode}`);
     }
+  }
+
+  // After the mounts they cover: Docker sorts mounts by depth anyway, but an
+  // engine that mounts in argument order would otherwise bury the tmpfs.
+  for (const path of options.maskedPaths ?? []) {
+    args.push("--tmpfs", `${path}:${MASK_TMPFS_OPTIONS}`);
   }
 
   args.push(options.image);
