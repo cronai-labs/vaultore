@@ -14,6 +14,43 @@ describe("WorkflowScheduler", () => {
     expect(entry.lastRun).toBeInstanceOf(Date);
     expect(entry.nextRun.getTime()).toBeGreaterThan(Date.now() - 1000);
   });
+
+  // Hosts re-register on every vault change. Recomputing nextRun from "now"
+  // pushed a due run to the following occurrence, so a busy vault could keep
+  // an hourly schedule from ever firing (#46).
+  it("keeps nextRun and lastRun when re-registered with the same cron", () => {
+    const scheduler = new WorkflowScheduler();
+    const entry = scheduler.register("Workflows/test.md", "0 * * * *");
+    const due = new Date(Date.now() - 1000);
+    entry.nextRun = due;
+    entry.lastRun = new Date(Date.now() - 3_600_000);
+    const lastRun = entry.lastRun;
+
+    const again = scheduler.register("Workflows/test.md", "0 * * * *");
+
+    expect(again.nextRun).toBe(due);
+    expect(again.lastRun).toBe(lastRun);
+    expect(scheduler.tick().map((w) => w.path)).toEqual(["Workflows/test.md"]);
+  });
+
+  it("recomputes nextRun when the cron changes", () => {
+    const scheduler = new WorkflowScheduler();
+    const entry = scheduler.register("Workflows/test.md", "0 * * * *");
+    entry.nextRun = new Date(Date.now() - 1000);
+
+    const changed = scheduler.register("Workflows/test.md", "0 9 * * *");
+
+    expect(changed.cronExpression).toBe("0 9 * * *");
+    expect(changed.nextRun.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("rejects an invalid cron without touching the existing entry", () => {
+    const scheduler = new WorkflowScheduler();
+    scheduler.register("Workflows/test.md", "0 * * * *");
+
+    expect(() => scheduler.register("Workflows/test.md", "not a cron")).toThrow();
+    expect(scheduler.list().map((w) => w.cronExpression)).toEqual(["0 * * * *"]);
+  });
 });
 
 // computeNextRun is the only cron-parser call site, so its API surface is what
