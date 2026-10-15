@@ -1,0 +1,12 @@
+{
+  // tsconfig.json leaves the tests out so the build never sees them. This
+  // config adds them back for `bun run typecheck`, so a type error in a test
+  // fails CI instead of surfacing only when the test runs (#84). It checks a
+  // superset of tsconfig.json, so the typecheck runs this config alone.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
