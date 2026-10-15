@@ -1,10 +1,9 @@
 # VaultOre Go Builder
 # Compile and run Go cells
 #
-# Size: ~250MB (includes Go toolchain)
-# Cold start: <300ms (build), <50ms (cached run)
-#
-# NOTE: This is for v0.3+ and not required for MVP
+# As of 2026-10-15 nothing builds or runs this image: the executor
+# (packages/core/src/executor/index.ts) rejects ore:go cells as unsupported.
+# specs/go-cell-spec.md describes Go cells.
 
 FROM golang:1.23-alpine
 

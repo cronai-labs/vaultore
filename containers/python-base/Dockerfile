@@ -1,10 +1,8 @@
 # VaultOre Python Runtime
 # Python 3 execution
 #
-# Size: ~150MB
-# Cold start: <200ms
-#
-# NOTE: This is for v0.2+ and not required for MVP
+# As of 2026-10-15 nothing builds or runs this image: the executor
+# (packages/core/src/executor/index.ts) rejects ore:py cells as unsupported.
 
 FROM python:3.12-alpine
 
