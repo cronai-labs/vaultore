@@ -28,8 +28,8 @@ Everything in this section is in the code on `main`. The specs describe each par
 **Permissions** ([permissions spec](../specs/permissions-spec.md))
 
 - `network`, `vaultRead` and `vaultWrite` per workflow, enforced at the container: no vault
-  mount, the run directory only, the vault read-only, or the vault read-write. `.obsidian/` is
-  hidden from cells.
+  mount, the run directory only, the vault read-only, or the vault read-write. `.obsidian/` and
+  `.vaultore/` are hidden from cells.
 - A decision for `ask` is bound to the note's frontmatter and cells, and asked again when
   either changes.
 
@@ -62,49 +62,88 @@ Everything in this section is in the code on `main`. The specs describe each par
   tests and a reproducible-build check; tag-driven, immutable, attested GitHub releases
   ([CONTRIBUTING](../CONTRIBUTING.md#release-process)).
 
-## Next
-
-Open issues that are planned work:
+## Next: the first release, 0.1.0
 
 - [#83](https://github.com/cronai-labs/vaultore/issues/83): Colima with sshfs file sharing
   can serve a container a stale copy of a note; a read-modify-write cell can truncate it.
-- [#45](https://github.com/cronai-labs/vaultore/issues/45): parser and executor defects:
-  output written under a cell whose id is a prefix of another, a non-numeric `timeout=`
-  disabling the timeout, dependency cycles running silently in document order, output file
-  name collisions, an unbounded run index.
-- [#28](https://github.com/cronai-labs/vaultore/issues/28): a `deny` the CLI stored without
-  `--yes` sticks until the note changes; global permission caps.
-- [#47](https://github.com/cronai-labs/vaultore/issues/47): one-command install into a vault,
-  and a demo vault.
-- [#82](https://github.com/cronai-labs/vaultore/issues/82),
-  [#84](https://github.com/cronai-labs/vaultore/issues/84): lint core and the CLI with the
-  Obsidian review config; typecheck the test files.
-- [#42](https://github.com/cronai-labs/vaultore/issues/42): repository baseline (task
-  runner, MegaLinter, secret scanning, licence checks).
+  `vault.write` becomes a host-applied write that is refused when the note changed since the
+  cell read it.
+- A live test in a real vault (AI providers through Obsidian's `requestUrl`, the secret
+  selection, the settings screens), then the release and the submission to the Obsidian
+  community directory.
+
+## After 0.1.0
+
+Everything deliberately left out of the first release is in the
+[After 0.1.0 milestone](https://github.com/cronai-labs/vaultore/milestone/1). Committed to
+in principle; the order is not fixed. Grouped:
+
+**Cells and workflows**
+
+- Conditions and structured outputs (`runIf`, `when=`, `{{cell.field}}`, JSON-mode AI cells),
+  which the full smart-inbox needs ([#80](https://github.com/cronai-labs/vaultore/issues/80);
+  [workflow note spec](../specs/workflow-note-spec.md#planned), "Planned").
+- `ore:py` cells ([#106](https://github.com/cronai-labs/vaultore/issues/106)); CSV helpers
+  ([#107](https://github.com/cronai-labs/vaultore/issues/107)); dynamic note references
+  behind an opt-in ([#71](https://github.com/cronai-labs/vaultore/issues/71)).
+- A loop guard for workflows that read their own outputs
+  ([#111](https://github.com/cronai-labs/vaultore/issues/111)); structural index and
+  retrieval ([#110](https://github.com/cronai-labs/vaultore/issues/110);
+  [local intelligence](local-intelligence.md)).
+
+**AI**
+
+- Claude Code as a cell provider, using the user's Claude Code login
+  ([#102](https://github.com/cronai-labs/vaultore/issues/102)).
+- A confidentiality lock for notes that must not reach a provider
+  ([#109](https://github.com/cronai-labs/vaultore/issues/109)).
+
+**Permissions and sandboxing**
+
+- Write permission per path ([#108](https://github.com/cronai-labs/vaultore/issues/108)),
+  choosing what a grant is bound to ([#70](https://github.com/cronai-labs/vaultore/issues/70)),
+  the remaining items of [#28](https://github.com/cronai-labs/vaultore/issues/28) (a sticky CLI
+  `deny`, global caps), and Obsidian's override config folder
+  ([#114](https://github.com/cronai-labs/vaultore/issues/114)).
+- Sandbox options beyond containers: an OS process sandbox, embeddable microVMs, the WASM tier
+  ([#103](https://github.com/cronai-labs/vaultore/issues/103);
+  [sandbox spec](../specs/sandbox-spec.md)).
+
+**Interoperability**
+
+- Workflows callable by agents over MCP/ACP, and an Obsidian skill for writing `ore:` notes
+  ([#104](https://github.com/cronai-labs/vaultore/issues/104)).
+- Runs as OKF Attested Computations
+  ([#105](https://github.com/cronai-labs/vaultore/issues/105)); OKF bundle export
+  ([interoperability](interoperability.md)).
+- The CLI on npm ([#112](https://github.com/cronai-labs/vaultore/issues/112)), with consent
+  for `vaultore agent` schedules ([#116](https://github.com/cronai-labs/vaultore/issues/116)).
+- CronAI cloud execution: the cloud side of the
+  [handover spec](../specs/cronai-handover-spec.md).
+
+**Engineering follow-ups**
+
+- Parser and executor defects ([#45](https://github.com/cronai-labs/vaultore/issues/45)),
+  cell timeouts that leave the container running
+  ([#113](https://github.com/cronai-labs/vaultore/issues/113)), error handling
+  ([#121](https://github.com/cronai-labs/vaultore/issues/121)), the provider switch keeping
+  the old default model ([#115](https://github.com/cronai-labs/vaultore/issues/115)),
+  fixtures ([#120](https://github.com/cronai-labs/vaultore/issues/120)).
+- Platform coverage for Windows and rootless engines
+  ([#122](https://github.com/cronai-labs/vaultore/issues/122)); the adapter contract
+  ([#117](https://github.com/cronai-labs/vaultore/issues/117)); formatting
+  ([#118](https://github.com/cronai-labs/vaultore/issues/118)); install and demo vault
+  ([#47](https://github.com/cronai-labs/vaultore/issues/47)); repository baseline
+  ([#42](https://github.com/cronai-labs/vaultore/issues/42)); container coverage and docs
+  ([#29](https://github.com/cronai-labs/vaultore/issues/29), [#55](https://github.com/cronai-labs/vaultore/issues/55)).
 
 ## Under consideration
 
-Designed in part or proposed, not committed to. Each item names where its design lives.
+Not committed to; no issue yet.
 
-- **Conditions and structured outputs**: `runIf`, `when=`, `{{cell.field}}` and JSON-mode AI
-  cells, which the full smart-inbox needs
-  ([#80](https://github.com/cronai-labs/vaultore/issues/80); the
-  [workflow note spec](../specs/workflow-note-spec.md#planned), "Planned").
-- **Dynamic note references** from an upstream cell, behind an explicit opt-in
-  ([#71](https://github.com/cronai-labs/vaultore/issues/71)).
-- **Choosing what a permission grant is bound to**
-  ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
-- **A container-free tier** for `ore:ts` cells (QuickJS in WebAssembly), and WASI components
-  for compiled cells ([sandbox spec](../specs/sandbox-spec.md), Tiers 2 and 3).
-- **More cell types**: `ore:py`, and `ore:go` with build caching
-  ([Go cell spec](../specs/go-cell-spec.md)).
 - **Parallel cells and a warm container pool**
   ([architecture](../ARCHITECTURE.md#parallel-execution-not-built)).
-- **CronAI cloud execution**: the cloud side of the
-  [handover spec](../specs/cronai-handover-spec.md), and local schedulers honouring
-  `.vaultore/handover.json`.
-- **OKF bundle export** and an OKF ingestion helper ([interoperability](interoperability.md)).
-- **Local retrieval** for AI cells ([local intelligence](local-intelligence.md)).
+- **`ore:go`** with build caching ([Go cell spec](../specs/go-cell-spec.md)).
 - **Other surfaces**: a Quarto engine extension; editor extensions beyond Obsidian.
 
 To propose an item or discuss one, open an
