@@ -120,6 +120,14 @@ write under `vaultWrite: deny`, and without `vaultRead` any path outside the run
 also refuses a write to a note that is no longer what the cell read (workflow-note-spec §5.1).
 One refused write fails the cell and none of its writes are applied.
 
+**Symbolic links.** A cell with `vaultWrite` can create links through its mount, which the host
+would follow outside the vault. So every vault path the host reads or writes (`vault.write`,
+`{{note:path}}`, recorded outputs, output files, run records, the workflow note) is resolved
+first (`PlatformAdapter.resolveInVault`): a link as the last component is refused wherever it
+points, a directory link on the way is followed only if its real target lies inside the vault,
+and the rules above then apply to the real path. A platform without `resolveInVault` cannot run
+workflows.
+
 Shell cells, `vault.mkdirp()` and raw writes to `/workspace` (`Bun.write`, `node:fs`) go
 through the mount, limited only by the mount and the masks (§3.3, §4.1). Obsidian sees them as
 external changes, and nothing checks them against what the cell read.

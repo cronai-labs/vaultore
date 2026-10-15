@@ -205,6 +205,10 @@ are used for the provider request only, not passed to containers.
   ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
 - **A cell timeout stops the engine's CLI, not the container**, which may keep running until it
   exits; the error reads `exit 1`.
+- **Symbolic links are not followed out of the vault** by anything VaultOre reads or writes on
+  the host (`vault.write`, `{{note:}}`, output files, the workflow note), and a link as the last
+  component of a path is refused wherever it points. A workflow in a folder linked from outside
+  the vault therefore cannot run.
 - **Only `.obsidian/` and `.vaultore/` are hidden** from cells. Obsidian's "Override config
   folder" setting is not followed.
 - **Switching the provider keeps the default model** of the other provider; AI cells then fail

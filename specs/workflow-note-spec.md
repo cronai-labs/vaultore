@@ -187,7 +187,8 @@ and loading it in the next is a proposed feature
 `vault.read(cell("path"))`.
 
 `{{note:path}}` is a vault read. Under `vaultRead: deny`, or when the note cannot be read, the
-cell fails before anything is sent.
+cell fails before anything is sent; that includes a path that leads out of the vault through a
+symbolic link, or ends in one (permissions-spec §3.4).
 
 ---
 
