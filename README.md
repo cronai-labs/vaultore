@@ -120,7 +120,7 @@ Offered only on workflow notes (frontmatter `ore: true`). No hotkeys are set; as
 
 | Cell | Runs | Notes |
 |------|------|-------|
-| ` ```ore:ts ` | TypeScript on Bun, in a container | The last expression is the output. `cell("id")` reads another cell's output; `vault.read`, `vault.write`, `vault.exists`, `vault.mkdirp` work on notes |
+| ` ```ore:ts ` | TypeScript on Bun, in a container | The last expression is the output. `cell("id")` reads another cell's output; `vault.read`, `vault.write`, `vault.exists`, `vault.mkdirp` work on notes; `vault.write` is applied after the cell, only if the notes it read are unchanged |
 | ` ```ore:shell ` | `sh` in a container | stdout is the output |
 | ` ```ore:ai ` | One request to your AI provider | `{{cellId}}` inserts an output, `{{note:Path/To/Note.md}}` a note. Needs `network: allow` |
 
@@ -195,8 +195,11 @@ are used for the provider request only, not passed to containers.
 ## Known Limitations
 
 - **Colima with sshfs file sharing** can show a container a stale, cut-off copy of a file
-  written a moment earlier, so a cell that reads a note and writes it back can truncate it
-  ([#83](https://github.com/cronai-labs/vaultore/issues/83)). Use virtiofs:
+  written a moment earlier ([#83](https://github.com/cronai-labs/vaultore/issues/83)).
+  `vault.write` cannot save such a copy: the host applies it only if the note is still what
+  the cell read, and otherwise fails the cell and writes nothing, so run it again. A cell that
+  only reads still sees the stale copy, and shell cells and raw writes to `/workspace`
+  (`Bun.write`, `node:fs`) get no such check. Use virtiofs:
   `colima start --vm-type vz --mount-type virtiofs`.
 - **Dependency cycles are not detected**: the cells run in document order
   ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
