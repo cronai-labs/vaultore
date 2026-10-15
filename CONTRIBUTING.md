@@ -4,7 +4,7 @@ Thanks for your interest in contributing! This guide covers project setup, conve
 
 ## Development Setup
 
-**Prerequisites:** Node.js 20+ and [Bun](https://bun.sh) 1.3+. The whole test suite runs without a container runtime; you only need Docker (or Podman/Colima) to actually *execute* a workflow.
+**Prerequisites:** Node.js 20+ and [Bun](https://bun.sh) 1.3+. The unit and canonical tests run without a container runtime; you need Docker (or Podman/Colima) to *execute* a workflow and for the container integration tests.
 
 ```bash
 git clone https://github.com/cronai-labs/vaultore.git
@@ -86,6 +86,7 @@ docs: clarify permission model in README
 bun run test              # unit tests (all packages)
 bun run typecheck         # TypeScript across all packages
 bun run test:canonical    # parse every canonical fixture (no container needed)
+VAULTORE_IT_ENGINE=docker bun run --cwd packages/core test:integration   # against a real container engine (default engine: colima)
 ```
 
 Please keep tests green and add coverage for new behavior. Canonical fixtures in `fixtures/canonical/` are the acceptance bar — if you change the workflow format, update the spec in `specs/` first.
@@ -95,7 +96,7 @@ Please keep tests green and add coverage for new behavior. Canonical fixtures in
 1. Branch from `main`
 2. Make focused commits following the conventions above
 3. Ensure `bun run build`, `bun run test`, and `bun run typecheck` pass
-4. Open a PR against `main` — CI runs commitlint, build, tests, and typecheck
+4. Open a PR against `main` — CI runs the policy checks, commitlint, build, packaging, tests, typecheck, lint, the container integration tests and a build-reproducibility check, all aggregated into the one `ci-required` check
 
 ## Release Process
 
