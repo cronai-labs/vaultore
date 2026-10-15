@@ -296,11 +296,16 @@ function runCommand(
     }
     child.stdin.end();
 
-    child.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
+    // Decode as a stream, not per chunk: a multi-byte character split across
+    // two chunks would otherwise turn into two U+FFFD. Container output carries
+    // note text that is written back into the vault (#83).
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (data: string) => {
+      stdout += data;
     });
-    child.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
+    child.stderr.on("data", (data: string) => {
+      stderr += data;
     });
 
     if (timeoutMs > 0) {

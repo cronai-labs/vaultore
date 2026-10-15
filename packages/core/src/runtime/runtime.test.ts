@@ -8,6 +8,7 @@ import {
   DEFAULT_PIDS_LIMIT,
   detectRuntimes,
   DETECTION_TIMEOUT_MS,
+  execContainer,
   FALLBACK_CONTAINER_USER,
   searchPathEntries,
 } from "./index";
@@ -282,5 +283,38 @@ describe("containerUser", () => {
   it("never maps a root host user to root in the container", () => {
     expect(containerUser({ uid: 0, gid: 0 })).toBe(FALLBACK_CONTAINER_USER);
     expect(FALLBACK_CONTAINER_USER.startsWith("0:")).toBe(false);
+  });
+});
+
+describe("execContainer output", () => {
+  let bin: string;
+  let savedPath: string | undefined;
+
+  beforeEach(() => {
+    bin = mkdtempSync(join(tmpdir(), "vaultore-exec-"));
+    savedPath = process.env.PATH;
+    process.env.PATH = bin;
+  });
+
+  afterEach(() => {
+    process.env.PATH = savedPath;
+    rmSync(bin, { recursive: true, force: true });
+  });
+
+  it("keeps a UTF-8 character that arrives split across two reads", async () => {
+    // "ä" is C3 A4. The pause makes the pipe deliver the two bytes in separate
+    // chunks, as a large note's text does at a 64 KiB boundary. Decoded per
+    // chunk, each half becomes U+FFFD and the note text is corrupted.
+    const file = join(bin, "docker");
+    writeFileSync(
+      file,
+      "#!/bin/sh\nprintf '\\303'\n/bin/sleep 0.2\nprintf '\\244'\nprintf '\\303' >&2\n/bin/sleep 0.2\nprintf '\\244' >&2\n"
+    );
+    chmodSync(file, 0o755);
+
+    const result = await execContainer("docker", baseOptions);
+
+    expect(result.stdout).toBe("ä");
+    expect(result.stderr).toBe("ä");
   });
 });
