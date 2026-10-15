@@ -25,7 +25,12 @@ export class Plugin {
       modify: async () => {},
       create: async () => {},
       createFolder: async () => {},
-      on: () => ({ unload: () => {} }),
+      // Handlers registered with on(), by event name, so tests can fire them.
+      handlers: {} as Record<string, Array<(...args: any[]) => unknown>>,
+      on(name: string, cb: (...args: any[]) => unknown) {
+        (this.handlers[name] ??= []).push(cb);
+        return { unload: () => {} };
+      },
     },
     workspace: {
       getActiveFile: () => null,
@@ -50,40 +55,169 @@ export class Plugin {
   registerEvent(_event: any) {}
 }
 
+// Obsidian's global createFragment, reduced to the text it would show.
+class MockFragment {
+  textContent = "";
+  appendText(text: string) {
+    this.textContent += text;
+  }
+  createEl(_tag: string, options?: { text?: string }) {
+    this.textContent += options?.text ?? "";
+    return {};
+  }
+}
+(globalThis as any).createFragment = (
+  callback?: (fragment: MockFragment) => void,
+) => {
+  const fragment = new MockFragment();
+  callback?.(fragment);
+  return fragment;
+};
+
+// The settings mocks record what a tab renders, so tests can assert on the
+// visible settings (names, descriptions, toggles) and drive their handlers.
+export class MockContainer {
+  settings: Setting[] = [];
+  empty() {
+    this.settings.length = 0;
+  }
+  createEl() {
+    return {};
+  }
+  createDiv() {
+    return new MockContainer();
+  }
+}
+
 export class PluginSettingTab {
   app: any;
   plugin: any;
-  containerEl = {
-    empty: () => {},
-    createEl: () => ({}),
-  };
+  containerEl = new MockContainer();
   constructor(app: any, plugin: any) {
     this.app = app;
     this.plugin = plugin;
   }
 }
 
+export class MockValueComponent<T = unknown> {
+  value: T | undefined;
+  disabled = false;
+  options: string[] = [];
+  changeHandler?: (value: T) => unknown;
+  setValue(value: T) {
+    this.value = value;
+    return this;
+  }
+  getValue() {
+    return this.value;
+  }
+  onChange(cb: (value: T) => unknown) {
+    this.changeHandler = cb;
+    return this;
+  }
+  setPlaceholder(_value: string) {
+    return this;
+  }
+  addOption(value: string, _label: string) {
+    this.options.push(value);
+    return this;
+  }
+  setDisabled(disabled: boolean) {
+    this.disabled = disabled;
+    return this;
+  }
+  setTooltip(_tooltip: string) {
+    return this;
+  }
+}
+
+export class MockButtonComponent {
+  text = "";
+  disabled = false;
+  clickHandler?: () => unknown;
+  setButtonText(text: string) {
+    this.text = text;
+    return this;
+  }
+  onClick(cb: () => unknown) {
+    this.clickHandler = cb;
+    return this;
+  }
+  setDisabled(disabled: boolean) {
+    this.disabled = disabled;
+    return this;
+  }
+  setCta() {
+    return this;
+  }
+  setWarning() {
+    return this;
+  }
+  setTooltip(_tooltip: string) {
+    return this;
+  }
+}
+
 export class Setting {
-  constructor(_el: any) {
-    return new Proxy(this, {
-      get: () => {
-        const chainable = (): any => chainable;
-        chainable.setValue = chainable;
-        chainable.onChange = chainable;
-        chainable.setPlaceholder = chainable;
-        chainable.setDesc = chainable;
-        chainable.setName = chainable;
-        chainable.addDropdown = chainable;
-        chainable.addText = chainable;
-        chainable.addToggle = chainable;
-        chainable.addComponent = chainable;
-        chainable.addButton = chainable;
-        chainable.addOption = chainable;
-        chainable.setButtonText = chainable;
-        chainable.onClick = chainable;
-        return chainable;
-      },
-    });
+  name = "";
+  desc = "";
+  heading = false;
+  toggles: MockValueComponent<boolean>[] = [];
+  texts: MockValueComponent<string>[] = [];
+  dropdowns: MockValueComponent<string>[] = [];
+  buttons: MockButtonComponent[] = [];
+  components: unknown[] = [];
+
+  constructor(containerEl: any) {
+    if (containerEl instanceof MockContainer) {
+      containerEl.settings.push(this);
+    }
+  }
+  setName(name: string) {
+    this.name = name;
+    return this;
+  }
+  setDesc(desc: string | MockFragment) {
+    this.desc = typeof desc === "string" ? desc : desc.textContent;
+    return this;
+  }
+  setHeading() {
+    this.heading = true;
+    return this;
+  }
+  setClass(_cls: string) {
+    return this;
+  }
+  setDisabled(_disabled: boolean) {
+    return this;
+  }
+  addToggle(cb: (toggle: MockValueComponent<boolean>) => unknown) {
+    const toggle = new MockValueComponent<boolean>();
+    this.toggles.push(toggle);
+    cb(toggle);
+    return this;
+  }
+  addText(cb: (text: MockValueComponent<string>) => unknown) {
+    const text = new MockValueComponent<string>();
+    this.texts.push(text);
+    cb(text);
+    return this;
+  }
+  addDropdown(cb: (dropdown: MockValueComponent<string>) => unknown) {
+    const dropdown = new MockValueComponent<string>();
+    this.dropdowns.push(dropdown);
+    cb(dropdown);
+    return this;
+  }
+  addButton(cb: (button: MockButtonComponent) => unknown) {
+    const button = new MockButtonComponent();
+    this.buttons.push(button);
+    cb(button);
+    return this;
+  }
+  addComponent(cb: (el: unknown) => unknown) {
+    this.components.push(cb({}));
+    return this;
   }
 }
 
@@ -110,9 +244,12 @@ export class Modal {
 }
 
 export class Notice {
+  // Every message shown, in order, so tests can assert on user-facing notices.
+  static shown: string[] = [];
   message: string;
   constructor(message: string, _timeout?: number) {
     this.message = message;
+    Notice.shown.push(message);
   }
   setMessage(message: string) {
     this.message = message;
@@ -136,12 +273,8 @@ export class FileSystemAdapter {
   }
 }
 
-export class SecretComponent {
-  constructor(_app: any, _el: any) {}
-  onChange(_cb: (value: string) => void) {
-    return this;
-  }
-  setValue(_value: string) {
-    return this;
+export class SecretComponent extends MockValueComponent<string | null> {
+  constructor(_app: any, _el: any) {
+    super();
   }
 }

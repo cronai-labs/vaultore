@@ -23,7 +23,16 @@ export class WorkflowScheduler {
     this.onTick = options?.onTick;
   }
 
+  /**
+   * Register a workflow, or keep its entry when the cron is unchanged.
+   * Re-registering with the same cron preserves nextRun and lastRun, so hosts
+   * may refresh their registrations without pushing a due run back.
+   */
   register(path: string, cronExpression: string): ScheduledWorkflow {
+    const existing = this.workflows.get(path);
+    if (existing && existing.cronExpression === cronExpression) {
+      return existing;
+    }
     const nextRun = computeNextRun(cronExpression);
     const entry: ScheduledWorkflow = {
       path,

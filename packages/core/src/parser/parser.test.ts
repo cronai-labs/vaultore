@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TemplateInterpolator, WorkflowParser } from "./index";
+import { TemplateInterpolator, WorkflowParser, isWorkflowFrontmatter } from "./index";
 
 describe("WorkflowParser", () => {
   it("parses frontmatter, cells, and outputs", () => {
@@ -41,6 +41,29 @@ meta:
     const output = workflow.outputs.get("hello");
     expect(output?.value).toBe(2);
     expect(output?.meta.status).toBe("success");
+  });
+});
+
+// Hosts that already hold parsed frontmatter (Obsidian's metadata cache) need
+// the same "is this a workflow" rule as isWorkflow(), without the raw text.
+describe("isWorkflowFrontmatter", () => {
+  it("accepts only ore: true", () => {
+    expect(isWorkflowFrontmatter({ ore: true })).toBe(true);
+    expect(isWorkflowFrontmatter({ ore: "true" })).toBe(false);
+    expect(isWorkflowFrontmatter({ ore: false })).toBe(false);
+    expect(isWorkflowFrontmatter({ title: "Note" })).toBe(false);
+    expect(isWorkflowFrontmatter(undefined)).toBe(false);
+    expect(isWorkflowFrontmatter(null)).toBe(false);
+  });
+
+  it("agrees with isWorkflow on note text", () => {
+    const parser = new WorkflowParser();
+    for (const fm of ["ore: true", "ore: 'true'", "ore: false", "title: x"]) {
+      const content = `---\n${fm}\n---\n`;
+      expect(parser.isWorkflow(content)).toBe(
+        isWorkflowFrontmatter(parser.parseRawFrontmatter(content))
+      );
+    }
   });
 });
 

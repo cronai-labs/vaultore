@@ -1,33 +1,37 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---- Core module mock (before importing main) ----
-vi.mock("@vaultore/core", async (importOriginal) => ({
-  // The real defaults: the plugin must not carry its own copy (#78).
-  DEFAULT_MODELS: (await importOriginal<typeof import("@vaultore/core")>()).DEFAULT_MODELS,
-  DEFAULT_PROVIDER: (await importOriginal<typeof import("@vaultore/core")>()).DEFAULT_PROVIDER,
-  WorkflowExecutor: class {
-    runWorkflow = vi.fn().mockResolvedValue({});
-  },
-  WorkflowParser: class {
-    isWorkflow = vi.fn().mockReturnValue(false);
-    parse = vi.fn().mockReturnValue({
-      frontmatter: {},
-      cells: [],
-    });
-  },
-  WorkflowScheduler: class {
-    start = vi.fn();
-    stop = vi.fn();
-    register = vi.fn();
-    unregister = vi.fn();
-    list = vi.fn().mockReturnValue([]);
-  },
-}));
+// The scheduler, cron parsing, the workflow check and the model defaults are
+// the real ones, so the plugin's scheduling and command guards are tested
+// against core's behaviour and the plugin cannot carry its own copy of the
+// defaults (#78). Only the executor (containers, AI) and the cell parser are
+// faked.
+vi.mock("@vaultore/core", async () => {
+  const actual = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+  return {
+    DEFAULT_MODELS: actual.DEFAULT_MODELS,
+    DEFAULT_PROVIDER: actual.DEFAULT_PROVIDER,
+    WorkflowExecutor: class {
+      runWorkflow = vi.fn().mockResolvedValue({});
+    },
+    WorkflowParser: class {
+      parse = vi.fn().mockReturnValue({
+        frontmatter: {},
+        cells: [],
+      });
+    },
+    WorkflowScheduler: actual.WorkflowScheduler,
+    computeNextRun: actual.computeNextRun,
+    isWorkflowFrontmatter: actual.isWorkflowFrontmatter,
+  };
+});
 
 // Import the plugin — obsidian is aliased via vitest.config.ts
 const { default: VaultOrePlugin } = await import("./main");
-const { requestUrl } = await import("obsidian");
-const { DEFAULT_MODELS, DEFAULT_PROVIDER } = await import("@vaultore/core");
+// Typed as the mock, which records notices and event handlers for assertions.
+const { Notice, TFile, requestUrl } = (await import("obsidian")) as unknown as typeof import("./__mocks__/obsidian");
+const { DEFAULT_MODELS, DEFAULT_PROVIDER, WorkflowScheduler } = await import("@vaultore/core");
+type RecordedSetting = import("./__mocks__/obsidian").Setting;
 
 describe("VaultOrePlugin", () => {
   let plugin: InstanceType<typeof VaultOrePlugin>;
@@ -48,6 +52,14 @@ describe("VaultOrePlugin", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  // Renders the settings tab the plugin registered and returns what it showed.
+  function renderSettings(): RecordedSetting[] {
+    const calls = (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls;
+    const tab = calls[0][0];
+    tab.display();
+    return tab.containerEl.settings;
+  }
 
   describe("onload", () => {
     it("registers three commands", () => {
@@ -78,7 +90,6 @@ describe("VaultOrePlugin", () => {
       expect(plugin.settings.defaultProvider).toBe(DEFAULT_PROVIDER);
       expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS[DEFAULT_PROVIDER]);
       expect(plugin.settings.runtimeEngine).toBe("docker");
-      expect(plugin.settings.enableWarmPool).toBe(false);
       expect(plugin.settings.outputRoot).toBe("_vaultore");
     });
 
@@ -105,6 +116,26 @@ describe("VaultOrePlugin", () => {
       );
     });
 
+    it("has no warm container pool setting: it was a visible no-op", async () => {
+      const names = renderSettings().map((setting) => setting.name);
+      expect(names).not.toContain("Warm container pool");
+
+      // A key saved by an earlier version is dropped, not carried forward.
+      (plugin.loadData as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        enableWarmPool: true,
+      });
+      await plugin.loadSettings();
+      await plugin.saveSettings();
+      expect(plugin.saveData).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ enableWarmPool: expect.anything() })
+      );
+    });
+
+    it("shows ore:ai as code in the provider description", () => {
+      const provider = renderSettings().find((setting) => setting.name === "Default provider");
+      expect(provider?.desc).toBe("Provider used for ore:ai cells.");
+    });
+
     it("preserves all default fields on fresh load", () => {
       expect(plugin.settings.aiTemperature).toBeUndefined();
       expect(plugin.settings.aiMaxTokens).toBe(800);
@@ -112,53 +143,109 @@ describe("VaultOrePlugin", () => {
     });
   });
 
-  describe("secret management", () => {
-    it("delegates setSecretValue to adapter", async () => {
+  describe("API keys", () => {
+    // Obsidian's secret storage is a shared, user-managed store: the
+    // SecretComponent hands the plugin the *name* of the secret the user
+    // picked, and the plugin reads the value by that name when it needs it.
+    function secretSetting(name: string) {
+      const setting = renderSettings().find((s) => s.name === name);
+      expect(setting).toBeDefined();
+      return setting!;
+    }
+
+    function stubSecrets(values: Record<string, string>) {
       const setSecret = vi.fn();
       plugin.app.secretStorage = {
-        getSecret: vi.fn(),
+        getSecret: vi.fn((id: string) => values[id] ?? null),
         setSecret,
+        listSecrets: () => Object.keys(values),
       } as any;
+      return { setSecret };
+    }
 
-      await plugin.setSecretValue("openai.apiKey", "sk-test");
+    const adapter = () => (plugin as any).adapter;
 
-      expect(setSecret).toHaveBeenCalledWith(
-        "vaultore-openai-apikey",
-        "sk-test"
+    it("saves the name of the selected secret, never a key", async () => {
+      const { setSecret } = stubSecrets({ "shared-openai": "sk-live" });
+      const component = secretSetting("OpenAI API key").components[0] as any;
+
+      await component.changeHandler("shared-openai");
+
+      expect(plugin.settings.openaiSecretName).toBe("shared-openai");
+      expect(plugin.saveData).toHaveBeenLastCalledWith(
+        expect.objectContaining({ openaiSecretName: "shared-openai" })
+      );
+      expect(setSecret).not.toHaveBeenCalled();
+    });
+
+    it("treats a null selection as no secret selected", async () => {
+      plugin.settings.anthropicSecretName = "old";
+      const component = secretSetting("Anthropic API key").components[0] as any;
+
+      await component.changeHandler(null);
+
+      expect(plugin.settings.anthropicSecretName).toBe("");
+    });
+
+    it("shows the saved selection when the tab opens", () => {
+      plugin.settings.openaiSecretName = "shared-openai";
+      stubSecrets({ "shared-openai": "sk-live" });
+      const setting = secretSetting("OpenAI API key");
+      expect((setting.components[0] as any).value).toBe("shared-openai");
+      expect(setting.desc).toContain("shared-openai");
+    });
+
+    it("says when the selected secret is missing", () => {
+      plugin.settings.openaiSecretName = "gone";
+      stubSecrets({});
+      expect(secretSetting("OpenAI API key").desc).toMatch(/gone.*missing or empty/);
+    });
+
+    it("clears the selection with the clear button", async () => {
+      plugin.settings.openaiSecretName = "shared-openai";
+      const setting = secretSetting("OpenAI API key");
+
+      await setting.buttons[0].clickHandler!();
+
+      expect(plugin.settings.openaiSecretName).toBe("");
+    });
+
+    it("resolves each provider key through its selected secret", async () => {
+      stubSecrets({ "shared-openai": "sk-live", "team-anthropic": "sk-ant" });
+      plugin.settings.openaiSecretName = "shared-openai";
+      plugin.settings.anthropicSecretName = "team-anthropic";
+
+      await expect(adapter().getSecret("openai.apiKey")).resolves.toBe("sk-live");
+      await expect(adapter().getSecret("anthropic.apiKey")).resolves.toBe("sk-ant");
+    });
+
+    it("fails with the setting's name when no secret is selected", async () => {
+      stubSecrets({ "vaultore-openai-apikey": "stale" });
+      plugin.settings.openaiSecretName = "";
+
+      await expect(adapter().getSecret("openai.apiKey")).rejects.toThrow(
+        /No secret selected for "OpenAI API key"/
       );
     });
 
-    it("delegates deleteSecretValue to adapter", async () => {
-      const setSecret = vi.fn();
-      plugin.app.secretStorage = {
-        getSecret: vi.fn().mockReturnValue("existing"),
-        setSecret,
-      } as any;
+    it("fails with the secret's and setting's names when the secret is empty", async () => {
+      stubSecrets({ "team-anthropic": "  " });
+      plugin.settings.anthropicSecretName = "team-anthropic";
 
-      await plugin.deleteSecretValue("openai.apiKey");
-
-      expect(setSecret).toHaveBeenCalledWith("vaultore-openai-apikey", "");
-    });
-
-    it("normalizes secret key with special characters", async () => {
-      const setSecret = vi.fn();
-      plugin.app.secretStorage = {
-        getSecret: vi.fn(),
-        setSecret,
-      } as any;
-
-      await plugin.setSecretValue("some.complex-key_v2", "value");
-
-      expect(setSecret).toHaveBeenCalledWith(
-        "vaultore-some-complex-key-v2",
-        "value"
+      await expect(adapter().getSecret("anthropic.apiKey")).rejects.toThrow(
+        /"team-anthropic".*"Anthropic API key".*missing or empty/
       );
     });
 
-    it("returns undefined when secret storage is unavailable", async () => {
-      plugin.app.secretStorage = null as any;
-      // getSecret returns undefined when storage is missing
-      // (the adapter checks for this)
+    it("rejects secret keys it has no setting for", async () => {
+      await expect(adapter().getSecret("mistral.apiKey")).rejects.toThrow(/mistral\.apiKey/);
+    });
+
+    it("does not write to the user's secret storage", async () => {
+      const { setSecret } = stubSecrets({});
+      await expect(adapter().setSecret("openai.apiKey", "sk")).rejects.toThrow(/API keys/);
+      await expect(adapter().deleteSecret("openai.apiKey")).rejects.toThrow(/API keys/);
+      expect(setSecret).not.toHaveBeenCalled();
     });
   });
 
@@ -215,17 +302,299 @@ describe("VaultOrePlugin", () => {
     });
   });
 
-  describe("run-all command", () => {
-    it("is a check callback that requires an active md file", () => {
-      const calls = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const runAllCmd = calls.find((c: any[]) => c[0].id === "run-all");
-      expect(runAllCmd).toBeDefined();
-      const cmd = runAllCmd![0];
+  describe("run commands", () => {
+    function note(path: string): InstanceType<typeof TFile> {
+      return Object.assign(new TFile(), {
+        path,
+        extension: "md",
+        basename: path.replace(/\.md$/, ""),
+      });
+    }
 
-      // With no active file, checkCallback returns false
+    const workflow = note("Workflows/daily.md");
+    const ordinary = note("Notes/shopping.md");
+
+    function command(id: string) {
+      const calls = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls;
+      const found = calls.find((c: any[]) => c[0].id === id);
+      expect(found).toBeDefined();
+      return found![0];
+    }
+
+    beforeEach(() => {
+      plugin.app.metadataCache.getFileCache = (file: { path: string }) =>
+        file.path === workflow.path
+          ? { frontmatter: { ore: true } }
+          : { frontmatter: { title: "Shopping" } };
+    });
+
+    it("offers run all cells only on a workflow note", () => {
+      const cmd = command("run-all");
+
       plugin.app.workspace.getActiveFile = () => null;
       expect(cmd.checkCallback(true)).toBe(false);
+
+      plugin.app.workspace.getActiveFile = () => ordinary;
+      expect(cmd.checkCallback(true)).toBe(false);
+
+      plugin.app.workspace.getActiveFile = () => workflow;
+      expect(cmd.checkCallback(true)).toBe(true);
     });
+
+    it("does not run anything when checking", () => {
+      const run = vi.spyOn(plugin as any, "runWorkflow");
+      plugin.app.workspace.getActiveFile = () => workflow;
+
+      command("run-all").checkCallback(true);
+      expect(run).not.toHaveBeenCalled();
+
+      command("run-all").checkCallback(false);
+      expect(run).toHaveBeenCalledWith(workflow);
+    });
+
+    it.each(["run-cell", "run-cell-only"])("offers %s only on a workflow note", (id) => {
+      const cmd = command(id);
+      const editor = { getCursor: () => ({ line: 0, ch: 0 }) };
+
+      expect(cmd.editorCheckCallback(true, editor, { file: ordinary })).toBe(false);
+      expect(cmd.editorCheckCallback(true, editor, { file: null })).toBe(false);
+      expect(cmd.editorCheckCallback(true, editor, { file: workflow })).toBe(true);
+    });
+  });
+});
+
+describe("scheduled workflows", () => {
+  type Frontmatter = Record<string, unknown>;
+  let plugin: InstanceType<typeof VaultOrePlugin>;
+  let notes: Record<string, Frontmatter>;
+
+  function note(path: string): InstanceType<typeof TFile> {
+    return Object.assign(new TFile(), { path, extension: "md", basename: path });
+  }
+
+  // Replaces the vault with these notes; frontmatter is served from the
+  // metadata cache the way Obsidian does.
+  function useVault(next: Record<string, Frontmatter>) {
+    notes = next;
+  }
+
+  const scheduler = () => (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+  const armed = () => scheduler().list().map((entry) => `${entry.path} ${entry.cronExpression}`);
+  const refresh = () => (plugin as any).refreshScheduledWorkflows();
+
+  function renderSettings(): RecordedSetting[] {
+    const calls = (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls;
+    const tab = calls[0][0];
+    tab.display();
+    return tab.containerEl.settings;
+  }
+
+  function row(name: string): RecordedSetting {
+    const found = renderSettings().find((setting) => setting.name === name);
+    expect(found, `setting "${name}"`).toBeDefined();
+    return found!;
+  }
+
+  async function toggle(name: string, value: boolean) {
+    await row(name).toggles[0].changeHandler!(value);
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    // The plugin debounces with window.setTimeout; tests run without a DOM.
+    vi.stubGlobal("window", globalThis);
+    Notice.shown.length = 0;
+    notes = {};
+    plugin = new VaultOrePlugin(undefined as any, undefined as any);
+    vi.spyOn(plugin, "addSettingTab");
+    vi.spyOn(plugin, "saveData");
+    vi.spyOn(plugin, "loadData").mockResolvedValue(null);
+    (plugin.app.vault as any).handlers = {};
+    plugin.app.vault.getMarkdownFiles = () => Object.keys(notes).map(note);
+    plugin.app.vault.getAbstractFileByPath = (path: string) => (path in notes ? note(path) : null);
+    plugin.app.vault.modify = vi.fn();
+    plugin.app.metadataCache.getFileCache = (file: { path: string }) =>
+      file.path in notes ? { frontmatter: notes[file.path] } : null;
+    await plugin.onload();
+  });
+
+  afterEach(() => {
+    plugin.onunload();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("is off by default and arms nothing, including notes that arrive by sync", () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    refresh();
+
+    expect(armed()).toEqual([]);
+    expect(plugin.settings.runScheduledWorkflows).toBe(false);
+    expect(plugin.settings.scheduleApprovals).toEqual({});
+  });
+
+  it("lists every scheduled workflow note with its schedule and a toggle", () => {
+    useVault({
+      "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" },
+      "Workflows/manual.md": { ore: true },
+      "Notes/plain.md": { schedule: "0 18 * * *" },
+    });
+    const settings = renderSettings();
+
+    expect(settings.find((s) => s.heading && s.name === "Scheduled workflows")).toBeDefined();
+    const master = row("Run scheduled workflows");
+    expect(master.toggles[0].value).toBe(false);
+
+    const daily = row("Workflows/daily.md");
+    expect(daily.desc).toContain("0 18 * * *");
+    expect(daily.desc).toMatch(/not approved/i);
+    expect(daily.toggles[0].value).toBe(false);
+    expect(settings.map((s) => s.name)).not.toContain("Workflows/manual.md");
+    expect(settings.map((s) => s.name)).not.toContain("Notes/plain.md");
+  });
+
+  it("runs a note only with the master switch on and the note approved", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+
+    await toggle("Workflows/daily.md", true);
+    expect(plugin.settings.scheduleApprovals).toEqual({ "Workflows/daily.md": "0 18 * * *" });
+    expect(armed()).toEqual([]);
+
+    await toggle("Run scheduled workflows", true);
+    expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
+    expect(row("Workflows/daily.md").desc).toMatch(/next run/i);
+
+    await toggle("Workflows/daily.md", false);
+    expect(plugin.settings.scheduleApprovals).toEqual({});
+    expect(armed()).toEqual([]);
+  });
+
+  it("keeps the decisions in plugin settings, not in the notes", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+
+    expect(plugin.saveData).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        runScheduledWorkflows: true,
+        scheduleApprovals: { "Workflows/daily.md": "0 18 * * *" },
+      })
+    );
+    expect(plugin.app.vault.modify).not.toHaveBeenCalled();
+  });
+
+  it("needs a new approval when the schedule changes", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+
+    notes["Workflows/daily.md"].schedule = "* * * * *";
+    refresh();
+
+    expect(armed()).toEqual([]);
+    const daily = row("Workflows/daily.md");
+    expect(daily.toggles[0].value).toBe(false);
+    expect(daily.desc).toMatch(/changed from "0 18 \* \* \*" to "\* \* \* \* \*"/);
+  });
+
+  it("lists notes that appear later without arming them", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+
+    notes["Inbox/from-sync.md"] = { ore: true, schedule: "* * * * *" };
+    refresh();
+
+    expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
+    expect(row("Inbox/from-sync.md").toggles[0].value).toBe(false);
+  });
+
+  it("keeps the timers of unchanged notes when the vault changes", async () => {
+    useVault({
+      "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" },
+      "Workflows/hourly.md": { ore: true, schedule: "0 * * * *" },
+    });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+    await toggle("Workflows/hourly.md", true);
+    const hourly = scheduler().list().find((e) => e.path === "Workflows/hourly.md")!;
+    const due = new Date(Date.now() - 1000);
+    hourly.nextRun = due;
+    const unregister = vi.spyOn(scheduler(), "unregister");
+
+    // Another note changes: nothing is re-registered.
+    notes["Notes/other.md"] = { title: "x" };
+    refresh();
+    expect(unregister).not.toHaveBeenCalled();
+
+    // Only the note whose approval changed is touched.
+    await toggle("Workflows/daily.md", false);
+    expect(unregister.mock.calls).toEqual([["Workflows/daily.md"]]);
+    expect(scheduler().list().find((e) => e.path === "Workflows/hourly.md")?.nextRun).toBe(due);
+  });
+
+  it("runs a due approved note on the tick", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+    const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
+
+    scheduler().list()[0].nextRun = new Date(Date.now() - 1000);
+    scheduler().tick();
+
+    expect(run).toHaveBeenCalledWith("Workflows/daily.md");
+  });
+
+  it("does not run a note whose schedule changed before the refresh caught up", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+    const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
+
+    notes["Workflows/daily.md"].schedule = "* * * * *";
+    scheduler().list()[0].nextRun = new Date(Date.now() - 1000);
+    scheduler().tick();
+
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("shows an invalid schedule and warns once instead of swallowing it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useVault({ "Workflows/typo.md": { ore: true, schedule: "every day" } });
+    await toggle("Run scheduled workflows", true);
+    plugin.settings.scheduleApprovals = { "Workflows/typo.md": "every day" };
+
+    refresh();
+    refresh();
+
+    expect(armed()).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0])).toContain("Workflows/typo.md");
+    expect(Notice.shown.filter((m) => m.includes("Workflows/typo.md"))).toHaveLength(1);
+    const typo = row("Workflows/typo.md");
+    expect(typo.desc).toMatch(/invalid/i);
+    expect(typo.toggles[0].disabled).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("drops the approval of a note that is deleted or renamed", async () => {
+    useVault({
+      "Workflows/a.md": { ore: true, schedule: "0 18 * * *" },
+      "Workflows/b.md": { ore: true, schedule: "0 9 * * *" },
+    });
+    await toggle("Workflows/a.md", true);
+    await toggle("Workflows/b.md", true);
+
+    const [onDelete] = (plugin.app.vault as any).handlers.delete;
+    const [onRename] = (plugin.app.vault as any).handlers.rename;
+    await onDelete(note("Workflows/a.md"));
+    await onRename(note("Archive/b.md"), "Workflows/b.md");
+
+    expect(plugin.settings.scheduleApprovals).toEqual({});
+    expect(plugin.saveData).toHaveBeenLastCalledWith(
+      expect.objectContaining({ scheduleApprovals: {} })
+    );
   });
 });
 
