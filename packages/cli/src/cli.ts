@@ -13,6 +13,7 @@ import { promises as fs } from "node:fs";
 import { resolve } from "node:path";
 import { WorkflowExecutor, WorkflowScheduler, VERSION } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
+import { createSingleFlightRunner } from "./agent";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 import {
 	hasExplicitVault,
@@ -150,18 +151,25 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	});
 	const executor = new WorkflowExecutor();
 
-	const runByPath = async (path: string): Promise<void> => {
-		try {
-			const content = await adapter.readFile(path);
-			process.stdout.write(`[vaultore:agent] running ${path}\n`);
-			await executor.runWorkflow({ platform: adapter, workflowPath: path, content });
-			process.stdout.write(`[vaultore:agent] completed ${path}\n`);
-		} catch (err) {
+	const runByPath = createSingleFlightRunner(
+		async (path: string): Promise<void> => {
+			try {
+				const content = await adapter.readFile(path);
+				process.stdout.write(`[vaultore:agent] running ${path}\n`);
+				await executor.runWorkflow({ platform: adapter, workflowPath: path, content });
+				process.stdout.write(`[vaultore:agent] completed ${path}\n`);
+			} catch (err) {
+				process.stderr.write(
+					`[vaultore:agent] failed ${path}: ${err instanceof Error ? err.message : String(err)}\n`
+				);
+			}
+		},
+		(path) => {
 			process.stderr.write(
-				`[vaultore:agent] failed ${path}: ${err instanceof Error ? err.message : String(err)}\n`
+				`[vaultore:agent] skipped ${path}: the previous run is still in progress\n`
 			);
 		}
-	};
+	);
 
 	const scheduler = new WorkflowScheduler({
 		tickIntervalMs: 60 * 1000,
