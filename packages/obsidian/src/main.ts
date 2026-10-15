@@ -16,6 +16,7 @@ import {
   WorkflowExecutor,
   WorkflowParser,
   WorkflowScheduler,
+  isWorkflowFrontmatter,
 } from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
 
@@ -403,12 +404,14 @@ export default class VaultOrePlugin extends Plugin {
     await this.loadSettings();
     this.adapter = new ObsidianAdapter(this);
 
+    // The run commands are offered only on workflow notes, so the palette
+    // does not show them on every Markdown note in the vault.
     this.addCommand({
       id: "run-all",
       name: "Run all cells",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
-        if (!file || file.extension !== "md") return false;
+        if (!this.isWorkflowNote(file)) return false;
         if (!checking) {
           void this.runWorkflow(file);
         }
@@ -419,22 +422,28 @@ export default class VaultOrePlugin extends Plugin {
     this.addCommand({
       id: "run-cell",
       name: "Run cell",
-      editorCallback: async (editor, view) => {
+      editorCheckCallback: (checking, editor, view) => {
         const file = view.file;
-        if (!file) return;
-        const line = editor.getCursor().line + 1;
-        await this.runCellAtLine(file, line);
+        if (!this.isWorkflowNote(file)) return false;
+        if (!checking) {
+          void this.runCellAtLine(file, editor.getCursor().line + 1);
+        }
+        return true;
       },
     });
 
     this.addCommand({
       id: "run-cell-only",
       name: "Run cell only (skip dependencies)",
-      editorCallback: async (editor, view) => {
+      editorCheckCallback: (checking, editor, view) => {
         const file = view.file;
-        if (!file) return;
-        const line = editor.getCursor().line + 1;
-        await this.runCellAtLine(file, line, { skipDependencies: true });
+        if (!this.isWorkflowNote(file)) return false;
+        if (!checking) {
+          void this.runCellAtLine(file, editor.getCursor().line + 1, {
+            skipDependencies: true,
+          });
+        }
+        return true;
       },
     });
 
@@ -489,6 +498,13 @@ export default class VaultOrePlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  // Command checks run synchronously on every palette open, so they read the
+  // metadata cache's parsed frontmatter rather than the note's text.
+  private isWorkflowNote(file: TFile | null): file is TFile {
+    if (!file || file.extension !== "md") return false;
+    return isWorkflowFrontmatter(this.app.metadataCache.getFileCache(file)?.frontmatter);
   }
 
   private async runWorkflow(file: TFile): Promise<void> {

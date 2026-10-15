@@ -27,6 +27,19 @@ import {
 // =============================================================================
 
 const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---/;
+
+/**
+ * Whether already-parsed frontmatter marks a note as a workflow (`ore: true`).
+ * For hosts that hold parsed frontmatter, such as Obsidian's metadata cache;
+ * isWorkflow() applies the same rule to note text.
+ */
+export function isWorkflowFrontmatter(frontmatter: unknown): boolean {
+  return (
+    typeof frontmatter === "object" &&
+    frontmatter !== null &&
+    (frontmatter as Record<string, unknown>).ore === true
+  );
+}
 /**
  * Strip leading/trailing separators without an anchored quantifier.
  *
@@ -161,8 +174,7 @@ export class WorkflowParser {
     if (!match) return false;
 
     try {
-      const yaml = parseYaml(match[1]);
-      return yaml?.ore === true;
+      return isWorkflowFrontmatter(parseYaml(match[1]));
     } catch {
       return false;
     }

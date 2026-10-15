@@ -1,32 +1,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---- Core module mock (before importing main) ----
-vi.mock("@vaultore/core", async (importOriginal) => ({
-  // The real defaults: the plugin must not carry its own copy (#78).
-  DEFAULT_MODELS: (await importOriginal<typeof import("@vaultore/core")>()).DEFAULT_MODELS,
-  DEFAULT_PROVIDER: (await importOriginal<typeof import("@vaultore/core")>()).DEFAULT_PROVIDER,
-  WorkflowExecutor: class {
-    runWorkflow = vi.fn().mockResolvedValue({});
-  },
-  WorkflowParser: class {
-    isWorkflow = vi.fn().mockReturnValue(false);
-    parse = vi.fn().mockReturnValue({
-      frontmatter: {},
-      cells: [],
-    });
-  },
-  WorkflowScheduler: class {
-    start = vi.fn();
-    stop = vi.fn();
-    register = vi.fn();
-    unregister = vi.fn();
-    list = vi.fn().mockReturnValue([]);
-  },
-}));
+// The scheduler, cron parsing, the workflow check and the model defaults are
+// the real ones, so the plugin's scheduling and command guards are tested
+// against core's behaviour and the plugin cannot carry its own copy of the
+// defaults (#78). Only the executor (containers, AI) and the cell parser are
+// faked.
+vi.mock("@vaultore/core", async () => {
+  const actual = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+  return {
+    DEFAULT_MODELS: actual.DEFAULT_MODELS,
+    DEFAULT_PROVIDER: actual.DEFAULT_PROVIDER,
+    WorkflowExecutor: class {
+      runWorkflow = vi.fn().mockResolvedValue({});
+    },
+    WorkflowParser: class {
+      parse = vi.fn().mockReturnValue({
+        frontmatter: {},
+        cells: [],
+      });
+    },
+    WorkflowScheduler: actual.WorkflowScheduler,
+    computeNextRun: actual.computeNextRun,
+    isWorkflowFrontmatter: actual.isWorkflowFrontmatter,
+  };
+});
 
 // Import the plugin — obsidian is aliased via vitest.config.ts
 const { default: VaultOrePlugin } = await import("./main");
-const { Notice, requestUrl } = await import("obsidian");
+const { Notice, TFile, requestUrl } = await import("obsidian");
 const { DEFAULT_MODELS, DEFAULT_PROVIDER } = await import("@vaultore/core");
 type RecordedSetting = import("./__mocks__/obsidian").Setting;
 
@@ -294,16 +296,63 @@ describe("VaultOrePlugin", () => {
     });
   });
 
-  describe("run-all command", () => {
-    it("is a check callback that requires an active md file", () => {
-      const calls = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const runAllCmd = calls.find((c: any[]) => c[0].id === "run-all");
-      expect(runAllCmd).toBeDefined();
-      const cmd = runAllCmd![0];
+  describe("run commands", () => {
+    function note(path: string): InstanceType<typeof TFile> {
+      return Object.assign(new TFile(), {
+        path,
+        extension: "md",
+        basename: path.replace(/\.md$/, ""),
+      });
+    }
 
-      // With no active file, checkCallback returns false
+    const workflow = note("Workflows/daily.md");
+    const ordinary = note("Notes/shopping.md");
+
+    function command(id: string) {
+      const calls = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls;
+      const found = calls.find((c: any[]) => c[0].id === id);
+      expect(found).toBeDefined();
+      return found![0];
+    }
+
+    beforeEach(() => {
+      plugin.app.metadataCache.getFileCache = (file: { path: string }) =>
+        file.path === workflow.path
+          ? { frontmatter: { ore: true } }
+          : { frontmatter: { title: "Shopping" } };
+    });
+
+    it("offers run all cells only on a workflow note", () => {
+      const cmd = command("run-all");
+
       plugin.app.workspace.getActiveFile = () => null;
       expect(cmd.checkCallback(true)).toBe(false);
+
+      plugin.app.workspace.getActiveFile = () => ordinary;
+      expect(cmd.checkCallback(true)).toBe(false);
+
+      plugin.app.workspace.getActiveFile = () => workflow;
+      expect(cmd.checkCallback(true)).toBe(true);
+    });
+
+    it("does not run anything when checking", () => {
+      const run = vi.spyOn(plugin as any, "runWorkflow");
+      plugin.app.workspace.getActiveFile = () => workflow;
+
+      command("run-all").checkCallback(true);
+      expect(run).not.toHaveBeenCalled();
+
+      command("run-all").checkCallback(false);
+      expect(run).toHaveBeenCalledWith(workflow);
+    });
+
+    it.each(["run-cell", "run-cell-only"])("offers %s only on a workflow note", (id) => {
+      const cmd = command(id);
+      const editor = { getCursor: () => ({ line: 0, ch: 0 }) };
+
+      expect(cmd.editorCheckCallback(true, editor, { file: ordinary })).toBe(false);
+      expect(cmd.editorCheckCallback(true, editor, { file: null })).toBe(false);
+      expect(cmd.editorCheckCallback(true, editor, { file: workflow })).toBe(true);
     });
   });
 });

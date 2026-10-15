@@ -83,6 +83,7 @@ export {
 
 export {
   WorkflowParser,
+  isWorkflowFrontmatter,
   OutputSerializer,
   TemplateInterpolator,
   ParserError,
