@@ -95,6 +95,10 @@ Controls reading notes from the vault.
 - `vault.read()` throws error
 - `{{note:path}}` templates fail
 - Cell can only access its own context
+- The vault is not mounted into TS or shell containers. With `vaultWrite: allow`, only the
+  run's own directory (`<outputRoot>/runs/<workflow>/<runId>/`) is mounted, read-write, so a
+  cell can record output without seeing the vault or earlier runs; `vault.write()` elsewhere
+  throws
 
 **When `allow` (default):**
 - Can read any note in vault

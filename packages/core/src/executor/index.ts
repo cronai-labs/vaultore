@@ -8,6 +8,7 @@ import {
   Cell,
   CellOutput,
   ContainerExecOptions,
+  ContainerMount,
   OutputMeta,
   PlatformAdapter,
   RuntimeEngine,
@@ -854,6 +855,38 @@ function renderOutputMarkdown(
   return `${frontmatter.join("\n")}\n\n\`\`\`${lang}\n${payload}\n\`\`\`\n`;
 }
 
+/**
+ * What of the vault a container sees. The mount is the enforcement: the TS
+ * runtime's `vault.read` check runs inside the cell, which can bypass it
+ * (`readRaw`, `Bun.file`), and a read-only mount stops writes, not reads
+ * (#68).
+ *
+ * Without vaultRead, a cell that may write gets only this run's directory, at
+ * the same path it has under a full mount, so it can record output without
+ * seeing the vault — or earlier runs, which hold other workflows' note text.
+ */
+function vaultMounts(
+  vaultRoot: string,
+  permissions: Pick<ResolvedPermissions, "vaultRead" | "vaultWrite">,
+  runContext: Pick<RunContext, "runDir">
+): ContainerMount[] {
+  if (permissions.vaultRead) {
+    return [
+      { source: vaultRoot, target: "/workspace", readonly: !permissions.vaultWrite },
+    ];
+  }
+  if (!permissions.vaultWrite) return [];
+
+  const root = stripTrailing(vaultRoot, "/");
+  return [
+    {
+      source: `${root}/${runContext.runDir}`,
+      target: `/workspace/${runContext.runDir}`,
+      readonly: false,
+    },
+  ];
+}
+
 async function executeTypeScriptCell(
   cell: Cell,
   platform: PlatformAdapter,
@@ -882,13 +915,7 @@ async function executeTypeScriptCell(
     memoryLimit: runtime.memoryLimit,
     cpuLimit: runtime.cpuLimit,
     networkEnabled: permissions.network,
-    mounts: [
-      {
-        source: vaultRoot,
-        target: "/workspace",
-        readonly: !permissions.vaultWrite,
-      },
-    ],
+    mounts: vaultMounts(vaultRoot, permissions, runContext),
   };
 
   const result = await execContainer(runtime.engine, containerOpts);
@@ -936,13 +963,7 @@ async function executeShellCell(
     memoryLimit: runtime.memoryLimit,
     cpuLimit: runtime.cpuLimit,
     networkEnabled: permissions.network,
-    mounts: [
-      {
-        source: vaultRoot,
-        target: "/workspace",
-        readonly: !permissions.vaultWrite,
-      },
-    ],
+    mounts: vaultMounts(vaultRoot, permissions, runContext),
   };
 
   const result = await execContainer(runtime.engine, containerOpts);
@@ -1043,7 +1064,25 @@ function cell(id) {
   return __vaultore_outputs[id];
 }
 
+// Advisory only: the mounts are the enforcement (see vaultMounts). These
+// checks turn a doomed access into a clear error. Without vaultRead only this
+// run's directory is mounted, so a write elsewhere would land in the
+// container's own filesystem and vanish.
 const __vaultore_permissions = { vaultRead: ${vaultRead}, vaultWrite: ${vaultWrite} };
+function __vaultore_writable(path) {
+  if (!__vaultore_permissions.vaultWrite) {
+    throw new Error("Vault write permission denied");
+  }
+  const rel = path.replace(/^\\//, "");
+  if (__vaultore_permissions.vaultRead) return "/workspace/" + rel;
+  const inRun = rel === vaultore.runDir || rel.startsWith(vaultore.runDir + "/");
+  if (!inRun || rel.split("/").includes("..")) {
+    throw new Error(
+      "Vault write outside this run's directory (" + vaultore.runDir + ") needs vaultRead: " + path
+    );
+  }
+  return "/workspace/" + rel;
+}
 const vault = {
   async read(path) {
     if (!__vaultore_permissions.vaultRead) {
@@ -1052,10 +1091,7 @@ const vault = {
     return await Bun.file("/workspace/" + path.replace(/^\\//, "")).text();
   },
   async write(path, content) {
-    if (!__vaultore_permissions.vaultWrite) {
-      throw new Error("Vault write permission denied");
-    }
-    await Bun.write("/workspace/" + path.replace(/^\\//, ""), content);
+    await Bun.write(__vaultore_writable(path), content);
   },
   async exists(path) {
     if (!__vaultore_permissions.vaultRead) {
@@ -1064,10 +1100,7 @@ const vault = {
     return await Bun.file("/workspace/" + path.replace(/^\\//, "")).exists();
   },
   async mkdirp(path) {
-    if (!__vaultore_permissions.vaultWrite) {
-      throw new Error("Vault write permission denied");
-    }
-    const proc = Bun.spawn(["mkdir", "-p", "/workspace/" + path.replace(/^\\//, "")]);
+    const proc = Bun.spawn(["mkdir", "-p", __vaultore_writable(path)]);
     await proc.exited;
   },
   async readRaw(path) {

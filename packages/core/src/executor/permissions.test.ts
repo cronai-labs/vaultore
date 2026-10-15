@@ -162,3 +162,53 @@ describe("{{note:}} in AI cells (#67)", () => {
 		expect(requests).toEqual([]);
 	});
 });
+
+describe("container mounts follow vaultRead (#68)", () => {
+	type Mount = { source: string; target: string; readonly?: boolean };
+
+	async function mountsFor(type: "ts" | "shell", read: string, write: string) {
+		vi.mocked(execContainer).mockResolvedValue({
+			exitCode: 0,
+			stdout: "1",
+			stderr: "",
+		} as never);
+		const { workflow } = await run(
+			note(
+				`  network: deny\n  vaultRead: ${read}\n  vaultWrite: ${write}`,
+				`\`\`\`ore:${type} id=c\n1\n\`\`\``
+			)
+		);
+		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as {
+			mounts?: Mount[];
+		};
+		return opts.mounts ?? [];
+	}
+
+	for (const type of ["ts", "shell"] as const) {
+		it(`${type}: mounts the vault read-only under vaultRead: allow`, async () => {
+			expect(await mountsFor(type, "allow", "deny")).toEqual([
+				{ source: "/vault", target: "/workspace", readonly: true },
+			]);
+		});
+
+		it(`${type}: mounts the vault read-write under vaultRead and vaultWrite: allow`, async () => {
+			expect(await mountsFor(type, "allow", "allow")).toEqual([
+				{ source: "/vault", target: "/workspace", readonly: false },
+			]);
+		});
+
+		it(`${type}: mounts nothing under vaultRead and vaultWrite: deny`, async () => {
+			expect(await mountsFor(type, "deny", "deny")).toEqual([]);
+		});
+
+		it(`${type}: mounts only this run's directory under vaultRead: deny, vaultWrite: allow`, async () => {
+			const mounts = await mountsFor(type, "deny", "allow");
+			expect(mounts).toHaveLength(1);
+			const [mount] = mounts as [Mount];
+			expect(mount.readonly).toBe(false);
+			expect(mount.source).toMatch(/^\/vault\/_vaultore\/runs\/wf\/[^/]+$/);
+			expect(mount.target).toBe(mount.source.replace(/^\/vault/, "/workspace"));
+		});
+	}
+});

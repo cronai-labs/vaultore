@@ -70,9 +70,11 @@ explicitly inject.
 ```
 
 - `vaultRead` / `vaultWrite` — enforced **in the host** per call, not by guest
-  code (the guest is untrusted; today's container tier injects the check into
-  the guest script, which is acceptable only because the container also
-  mounts the vault read-only).
+  code (the guest is untrusted). The container tier enforces both at the
+  mount instead: without `vaultRead` the vault is not mounted, and a cell that
+  may still write sees only its run directory. Its guest-side checks only turn
+  a doomed access into a clear error. A read-only mount alone stops writes,
+  not reads (#68).
 - `network` — no socket API exists in the guest. If (and only if) the
   workflow grants `network: allow`, a `fetch` host function is injected that
   proxies through the host with the response streamed back into guest memory.
@@ -113,8 +115,8 @@ Pyodide-in-Electron packaging need prototyping before committing to a version.
 |------------|--------------------|----------------|
 | `network: deny` | `--network=none` (error on Apple engine) | No fetch injected (default) |
 | `network: allow` | No network flag | Gated `fetch` host function |
-| `vaultRead` | RO mount + guest check | Host-side check per call |
-| `vaultWrite` | RW mount gated | Host-side check per call |
+| `vaultRead: deny` | No vault mount | Host-side check per call |
+| `vaultWrite: allow` | Vault mounted RW; without `vaultRead`, only the run directory | Host-side check per call |
 | CPU / memory | `--cpus` / `--memory` | Interrupt deadline / heap cap |
 
 ## Open Questions
