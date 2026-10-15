@@ -103,7 +103,7 @@ Controls reading notes from the vault.
 **When `allow` (default):**
 - Can read any note in vault
 - Templates resolve successfully
-- Full vault access for reading
+- Full vault access for reading, except `.obsidian/` (§4.1)
 
 **When `ask`:**
 - Prompt before reading notes
@@ -175,6 +175,7 @@ docker run --rm \
 | User | `--user=<uid>:<gid>` (§4.2) | `--user <uid>:<gid>` | Never root |
 | Memory / CPU | `--memory` / `--cpus` from `runtime.memoryLimit` / `runtime.cpuLimit` | same | §4.3 |
 | Vault | §3.3, §3.4: no mount, the run directory only, or the vault read-only or read-write | same | |
+| `.obsidian/` | `--tmpfs /workspace/.obsidian:ro,noexec,nosuid,nodev` | same | Under the full vault mount, an empty read-only tmpfs hides the plugin's own code and settings, so a cell can neither read nor rewrite them. Applied only when `.obsidian/` exists in the vault: masking a missing directory would make the engine create it. Obsidian's per-device "Override config folder" setting is not honoured; only `.obsidian` is masked |
 
 On Apple `container` each container is its own micro-VM, which is the isolation boundary for
 what the CLI cannot express (no `no-new-privileges`, no pids limit; checked against
