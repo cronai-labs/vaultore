@@ -100,7 +100,10 @@ Please keep tests green and add coverage for new behavior. Canonical fixtures in
 
 ## Release Process
 
-Releases are cut locally with one command and published by pushing the tag.
+`main` only changes through pull requests, so a release is a pull request too, followed by
+a tag. Two commands, each run locally; neither pushes anything.
+
+**1. Prepare the release pull request** on an up-to-date `main`:
 
 ```bash
 bun run release              # version derived from the commits since the last tag
@@ -108,24 +111,34 @@ bun run release --dry-run    # show the version and changelog, change nothing
 bun run release 0.4.0        # override the derived version
 ```
 
-`release` derives the next version from your conventional commits via
-[git-cliff](https://git-cliff.org/) (`feat` → minor, `fix`/`perf`/`revert` → patch;
-pre-1.0 a breaking change bumps the minor rather than jumping to 1.0.0), syncs every
-version location, regenerates `CHANGELOG.md`, then commits and tags. It refuses to run
-on a dirty tree, off `main`, or when nothing since the last tag warrants a release.
-
-It also refuses when the new version's `CHANGELOG.md` section has no entries, because that
-section becomes the release notes.
-
-Nothing is pushed. Review, then push the commit and the tag together:
+`release` fetches origin and refuses on a dirty tree, off `main`, when `main` differs from
+`origin/main`, or when nothing since the last tag warrants a release. It derives the next
+version from your conventional commits via [git-cliff](https://git-cliff.org/) (`feat` →
+minor, `fix`/`perf`/`revert` → patch; pre-1.0 a breaking change bumps the minor rather than
+jumping to 1.0.0), creates branch `release/<version>`, syncs every version location,
+regenerates `CHANGELOG.md`, checks that the version's changelog section has entries (it
+becomes the release notes) and commits `chore(release): <version>`. It prints the commands
+to push the branch and open the pull request:
 
 ```bash
-git show HEAD --stat
-git push --atomic origin main 0.2.0
+git push -u origin release/0.4.0
+gh pr create --base main --head release/0.4.0 --title "chore(release): 0.4.0" --body "..."
 ```
 
-`--atomic` makes the push all or nothing: if `main` is rejected, the tag is not created
-either, so a release can never be built from a commit that is not on `main`.
+Keep the title exactly `chore(release): <version>`: squash-merging turns it into the commit
+subject that step 2 looks for.
+
+**2. Tag the merged commit** once the pull request is squash-merged:
+
+```bash
+bun run release:tag 0.4.0
+git push origin 0.4.0
+```
+
+`release:tag` fetches origin and refuses unless the tip of `origin/main` is the release
+commit (`chore(release): 0.4.0 (#N)`) with both manifests, every package and `versions.json`
+at that version and a usable changelog section. It then creates an annotated tag on that
+commit and prints the push command.
 
 Pushing the tag runs [`release.yml`](.github/workflows/release.yml). It waits until the
 tagged commit is on `main` and its `ci-required` check has passed, re-verifies the tag

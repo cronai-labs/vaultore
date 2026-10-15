@@ -1,20 +1,20 @@
 /**
- * One-command release.
+ * Step 1 of 2 of a release: prepares the release pull request.
  *
  *   bun run release              # version derived from conventional commits
  *   bun run release 0.4.0        # explicit version
  *   bun run release --dry-run    # show what would happen, change nothing
  *
- * Derives the next version with git-cliff (see cliff.toml), syncs every version
- * location via version-bump.mjs, regenerates CHANGELOG.md, then commits and
- * tags. Nothing is pushed — review the commit, then push both in one go:
+ * main only changes through pull requests, so a release is a pull request
+ * like any other. Run on an up-to-date main, this derives the next version
+ * with git-cliff (see cliff.toml), creates branch release/<version>, syncs
+ * every version location via version-bump.mjs, regenerates CHANGELOG.md and
+ * commits "chore(release): <version>". Nothing is pushed and no tag is made;
+ * it prints the commands that push the branch and open the pull request.
  *
- *   git push --atomic origin main <version>
- *
- * --atomic makes the push all or nothing: if main is rejected, the tag is not
- * created either, so no release can be built from a commit that is not on
- * main. Pushing the tag runs .github/workflows/release.yml, which re-verifies
- * the tag against the manifests and CI before publishing.
+ * Step 2, once that pull request is squash-merged: bun run release:tag
+ * <version> (scripts/release-tag.mjs) tags the merged commit. Pushing the tag
+ * runs .github/workflows/release.yml.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -52,6 +52,21 @@ if (branch !== "main") {
 	fail(`releases are cut from main, not '${branch}'`);
 }
 
+// The release branch must start from what is actually on origin/main, and the
+// tag check below must see tags pushed from elsewhere.
+console.log("Fetching origin...");
+run("git", ["fetch", "--quiet", "--tags", "origin"]);
+const local = git("rev-parse", "HEAD");
+const remote = git("rev-parse", "origin/main");
+if (local !== remote) {
+	const behind = git("rev-list", "--count", `HEAD..origin/main`);
+	const ahead = git("rev-list", "--count", `origin/main..HEAD`);
+	fail(
+		`main is ${behind} commit(s) behind and ${ahead} ahead of origin/main — the release must start from origin/main.\n` +
+			`       Run: git pull --rebase origin main`
+	);
+}
+
 // --- version ---------------------------------------------------------------
 
 let version;
@@ -83,6 +98,14 @@ if (explicit) {
 const tags = git("tag", "--list").split("\n").filter(Boolean);
 if (tags.includes(version)) fail(`tag ${version} already exists`);
 
+const releaseBranch = `release/${version}`;
+if (git("branch", "--list", releaseBranch) !== "") {
+	fail(`branch ${releaseBranch} already exists locally`);
+}
+if (git("ls-remote", "--heads", "origin", releaseBranch) !== "") {
+	fail(`branch ${releaseBranch} already exists on origin — is a release pull request already open?`);
+}
+
 if (dryRun) {
 	console.log("\n--dry-run: stopping before any change. Changelog preview:\n");
 	run("bunx", ["git-cliff", "--unreleased", "--tag", version]);
@@ -90,6 +113,9 @@ if (dryRun) {
 }
 
 // --- apply -----------------------------------------------------------------
+
+console.log(`\nCreating branch ${releaseBranch}...`);
+run("git", ["switch", "--quiet", "-c", releaseBranch]);
 
 console.log("\nSyncing version locations...");
 run("node", ["version-bump.mjs", version]);
@@ -105,29 +131,35 @@ if (manifest.version !== version) {
 }
 
 // release.yml publishes this version's CHANGELOG.md section as the release
-// notes and refuses an empty one. Check it here, while the version is unspent:
+// notes and refuses an empty one. Check it here, before anything is pushed:
 // once the tag is pushed, fixing the changelog means a new version.
 try {
 	run("node", ["scripts/release-notes.mjs", version], { capture: true });
 } catch (error) {
 	fail(
 		`CHANGELOG.md has no usable section for ${version}: ${String(error.stderr ?? error.message).trim()}\n` +
-			`       Nothing is committed or tagged. Inspect the working tree before retrying.`
+			`       Nothing is committed. You are on ${releaseBranch} with the bump uncommitted; inspect it before retrying.`
 	);
 }
 
-console.log("\nCommitting and tagging...");
+console.log("\nCommitting...");
 run("git", ["add", "-A"]);
-run("git", ["commit", "-m", `chore(release): ${version}`]);
-run("git", ["tag", version]);
+run("git", ["commit", "--quiet", "-m", `chore(release): ${version}`]);
 
+// The pull request title becomes the squash commit's subject, which is what
+// release-tag.mjs looks for on main: "chore(release): <version> (#N)".
 console.log(`
-Released ${version} locally. Review it, then publish:
+Prepared ${version} on ${releaseBranch}. Nothing is pushed. Review it, then open the release pull request:
 
   git show HEAD --stat
-  git push --atomic origin main ${version}
+  git push -u origin ${releaseBranch}
+  gh pr create --base main --head ${releaseBranch} --title "chore(release): ${version}" --body "Release ${version}. After this is squash-merged: bun run release:tag ${version}"
+
+Once it is squash-merged into main:
+
+  bun run release:tag ${version}
 
 To undo before pushing:
 
-  git tag -d ${version} && git reset --hard HEAD~1
+  git switch main && git branch -D ${releaseBranch}
 `);

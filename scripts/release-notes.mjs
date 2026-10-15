@@ -6,9 +6,9 @@
  *
  * Exit status: 0 printed, 1 no usable section, 2 usage.
  *
- * release.yml publishes this as the GitHub release body, and release.mjs runs
- * it before tagging so an unusable section stops the release while the version
- * is still unspent. The curated changelog is the point of the release tooling;
+ * release.yml publishes this as the GitHub release body. release.mjs runs it
+ * before committing the release, and release-tag.mjs before tagging, so an
+ * unusable section stops the release while the version is unspent. The curated changelog is the point of the release tooling;
  * GitHub's generated notes list merged pull requests instead, Dependabot ones
  * included, and drop any commit whose pull request GitHub can no longer find.
  */

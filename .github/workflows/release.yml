@@ -26,8 +26,8 @@ concurrency:
 jobs:
   # A tag can point at any commit. Only a commit on main whose ci-required
   # check concluded success may be released; the gate reads that evidence
-  # rather than re-running CI, and waits while CI on the commit is still
-  # running, which it is when main and the tag are pushed together.
+  # rather than re-running CI, and waits if CI on the commit is still
+  # running, as it is when the tag follows the release PR's merge closely.
   gate:
     runs-on: ubuntu-24.04
     timeout-minutes: 35

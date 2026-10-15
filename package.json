@@ -30,6 +30,7 @@
 		"commitlint": "commitlint --edit",
 		"version:bump": "node version-bump.mjs",
 		"release": "node ./scripts/release.mjs",
+		"release:tag": "node ./scripts/release-tag.mjs",
 		"changelog": "git-cliff --output CHANGELOG.md"
 	},
 	"devDependencies": {

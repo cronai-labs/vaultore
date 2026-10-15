@@ -11,9 +11,9 @@
 #   --interval <seconds>  how often to poll while waiting (20)
 #   --grace <seconds>     how long to wait for CI to start at all (180)
 #
-# Waiting is the normal case, not an edge case: the release commit and its tag
-# are pushed together, so CI on that commit starts at the same moment as the
-# release workflow and is still running when this script first looks.
+# Waiting is a normal case, not an edge case: the tag is usually pushed
+# minutes after the release pull request is squash-merged, while CI on the
+# merge commit is still running.
 #
 # Exit status: 0 the commit may be released, 1 refused, 2 usage or API error.
 # Reads GitHub through `gh api`; the token needs read access to contents,
