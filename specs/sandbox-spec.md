@@ -125,7 +125,7 @@ Pyodide releases current at that time, before anything is committed to.
 |------------|--------------------|----------------|
 | `network: deny` | `--network=none` (Apple: `--network none`) | No fetch injected (default) |
 | `network: allow` | No network flag | Gated `fetch` host function |
-| `vaultRead: allow` | Vault mounted at `/workspace`, read-only unless `vaultWrite`; `.obsidian/` hidden behind an empty read-only tmpfs | Host-side check per call |
+| `vaultRead: allow` | Vault mounted at `/workspace`, read-only unless `vaultWrite`; `.obsidian/` and `.vaultore/` hidden behind empty read-only tmpfs mounts | Host-side check per call |
 | `vaultRead: deny` | No vault mount | Host-side check per call |
 | `vaultWrite: allow` | Vault mounted RW; without `vaultRead`, only the run directory | Host-side check per call |
 | CPU / memory | `--cpus` / `--memory` | Interrupt deadline / heap cap |

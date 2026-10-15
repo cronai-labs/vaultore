@@ -95,7 +95,8 @@ The mount is the enforcement (`vaultMounts`, `packages/core/src/executor/index.t
 | `deny` | `deny` | Nothing |
 
 **`allow` (default):** `vault.read()`, `vault.exists()` and `{{note:path}}` work. Every file
-in the vault folder is readable except `.obsidian/`, including other workflows' run outputs.
+in the vault folder is readable except `.obsidian/` and `.vaultore/`, including other workflows'
+run outputs.
 
 **`deny`:** `vault.read()` and `vault.exists()` throw; `{{note:path}}` fails the AI cell before
 anything is sent. A cell that may still write sees only its run directory, so it can record
@@ -104,8 +105,8 @@ output without seeing the vault or earlier runs; `vault.write()` elsewhere throw
 `vault.readRaw()` reads paths inside the container (`/proc`), not the vault, and is not
 checked.
 
-Only `.obsidian/` is hidden. Other dot-directories in the vault, among them the CLI's
-`.vaultore/`, are visible under a full mount, and writable with `vaultWrite`.
+`.obsidian/` and `.vaultore/` are hidden (§4.1). Other dot-directories in the vault are visible
+under a full mount, and writable with `vaultWrite`.
 
 ### 3.4 `vaultWrite`
 
@@ -158,6 +159,7 @@ docker run --rm \
 | Memory / CPU | `--memory` / `--cpus` from `runtime.memoryLimit` / `runtime.cpuLimit` | same | §4.3 |
 | Vault | §3.3, §3.4: no mount, the run directory only, or the vault read-only or read-write | same | |
 | `.obsidian/` | `--tmpfs /workspace/.obsidian:ro,noexec,nosuid,nodev` | same | Under the full vault mount, an empty read-only tmpfs hides the plugin's own code and settings, so a cell can neither read nor rewrite them. Applied only when `.obsidian/` exists in the vault: masking a missing directory would make the engine create it. Obsidian's per-device "Override config folder" setting is not honoured; only `.obsidian` is masked |
+| `.vaultore/` | `--tmpfs /workspace/.vaultore:ro,noexec,nosuid,nodev` | same | Under the full vault mount, hides the CLI's settings and stored permission decisions, so a cell cannot forge a grant for another workflow (#94). Always applied: the host creates `.vaultore/` before the run, so a cell cannot create the config in a vault that has none yet |
 
 On Apple `container` each container is its own micro-VM, which is the isolation boundary for
 what the CLI cannot express (no `no-new-privileges`, no pids limit; checked against
@@ -239,8 +241,8 @@ the hash of the content they were given for:
 ```
 
 They are kept as `permissionDecisions` in the plugin's settings
-(`.obsidian/plugins/vaultore/data.json`, hidden from cells) or in the CLI's
-`<vault>/.vaultore/config.json`.
+(`.obsidian/plugins/vaultore/data.json`) or in the CLI's `<vault>/.vaultore/config.json`; both
+are hidden from cells.
 
 `workflowHash` is the SHA-256 of the note's frontmatter as written (including keys the
 schema does not know) and each cell's attributes and source, with object keys sorted. Line
@@ -311,6 +313,7 @@ workflow is granted `network`.
 | Data leaving the machine | `network: deny` by default; AI cells need `network` |
 | Vault corruption | `vaultWrite: deny` by default; read-only or no mount |
 | Rewriting the plugin or its settings | `.obsidian/` hidden from every cell (§4.1) |
+| Forging the CLI's stored decisions | `.vaultore/` hidden from every cell, created before the run (§4.1) |
 | Resource exhaustion | Memory, CPU and timeout limits; a process limit on Docker, Podman and Colima |
 | Privilege escalation in the container | Non-root user, no capabilities, `no-new-privileges` (not on Apple) |
 | A note changing after it was granted `ask` permissions | Decisions bound to the content (§5.3) |
@@ -322,7 +325,6 @@ workflow is granted `network`.
 |--------|-------|
 | A note that declares `allow` | Applied without a prompt. Read a workflow before running it |
 | `vaultore agent` | Runs every scheduled workflow without approval (§6) |
-| The CLI's `.vaultore/` | Visible to cells under a full mount and writable with `vaultWrite` (§3.3) |
 | Container escape, kernel side channels | Containers share a kernel or VM; VaultOre relies on the engine |
 | Prompt injection, malicious AI responses | AI output is text that later cells may act on |
 | Approving without reading | A prompt cannot judge the code it grants |
