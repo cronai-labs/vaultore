@@ -7,7 +7,7 @@
 
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import {
   RuntimeDetection,
   RuntimeEngine,
@@ -278,7 +278,10 @@ function runCommand(
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const resolvedCommand = resolveCommandPath(command);
-    const child = spawn(resolvedCommand, args, { stdio: "pipe" });
+    const child = spawn(resolvedCommand, args, {
+      stdio: "pipe",
+      env: engineEnvironment(resolvedCommand, process.env),
+    });
     let stdout = "";
     let stderr = "";
     let timeout: NodeJS.Timeout | undefined;
@@ -340,6 +343,25 @@ export function searchPathEntries(
   separator: string = delimiter
 ): string[] {
   return (pathValue ?? "").split(separator).filter(Boolean);
+}
+
+/**
+ * The environment an engine command runs in: the caller's, with the resolved
+ * binary's directory first on `PATH`. An engine found through a known location
+ * (`knownCommandPaths`) looks up its own helpers through `PATH`: Obsidian
+ * started from the Dock has no `/opt/homebrew/bin` there, so `colima` could not
+ * find `limactl` and reported "lima not found" while running (#128).
+ */
+export function engineEnvironment(
+  resolvedCommand: string,
+  env: NodeJS.ProcessEnv,
+  separator: string = delimiter
+): NodeJS.ProcessEnv {
+  const dir = dirname(resolvedCommand);
+  if (dir === "." || dir === "") return { ...env };
+  const entries = searchPathEntries(env.PATH, separator);
+  if (entries.includes(dir)) return { ...env };
+  return { ...env, PATH: [dir, ...entries].join(separator) };
 }
 
 function resolveCommandPath(command: string): string {

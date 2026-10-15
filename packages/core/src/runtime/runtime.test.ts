@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import {
@@ -11,6 +12,7 @@ import {
   execContainer,
   FALLBACK_CONTAINER_USER,
   searchPathEntries,
+  engineEnvironment,
 } from "./index";
 import type { RuntimeEngine } from "../types";
 import type { ContainerExecOptions } from "../types";
@@ -317,4 +319,41 @@ describe("execContainer output", () => {
     expect(result.stdout).toBe("ä");
     expect(result.stderr).toBe("ä");
   });
+});
+
+describe("engineEnvironment (#128)", () => {
+	it("puts the resolved binary's directory first on the child's PATH", () => {
+		const env = engineEnvironment("/opt/homebrew/bin/colima", { PATH: "/usr/bin:/bin" }, ":");
+		expect(env.PATH).toBe("/opt/homebrew/bin:/usr/bin:/bin");
+	});
+
+	it("leaves PATH alone when the directory is already on it", () => {
+		const env = engineEnvironment("/usr/bin/docker", { PATH: "/usr/bin:/bin" }, ":");
+		expect(env.PATH).toBe("/usr/bin:/bin");
+	});
+
+	it("keeps the rest of the environment", () => {
+		const env = engineEnvironment("/opt/homebrew/bin/colima", { PATH: "/usr/bin", HOME: "/h" }, ":");
+		expect(env.HOME).toBe("/h");
+	});
+
+	it("lets a binary started with a minimal PATH find a sibling helper", () => {
+		// The live failure: Obsidian from the Dock has no /opt/homebrew/bin on
+		// PATH, so colima, found by its absolute path, could not find limactl.
+		const dir = mkdtempSync(join(tmpdir(), "vaultore-path-"));
+		try {
+			writeFileSync(join(dir, "helper"), "#!/bin/sh\necho helper-ran\n", { mode: 0o755 });
+			writeFileSync(join(dir, "tool"), "#!/bin/sh\nexec helper\n", { mode: 0o755 });
+			const tool = join(dir, "tool");
+			const minimal = { PATH: "/usr/bin:/bin" };
+
+			const without = spawnSync(tool, [], { env: minimal, encoding: "utf8" });
+			expect(without.status).not.toBe(0);
+
+			const withEnv = spawnSync(tool, [], { env: engineEnvironment(tool, minimal, ":"), encoding: "utf8" });
+			expect(withEnv.stdout.trim()).toBe("helper-ran");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
