@@ -69,6 +69,11 @@ async function detectEngine(engine: RuntimeEngine, timeoutMs: number): Promise<v
   }
 
   if (engine === "apple") {
+    // Windows ships a `container.exe` alias for WSL containers, so a binary of
+    // that name is Apple's CLI only on macOS.
+    if (process.platform !== "darwin") {
+      throw new Error("Apple container is available only on macOS");
+    }
     // Apple's `container` CLI requires its background service to be running
     await probe("container", ["system", "status"], timeoutMs);
     return;

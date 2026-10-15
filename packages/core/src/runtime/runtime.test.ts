@@ -122,6 +122,21 @@ describe("detectRuntimes", () => {
     expect(detection.preferred).toBe("docker");
   });
 
+  it("does not probe Apple container off macOS", async () => {
+    // Windows ships a `container.exe` alias for WSL containers, so a binary
+    // of that name proves nothing outside macOS.
+    fakeEngines("exit 0");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "linux" });
+    try {
+      const detection = await detectRuntimes();
+      expect(detection.available).not.toContain("apple");
+      expect(detection.errors.get("apple")).toMatch(/only on macOS/);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  });
+
   it("gives up on a probe that does not answer in time", async () => {
     // No `exec`: the shell is killed but its `sleep` child keeps the pipes
     // open, as a wedged CLI's helper processes would.
