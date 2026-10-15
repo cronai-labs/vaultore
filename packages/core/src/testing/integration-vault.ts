@@ -74,11 +74,14 @@ export function filesystemPlatform(
  * Wait until a container sees `path` with exactly `expected` in it.
  *
  * On colima (QEMU, sshfs mount) a container can read a file the host has just
- * rewritten with its old size: the new text cut off where the old text ended.
- * Seen in the smart-inbox test after a container's write and a host edit:
- * stale for 0.3-0.9 s of polling, and a fixed 1.5 s delay before the run was
- * not enough. A test that edits a note between container cells waits here
- * rather than guessing a delay.
+ * rewritten with its old size: the new text cut off where the old text ended
+ * (#83). Seen in the smart-inbox test after a host edit: stale for 0.3-0.9 s
+ * of polling, and a fixed 1.5 s delay before the run was not enough.
+ *
+ * `vault.write` no longer persists such a copy: the host refuses a write whose
+ * base is not the note on disk. A cell that only reads still sees it, so a test
+ * that asserts what a cell read after a host edit waits here rather than
+ * guessing a delay.
  */
 export async function waitForContainerView(
 	root: string,

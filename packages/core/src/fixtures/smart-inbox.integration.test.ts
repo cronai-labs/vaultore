@@ -176,7 +176,10 @@ describe("smart-inbox", { timeout: 180_000 }, () => {
 
 		writeFileSync(join(root, "Inbox.md"), `${read("Inbox.md")}- [ ] Draft the offer\n`);
 		const inboxBeforeSecond = read("Inbox.md");
-		// See waitForContainerView: colima can serve the pre-edit size briefly.
+		// Only so the second run sees the new item: on colima with sshfs,
+		// readInbox can be served the inbox cut off at its old length (#83). The
+		// compare-and-swap on vault.write keeps such a run from damaging the inbox
+		// (next test), but a cell that only reads still sees the stale copy.
 		await waitForContainerView(root, "Inbox.md", inboxBeforeSecond);
 		const second = await run();
 
@@ -194,6 +197,21 @@ describe("smart-inbox", { timeout: 180_000 }, () => {
 
 		expect(read("Inbox.md")).toBe(
 			inboxBeforeSecond.replace("- [ ] Draft the offer\n", "- [x] Draft the offer\n")
+		);
+	});
+
+	it("files an item added right before the run, or leaves it for the next run, and never loses a line", async () => {
+		stubProvider([ANSWER, JSON.stringify({ work: [1], personal: [], reference: [] })]);
+		await run();
+		const inboxBefore = `${read("Inbox.md")}- [ ] Draft the offer\n`;
+		writeFileSync(join(root, "Inbox.md"), inboxBefore);
+		// No wait: the container may see the inbox from before this edit (#83).
+		const second = await run();
+
+		expect(Object.values(statuses(second)).every((s) => s === "success"), JSON.stringify(statuses(second))).toBe(true);
+		const filed = prompts[1]?.includes("1. Draft the offer") ?? false;
+		expect(read("Inbox.md")).toBe(
+			filed ? inboxBefore.replace("- [ ] Draft the offer\n", "- [x] Draft the offer\n") : inboxBefore
 		);
 	});
 
@@ -226,11 +244,21 @@ describe("smart-inbox", { timeout: 180_000 }, () => {
 		edited[7] = "- [ ] Book a dentist appointment for Tuesday";
 		stubProvider([ANSWER], async () => {
 			writeFileSync(join(root, "Inbox.md"), edited.join("\n"));
-			await waitForContainerView(root, "Inbox.md", edited.join("\n"));
 		});
 
 		const workflow = await run();
 
+		// No wait after the edit: tickInbox may be served the inbox cut off at its
+		// old length (#83). Its write is then refused and the inbox stays exactly
+		// as the user left it; before the host checked writes, the cut-off text
+		// was saved.
+		if (statuses(workflow).tickInbox === "error") {
+			expect(String(workflow.outputs.get("tickInbox")?.value)).toContain(
+				"Inbox.md changed since this cell read it"
+			);
+			expect(read("Inbox.md")).toBe(edited.join("\n"));
+			return;
+		}
 		expect(statuses(workflow).tickInbox).toBe("success");
 		const result = workflow.outputs.get("tickInbox")?.value as {
 			ticked: number;
