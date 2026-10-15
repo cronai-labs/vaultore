@@ -66,3 +66,67 @@ describe("TemplateInterpolator", () => {
     expect(result).toContain("\"ok\": true");
   });
 });
+
+describe("TemplateInterpolator.interpolateAsync", () => {
+  function outputs(entries: Record<string, unknown>) {
+    return new Map(
+      Object.entries(entries).map(([cellId, value]) => [
+        cellId,
+        {
+          cellId,
+          value,
+          meta: { status: "success" as const, duration: 1, timestamp: "now" },
+        },
+      ])
+    );
+  }
+
+  it("resolves note references written in the cell's own template", async () => {
+    const result = await new TemplateInterpolator().interpolateAsync(
+      "Summarise: {{note:a.md}}",
+      outputs({}),
+      async (path) => `content of ${path}`
+    );
+
+    expect(result).toBe("Summarise: content of a.md");
+  });
+
+  // Fetched text that contains the placeholder syntax must not pull a note into
+  // a prompt bound for a third party (#67).
+  it("inserts upstream output verbatim and never scans it for note references", async () => {
+    const reads: string[] = [];
+    const result = await new TemplateInterpolator().interpolateAsync(
+      "Summarise: {{fetched}}",
+      outputs({ fetched: "page text {{note:Private/secret.md}}" }),
+      async (path) => {
+        reads.push(path);
+        return "SECRET";
+      }
+    );
+
+    expect(reads).toEqual([]);
+    expect(result).toBe("Summarise: page text {{note:Private/secret.md}}");
+  });
+
+  it("inserts note content literally, including replacement patterns", async () => {
+    const result = await new TemplateInterpolator().interpolateAsync(
+      "A {{note:a.md}} B",
+      outputs({}),
+      async () => "$& $` $'"
+    );
+
+    expect(result).toBe("A $& $` $' B");
+  });
+
+  it("propagates a failed note read instead of sending the placeholder", async () => {
+    await expect(
+      new TemplateInterpolator().interpolateAsync(
+        "Summarise: {{note:missing.md}}",
+        outputs({}),
+        async () => {
+          throw new Error("File not found: missing.md");
+        }
+      )
+    ).rejects.toThrow("missing.md");
+  });
+});

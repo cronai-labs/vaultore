@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	TemplateInterpolator,
 	WorkflowParser,
 	extractWikilink,
 	findOutputBlocks,
@@ -155,5 +156,32 @@ describe("findOutputBlocks", () => {
 	it("is fast on many unterminated markers", () => {
 		const content = "<!--ore:output:!".repeat(200_000);
 		expect(timed(() => findOutputBlocks(content))).toBeLessThan(BUDGET_MS);
+	});
+});
+
+describe("TemplateInterpolator.interpolateAsync", () => {
+	// `{{note:([^}]+)}}` let each `{{note:` scan across every later one, so a
+	// cell full of unclosed references took quadratic time.
+	it("stays linear on many unclosed note references", async () => {
+		const content = "{{note:" + "{{note:|".repeat(50_000);
+		const started = performance.now();
+		const result = await new TemplateInterpolator().interpolateAsync(
+			content,
+			new Map(),
+			async () => {
+				throw new Error("no reference should match");
+			}
+		);
+		expect(performance.now() - started).toBeLessThan(BUDGET_MS);
+		expect(result).toBe(content);
+	});
+
+	it("still resolves an ordinary reference", async () => {
+		const result = await new TemplateInterpolator().interpolateAsync(
+			"A {{note:Folder/Note name.md}} B",
+			new Map(),
+			async (path) => `<${path}>`
+		);
+		expect(result).toBe("A <Folder/Note name.md> B");
 	});
 });

@@ -485,37 +485,59 @@ export class OutputSerializer {
 
 export class TemplateInterpolator {
   interpolate(content: string, outputs: Map<string, CellOutput>): string {
-    return content.replace(/\{\{([\w-]+)\}\}/g, (match, cellId) => {
-      const output = outputs.get(cellId);
-      if (!output) return match;
-      return typeof output.value === "string"
-        ? output.value
-        : JSON.stringify(output.value, null, 2);
-    });
+    return content.replace(
+      /\{\{([\w-]+)\}\}/g,
+      (match, cellId: string) => outputText(outputs, cellId) ?? match
+    );
   }
 
+  /**
+   * Resolve `{{cellId}}` and `{{note:path}}` in a single pass over the cell's
+   * own template. Inserted text — an output or a note — is never scanned
+   * again, so text that merely contains the placeholder syntax (a fetched web
+   * page, say) cannot pull a note into the prompt (#67).
+   *
+   * A failed `readNote` rejects: sending the literal placeholder to a paid API
+   * and reporting success hides a moved note or a denied permission.
+   */
   async interpolateAsync(
     content: string,
     outputs: Map<string, CellOutput>,
     readNote: (path: string) => Promise<string>
   ): Promise<string> {
-    let result = this.interpolate(content, outputs);
+    // `[^{}]`, not `[^}]`: a path cannot run into the next `{{`, so each match
+    // attempt stops at the next brace and the scan stays linear
+    // (js/polynomial-redos).
+    const pattern = /\{\{note:([^{}]+)\}\}|\{\{([\w-]+)\}\}/g;
 
-    const noteRefRegex = /\{\{note:([^}]+)\}\}/g;
-    const matches = [...result.matchAll(noteRefRegex)];
-
-    for (const match of matches) {
-      const [fullMatch, notePath] = match;
-      try {
-        const noteContent = await readNote(notePath);
-        result = result.replace(fullMatch, noteContent);
-      } catch {
-        // Keep original if note not found
+    const notes = new Map<string, string>();
+    for (const match of content.matchAll(pattern)) {
+      const notePath = match[1];
+      if (notePath !== undefined && !notes.has(notePath)) {
+        notes.set(notePath, await readNote(notePath));
       }
     }
 
-    return result;
+    // Function form: a `$&` in a note or output is text, not a pattern.
+    return content.replace(
+      pattern,
+      (match, notePath: string | undefined, cellId: string | undefined) =>
+        notePath !== undefined
+          ? (notes.get(notePath) as string)
+          : (outputText(outputs, cellId as string) ?? match)
+    );
   }
+}
+
+function outputText(
+  outputs: Map<string, CellOutput>,
+  cellId: string
+): string | undefined {
+  const output = outputs.get(cellId);
+  if (!output) return undefined;
+  return typeof output.value === "string"
+    ? output.value
+    : JSON.stringify(output.value, null, 2);
 }
 
 // =============================================================================
