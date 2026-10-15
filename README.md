@@ -50,7 +50,7 @@ That writes `main.js`, `manifest.json`, and `styles.css` to
 
 1. Copy that `vaultore/` folder into `<your-vault>/.obsidian/plugins/`
 2. In Obsidian: **Settings → Community plugins → Enable "VaultOre"**
-3. Open **Settings → VaultOre** to pick your container runtime and (optionally) add an AI provider API key
+3. Open **Settings → VaultOre** to pick your container runtime and (optionally) select the secret that holds your AI provider API key
 
 Once the plugin is released and listed, downloadable builds will appear under
 [Releases](https://github.com/cronai-labs/vaultore/releases) and you will be able to
@@ -124,7 +124,7 @@ schedule: "0 18 * * *"   # every day at 6pm
 - **Code execution is sandboxed.** `ore:ts` and `ore:shell` cells run inside containers with **network disabled by default**, memory/CPU limits, and your vault mounted read-only unless a workflow is granted write permission.
 - **Permissions are explicit.** Workflows declare `network`, `vaultRead`, and `vaultWrite` permissions in frontmatter. Anything marked `ask` triggers a confirmation dialog, and your decision is remembered per workflow.
 - **AI cells call external services.** When a workflow contains `ore:ai` cells, the cell's prompt — including any interpolated cell outputs and note contents — is sent to the AI provider you configured (OpenAI or Anthropic) using your own API key. Nothing is sent anywhere unless a workflow with AI cells runs.
-- **API keys stay local.** Keys are stored in Obsidian's encrypted secret storage, never in plain-text settings files.
+- **API keys stay local.** Keys live in Obsidian's secret storage on your device. VaultOre's settings hold only the name of the secret you selected, never the key.
 - **No telemetry.** VaultOre makes no network requests of its own.
 
 See the [Permissions Spec](specs/permissions-spec.md) for the full security model.

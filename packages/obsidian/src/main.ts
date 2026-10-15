@@ -28,6 +28,10 @@ interface VaultOreSettings {
   runtimeEngine: "docker" | "podman" | "colima" | "apple";
   permissionDecisions: Record<string, unknown>;
   outputRoot: string;
+  // Names of entries in Obsidian's secret storage, picked with a
+  // SecretComponent. The keys themselves never enter data.json.
+  openaiSecretName: string;
+  anthropicSecretName: string;
 }
 
 const DEFAULT_SETTINGS: VaultOreSettings = {
@@ -38,6 +42,17 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   runtimeEngine: "docker",
   permissionDecisions: {},
   outputRoot: "_vaultore",
+  openaiSecretName: "",
+  anthropicSecretName: "",
+};
+
+type SecretNameSetting = "openaiSecretName" | "anthropicSecretName";
+
+// The secret keys core asks for, mapped to the setting that names the secret
+// and the label the user sees on that setting.
+const SECRET_SETTINGS: Record<string, { setting: SecretNameSetting; label: string }> = {
+  "openai.apiKey": { setting: "openaiSecretName", label: "OpenAI API key" },
+  "anthropic.apiKey": { setting: "anthropicSecretName", label: "Anthropic API key" },
 };
 
 // enableWarmPool: a "future feature" toggle that never did anything.
@@ -210,30 +225,38 @@ class ObsidianAdapter implements PlatformAdapter {
   }
 
   async getSecret(key: string): Promise<string | undefined> {
-    const storage = this.plugin.app.secretStorage;
-    if (!storage) return undefined;
-    const value = storage.getSecret(this.secretIdFor(key));
-    if (!value) return undefined;
+    const spec = SECRET_SETTINGS[key];
+    if (!spec) {
+      throw new Error(`VaultOre has no setting for the secret "${key}"`);
+    }
+    const name = this.plugin.settings[spec.setting];
+    if (!name) {
+      throw new Error(
+        `No secret selected for "${spec.label}". Select one under Settings → VaultOre → API keys.`
+      );
+    }
+    const value = this.plugin.app.secretStorage.getSecret(name)?.trim();
+    if (!value) {
+      throw new Error(
+        `The secret "${name}" selected for "${spec.label}" is missing or empty. ` +
+          "Set its value in Obsidian's secret storage, or select another under Settings → VaultOre → API keys."
+      );
+    }
     return value;
   }
 
-  async setSecret(key: string, value: string): Promise<void> {
-    const storage = this.plugin.app.secretStorage;
-    if (!storage) {
-      throw new Error("Secret storage not available in this Obsidian version");
-    }
-    storage.setSecret(this.secretIdFor(key), value);
+  // Secrets live in Obsidian's shared secret storage, which the user manages.
+  // The plugin only reads the secret the user selected; it never writes one.
+  async setSecret(key: string): Promise<void> {
+    throw new Error(
+      `VaultOre does not write secrets. Create or select one for "${key}" under Settings → VaultOre → API keys.`
+    );
   }
 
   async deleteSecret(key: string): Promise<void> {
-    const storage = this.plugin.app.secretStorage;
-    if (!storage) {
-      throw new Error("Secret storage not available in this Obsidian version");
-    }
-    const secretId = this.secretIdFor(key);
-    const existing = storage.getSecret(secretId);
-    if (existing == null) return;
-    storage.setSecret(secretId, "");
+    throw new Error(
+      `VaultOre does not delete secrets. Clear the selection for "${key}" under Settings → VaultOre → API keys.`
+    );
   }
 
   /**
@@ -281,14 +304,6 @@ class ObsidianAdapter implements PlatformAdapter {
         console.error("[VaultOre]", payload);
         break;
     }
-  }
-
-  private secretIdFor(key: string): string {
-    const normalized = key
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-    return `vaultore-${normalized}`;
   }
 
   private isInternalPath(path: string): boolean {
@@ -476,14 +491,6 @@ export default class VaultOrePlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  async setSecretValue(key: string, value: string): Promise<void> {
-    await this.adapter.setSecret(key, value);
-  }
-
-  async deleteSecretValue(key: string): Promise<void> {
-    await this.adapter.deleteSecret(key);
-  }
-
   private async runWorkflow(file: TFile): Promise<void> {
     if (this.runningWorkflows.has(file.path)) {
       new Notice("VaultOre: Workflow is already running");
@@ -631,6 +638,53 @@ class VaultOreSettingsTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  // A secret setting holds the name of an entry in Obsidian's secret storage,
+  // as the "Store secrets" guide prescribes; the value is read at run time.
+  private addSecretSetting(containerEl: HTMLElement, key: SecretNameSetting): void {
+    const label = Object.values(SECRET_SETTINGS).find((spec) => spec.setting === key)?.label;
+    if (!label) {
+      throw new Error(`No API key setting is defined for "${key}"`);
+    }
+    let secret: SecretComponent | undefined;
+    const setting = new Setting(containerEl).setName(label);
+    const describe = () => setting.setDesc(this.describeSecret(this.plugin.settings[key]));
+    describe();
+    setting
+      .addComponent((el) => {
+        secret = new SecretComponent(this.app, el)
+          .setValue(this.plugin.settings[key])
+          // Typed `string` up to obsidian 1.13 and `string | null` from 1.14,
+          // where null means the selection was cleared.
+          .onChange(async (value: string | null) => {
+            this.plugin.settings[key] = value ?? "";
+            await this.plugin.saveSettings();
+            describe();
+          });
+        return secret;
+      })
+      .addButton((button) => {
+        button.setButtonText("Clear");
+        button.setTooltip("Clear the selection. The secret stays in Obsidian's secret storage.");
+        button.onClick(async () => {
+          this.plugin.settings[key] = "";
+          await this.plugin.saveSettings();
+          secret?.setValue("");
+          describe();
+        });
+      });
+  }
+
+  private describeSecret(name: string): string {
+    if (!name) {
+      return "No secret selected. Select or create one in Obsidian's secret storage.";
+    }
+    const value = this.app.secretStorage.getSecret(name);
+    if (!value?.trim()) {
+      return `The secret "${name}" is missing or empty in Obsidian's secret storage.`;
+    }
+    return `Uses the secret "${name}" from Obsidian's secret storage.`;
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -758,76 +812,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("API keys").setHeading();
 
-    new Setting(containerEl)
-      .setName("OpenAI API key")
-      .setDesc("Stored in Obsidian's secret storage.")
-      .addComponent((el) => {
-        const secret = new SecretComponent(this.app, el);
-        secret.onChange((value) => {
-          const trimmed = value.trim();
-          if (!trimmed) return;
-          void this.plugin
-            .setSecretValue("openai.apiKey", trimmed)
-            .then(() => {
-              secret.setValue("");
-              new Notice("VaultOre: OpenAI key saved");
-            })
-            .catch((err) => {
-              new Notice(
-                `VaultOre: Failed to save OpenAI key (${err instanceof Error ? err.message : String(err)})`
-              );
-            });
-        });
-        return secret;
-      })
-      .addButton((button) => {
-        button.setButtonText("Clear");
-        button.onClick(async () => {
-          try {
-            await this.plugin.deleteSecretValue("openai.apiKey");
-            new Notice("VaultOre: OpenAI key removed");
-          } catch (err) {
-            new Notice(
-              `VaultOre: Failed to remove OpenAI key (${err instanceof Error ? err.message : String(err)})`
-            );
-          }
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("Anthropic API key")
-      .setDesc("Stored in Obsidian's secret storage.")
-      .addComponent((el) => {
-        const secret = new SecretComponent(this.app, el);
-        secret.onChange((value) => {
-          const trimmed = value.trim();
-          if (!trimmed) return;
-          void this.plugin
-            .setSecretValue("anthropic.apiKey", trimmed)
-            .then(() => {
-              secret.setValue("");
-              new Notice("VaultOre: Anthropic key saved");
-            })
-            .catch((err) => {
-              new Notice(
-                `VaultOre: Failed to save Anthropic key (${err instanceof Error ? err.message : String(err)})`
-              );
-            });
-        });
-        return secret;
-      })
-      .addButton((button) => {
-        button.setButtonText("Clear");
-        button.onClick(async () => {
-          try {
-            await this.plugin.deleteSecretValue("anthropic.apiKey");
-            new Notice("VaultOre: Anthropic key removed");
-          } catch (err) {
-            new Notice(
-              `VaultOre: Failed to remove Anthropic key (${err instanceof Error ? err.message : String(err)})`
-            );
-          }
-        });
-      });
+    this.addSecretSetting(containerEl, "openaiSecretName");
+    this.addSecretSetting(containerEl, "anthropicSecretName");
   }
 }

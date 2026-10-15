@@ -135,53 +135,109 @@ describe("VaultOrePlugin", () => {
     });
   });
 
-  describe("secret management", () => {
-    it("delegates setSecretValue to adapter", async () => {
+  describe("API keys", () => {
+    // Obsidian's secret storage is a shared, user-managed store: the
+    // SecretComponent hands the plugin the *name* of the secret the user
+    // picked, and the plugin reads the value by that name when it needs it.
+    function secretSetting(name: string) {
+      const setting = renderSettings().find((s) => s.name === name);
+      expect(setting).toBeDefined();
+      return setting!;
+    }
+
+    function stubSecrets(values: Record<string, string>) {
       const setSecret = vi.fn();
       plugin.app.secretStorage = {
-        getSecret: vi.fn(),
+        getSecret: vi.fn((id: string) => values[id] ?? null),
         setSecret,
+        listSecrets: () => Object.keys(values),
       } as any;
+      return { setSecret };
+    }
 
-      await plugin.setSecretValue("openai.apiKey", "sk-test");
+    const adapter = () => (plugin as any).adapter;
 
-      expect(setSecret).toHaveBeenCalledWith(
-        "vaultore-openai-apikey",
-        "sk-test"
+    it("saves the name of the selected secret, never a key", async () => {
+      const { setSecret } = stubSecrets({ "shared-openai": "sk-live" });
+      const component = secretSetting("OpenAI API key").components[0] as any;
+
+      await component.changeHandler("shared-openai");
+
+      expect(plugin.settings.openaiSecretName).toBe("shared-openai");
+      expect(plugin.saveData).toHaveBeenLastCalledWith(
+        expect.objectContaining({ openaiSecretName: "shared-openai" })
+      );
+      expect(setSecret).not.toHaveBeenCalled();
+    });
+
+    it("treats a null selection as no secret selected", async () => {
+      plugin.settings.anthropicSecretName = "old";
+      const component = secretSetting("Anthropic API key").components[0] as any;
+
+      await component.changeHandler(null);
+
+      expect(plugin.settings.anthropicSecretName).toBe("");
+    });
+
+    it("shows the saved selection when the tab opens", () => {
+      plugin.settings.openaiSecretName = "shared-openai";
+      stubSecrets({ "shared-openai": "sk-live" });
+      const setting = secretSetting("OpenAI API key");
+      expect((setting.components[0] as any).value).toBe("shared-openai");
+      expect(setting.desc).toContain("shared-openai");
+    });
+
+    it("says when the selected secret is missing", () => {
+      plugin.settings.openaiSecretName = "gone";
+      stubSecrets({});
+      expect(secretSetting("OpenAI API key").desc).toMatch(/gone.*missing or empty/);
+    });
+
+    it("clears the selection with the clear button", async () => {
+      plugin.settings.openaiSecretName = "shared-openai";
+      const setting = secretSetting("OpenAI API key");
+
+      await setting.buttons[0].clickHandler!();
+
+      expect(plugin.settings.openaiSecretName).toBe("");
+    });
+
+    it("resolves each provider key through its selected secret", async () => {
+      stubSecrets({ "shared-openai": "sk-live", "team-anthropic": "sk-ant" });
+      plugin.settings.openaiSecretName = "shared-openai";
+      plugin.settings.anthropicSecretName = "team-anthropic";
+
+      await expect(adapter().getSecret("openai.apiKey")).resolves.toBe("sk-live");
+      await expect(adapter().getSecret("anthropic.apiKey")).resolves.toBe("sk-ant");
+    });
+
+    it("fails with the setting's name when no secret is selected", async () => {
+      stubSecrets({ "vaultore-openai-apikey": "stale" });
+      plugin.settings.openaiSecretName = "";
+
+      await expect(adapter().getSecret("openai.apiKey")).rejects.toThrow(
+        /No secret selected for "OpenAI API key"/
       );
     });
 
-    it("delegates deleteSecretValue to adapter", async () => {
-      const setSecret = vi.fn();
-      plugin.app.secretStorage = {
-        getSecret: vi.fn().mockReturnValue("existing"),
-        setSecret,
-      } as any;
+    it("fails with the secret's and setting's names when the secret is empty", async () => {
+      stubSecrets({ "team-anthropic": "  " });
+      plugin.settings.anthropicSecretName = "team-anthropic";
 
-      await plugin.deleteSecretValue("openai.apiKey");
-
-      expect(setSecret).toHaveBeenCalledWith("vaultore-openai-apikey", "");
-    });
-
-    it("normalizes secret key with special characters", async () => {
-      const setSecret = vi.fn();
-      plugin.app.secretStorage = {
-        getSecret: vi.fn(),
-        setSecret,
-      } as any;
-
-      await plugin.setSecretValue("some.complex-key_v2", "value");
-
-      expect(setSecret).toHaveBeenCalledWith(
-        "vaultore-some-complex-key-v2",
-        "value"
+      await expect(adapter().getSecret("anthropic.apiKey")).rejects.toThrow(
+        /"team-anthropic".*"Anthropic API key".*missing or empty/
       );
     });
 
-    it("returns undefined when secret storage is unavailable", async () => {
-      plugin.app.secretStorage = null as any;
-      // getSecret returns undefined when storage is missing
-      // (the adapter checks for this)
+    it("rejects secret keys it has no setting for", async () => {
+      await expect(adapter().getSecret("mistral.apiKey")).rejects.toThrow(/mistral\.apiKey/);
+    });
+
+    it("does not write to the user's secret storage", async () => {
+      const { setSecret } = stubSecrets({});
+      await expect(adapter().setSecret("openai.apiKey", "sk")).rejects.toThrow(/API keys/);
+      await expect(adapter().deleteSecret("openai.apiKey")).rejects.toThrow(/API keys/);
+      expect(setSecret).not.toHaveBeenCalled();
     });
   });
 
