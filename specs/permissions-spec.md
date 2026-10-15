@@ -232,10 +232,19 @@ Stored permissions are saved per-workflow:
 }
 ```
 
+`workflowHash` is the SHA-256 of the note's frontmatter as written (including keys the
+schema does not know) and each cell's attributes and source, with object keys sorted. Line
+numbers and output callouts are not part of it: the engine rewrites outputs into the note on
+every run, and that must not re-prompt. Which parts a grant is bound to may become a user
+setting (#70).
+
 **Re-prompt conditions:**
 - User clears permissions in settings
-- Workflow content significantly changes (hash differs)
+- The frontmatter or any cell changes (hash differs)
+- A decision stored without a hash (before hashes were introduced)
 - New permission type is requested
+
+When there is no way to ask (no `confirm`), a re-prompt resolves to `deny`.
 
 ---
 
