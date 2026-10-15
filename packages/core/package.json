@@ -51,7 +51,7 @@
 		"test": "vitest --run --passWithNoTests",
 		"test:watch": "vitest --watch",
 		"test:coverage": "vitest --coverage",
-		"test:integration": "vitest --run --config vitest.integration.config.ts --passWithNoTests",
+		"test:integration": "vitest --run --config vitest.integration.config.ts",
 		"test:canonical": "vitest --run --config vitest.canonical.config.ts --passWithNoTests",
 		"typecheck": "tsc --noEmit",
 		"lint": "eslint .",

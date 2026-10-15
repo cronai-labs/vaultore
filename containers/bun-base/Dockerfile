@@ -1,8 +1,8 @@
 # VaultOre Bun Runtime
 # TypeScript/JavaScript execution via Bun
 #
-# Size: ~80MB
-# Cold start: <100ms
+# As of 2026-10-15 nothing builds or runs this image: ore:ts cells run in
+# oven/bun:1-alpine (DEFAULT_RUNTIME, packages/core/src/types/index.ts).
 
 FROM oven/bun:1-alpine
 

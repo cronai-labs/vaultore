@@ -1,8 +1,8 @@
 # VaultOre Shell Runtime
 # Bash/Shell command execution
 #
-# Size: ~50MB
-# Cold start: <50ms
+# As of 2026-10-15 nothing builds or runs this image: ore:shell cells run in
+# alpine:3.19 (executeShellCell, packages/core/src/executor/index.ts).
 
 FROM alpine:3.19
 
