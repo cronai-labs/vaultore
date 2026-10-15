@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every pull request, whatever its base: a stacked layer targets the layer
+  # below it, and a filter on main left those layers with no CI at all.
   pull_request:
-    branches: [main]
     # `edited` matters: the policy job lints the PR title and body, so it has to
     # re-run when either changes. `ready_for_review` re-runs the checklist step,
     # which is skipped while the PR is a draft.
