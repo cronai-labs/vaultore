@@ -3,11 +3,8 @@
  *
  * The core engine for VaultOre - a Markdown-native AI workflow engine.
  *
- * This package is editor-agnostic and can be used with:
- * - Obsidian (via @vaultore/obsidian)
- * - VS Code (via @vaultore/vscode)
- * - Zed (via @vaultore/zed)
- * - CLI (via @vaultore/cli)
+ * This package is editor-agnostic. Its adapters in this repository are the
+ * Obsidian plugin (@vaultore/obsidian) and the CLI (@vaultore/cli).
  *
  * @packageDocumentation
  */

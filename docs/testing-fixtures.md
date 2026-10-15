@@ -1,356 +1,181 @@
 # Testing Fixtures: Canonical Workflows
 
-> **Purpose:** TDD-driven development using canonical workflows as acceptance tests  
-> **Location:** `fixtures/canonical/`  
-> **Status:** Active development
+> **Location:** `fixtures/canonical/`
 
-VaultOre uses **canonical workflows** as acceptance tests. Each fixture in `fixtures/canonical/` represents a real-world use case and serves as both documentation and a test case.
+The notes in `fixtures/canonical/` are real workflows that double as tests and as examples.
+Each one shows a use of VaultOre and is read by the test suites below.
 
 ---
 
-## Philosophy
+## How They Are Tested
 
-**Canonical fixtures are:**
-- ✅ Real workflows users would write
-- ✅ Self-documenting (read the fixture to understand the feature)
-- ✅ Executable tests (run them to validate functionality)
-- ✅ Version-controlled (changes to fixtures signal breaking changes)
+| Suite | What it checks | Needs |
+|-------|----------------|-------|
+| `bun run test:canonical` | Every fixture parses: it is a workflow, has cells, and its cell ids are unique (`packages/core/src/fixtures/fixtures.canonical.test.ts`). **It does not run them** | Nothing: no engine, no vault, no API key |
+| `bun run --cwd packages/core test:integration` | Runs `smart-inbox.md` end to end in real containers, with the AI provider stubbed (`smart-inbox.integration.test.ts`) | A running engine (`VAULTORE_IT_ENGINE`, default `colima`) |
+| By hand | Running a fixture in Obsidian or with the CLI | An engine; API keys for fixtures with `ore:ai` cells |
 
-**Canonical fixtures are not:**
-- ❌ Unit test mocks
-- ❌ Synthetic edge cases
-- ❌ Performance benchmarks
+One fixture's parse test can be run alone by name:
+
+```bash
+bun run --cwd packages/core test:canonical -t hello-world
+```
 
 ---
 
 ## Fixture Index
 
-| Fixture | Purpose | Tests | Status |
-|---------|---------|-------|--------|
-| [hello-world.md](../fixtures/canonical/hello-world.md) | Minimal smoke test | Parser, TS executor, output persistence | ✅ MVP |
-| [link-digest.md](../fixtures/canonical/link-digest.md) | Primary use case | Full pipeline, AI, vault write | ✅ MVP |
-| [daily-summary.md](../fixtures/canonical/daily-summary.md) | Scheduling | Cron scheduling, time-based triggers | 📋 v0.1 |
-| [smart-inbox.md](../fixtures/canonical/smart-inbox.md) | Inbox triage | One AI call with a strictly checked answer, category notes, line-exact inbox ticks | ✅ MVP |
-| [sys-snapshot.md](../fixtures/canonical/sys-snapshot.md) | Shell + TS integration | Shell execution, cross-cell data flow | ✅ MVP |
+| Fixture | Shows | Cells | Permissions | Executed automatically |
+|---------|-------|-------|-------------|------------------------|
+| [hello-world.md](../fixtures/canonical/hello-world.md) | Smallest workflow; `cell()` across containers | ts, ts | defaults | No |
+| [sys-snapshot.md](../fixtures/canonical/sys-snapshot.md) | Shell output parsed by TS, artifacts with an index | shell, ts ×3 | `vaultWrite: allow` | No |
+| [link-digest.md](../fixtures/canonical/link-digest.md) | Fetch URLs, summarise with AI, write artifacts and a digest note | ts ×3, ai, ts ×2 | `network`, `vaultWrite: allow` | No |
+| [daily-summary.md](../fixtures/canonical/daily-summary.md) | A scheduled run that reads a daily note and writes a summary | ts, ai, ts | `network`, `vaultWrite: allow` | No |
+| [smart-inbox.md](../fixtures/canonical/smart-inbox.md) | Inbox triage with one AI call and strictly checked output | ts ×2, ai, ts ×3 | `network`, `vaultWrite: allow` | Yes, with a stubbed provider |
+
+Four fixtures set `runtime.engine: docker` in their frontmatter, which overrides the engine
+setting; on another engine, delete that line. Only `sys-snapshot.md` sets `buildNetwork`; the others
+are asked about it on their first run ([permissions spec](../specs/permissions-spec.md#22-permission-values)).
 
 ---
 
 ## Fixture Details
 
-### 1. hello-world.md
+### hello-world.md
 
-**Purpose:** Minimal smoke test to verify basic functionality.
+Two TS cells: `hello` returns a string, `transform` reads it with `cell("hello")` and
+upper-cases it.
 
-**Tests:**
-- ✅ Parser extracts frontmatter correctly
-- ✅ Parser identifies both cells
-- ✅ TypeScript cell executes
-- ✅ Output appears as ore-output callout
-- ✅ Second cell receives first cell's output via `cell()` helper
+- `hello` output: `"Hello from VaultOre!"`; `transform` output: `"HELLO FROM VAULTORE!"`
+- Each cell gets an output callout and a JSON record under `_vaultore/runs/…`
 
-**Acceptance Criteria:**
-- Running "Run All" produces outputs for both cells
-- `hello` output: `"Hello from VaultOre!"`
-- `transform` output: `"HELLO FROM VAULTORE!"`
-- Outputs link to JSON files with metadata
+### sys-snapshot.md
 
-**Run Command:**
+A shell cell prints system information; TS cells normalise it to JSON and derive memory
+usage; the last cell writes artifacts and returns `{ artifactDir, files }`.
+
+- Artifacts in `_vaultore/artifacts/sys-snapshot/<timestamp>/`: `snapshot.json`, `raw.txt`
+- `_index.md` in that directory, linking both files
+- Runs offline (`network: deny`)
+
+### link-digest.md
+
+Reads URLs from a seed note (`Inbox/reading.md`), fetches them, asks the AI for JSON
+summaries, writes artifacts, and creates a digest note.
+
+- Artifacts in `_vaultore/artifacts/link-digest/<timestamp>/`: `summaries.json`,
+  `fetch-data.json`, `README.md`
+- A digest note under `Digests/`
+- **The `summarize` cell asks for `model=claude-sonnet-4-20250514`.** Set the default provider
+  to Anthropic, or change the model: under the default provider (OpenAI) the cell fails before
+  sending anything.
+
 ```bash
-# Copy to vault and run in Obsidian
-cp fixtures/canonical/hello-world.md ~/vaultore-test-vault/Hello-World.md
+mkdir -p ~/vaultore-test-vault/Inbox
+echo "- https://example.com/" > ~/vaultore-test-vault/Inbox/reading.md
 ```
 
+### daily-summary.md
+
+Scheduled `"0 18 * * *"`. Reads `Daily/<today>.md` if it exists, asks the AI for a summary,
+and writes `Summaries/<date>-summary.md`.
+
+- In the plugin it runs on schedule only after **Run scheduled workflows** is on and the note
+  is approved (**Settings → VaultOre → Scheduled workflows**); "Run all cells" runs it now.
+- `vaultore agent` runs it on schedule without approval.
+
+### smart-inbox.md
+
+Files the open items of `Inbox.md` (path set at the top of `readInbox`) into one note per
+category, using what the engine supports today
+([#79](https://github.com/cronai-labs/vaultore/issues/79)); the full design with conditions
+and structured outputs is [#80](https://github.com/cronai-labs/vaultore/issues/80).
+
+- Open items (`- [ ] …`) are read and numbered; one `ore:ai` call gets the prompt built by a TS
+  cell through `{{prompt}}`
+- The AI answer is checked strictly: anything malformed fails `parseAnswer`, and the inbox and
+  notes stay untouched
+- One note per category under `Processed/`, appended to, with OKF frontmatter
+- Exactly the filed lines change from `- [ ]` to `- [x]`; every other line is byte-identical; a
+  line edited during the run is left alone and listed under `notTicked`
+- A second run files only items added since
+
+On Colima, use virtiofs file sharing: with sshfs, `tickInbox` can read a stale copy of the
+inbox and write it back cut off ([#83](https://github.com/cronai-labs/vaultore/issues/83)).
+
 ---
 
-### 2. link-digest.md
+## Running a Fixture
 
-**Purpose:** Primary use case that validates the entire platform.
+**In Obsidian:** copy the fixture into a test vault, open it, and run **VaultOre: Run all
+cells**. Check the callouts, and the artifacts and notes listed above.
 
-**Tests:**
-- ✅ Config cell provides parameters
-- ✅ URL extraction from seed note
-- ✅ HTTP fetch (requires `network: allow`)
-- ✅ AI summarization produces valid JSON
-- ✅ Artifact files are created
-- ✅ (Optional) Digest note is created with backlinks
-
-**Acceptance Criteria:**
-- Artifacts created in `_vaultore/artifacts/link-digest/<timestamp>/`
-  - `summaries.json` exists and is valid JSON
-  - `fetch-data.json` exists and is valid JSON
-  - `README.md` exists
-- Digest note created at `Digests/digest-<date>.md` (if optional step runs)
-- All cell outputs persisted as ore-output callouts
-
-**Prerequisites:**
-- `network: allow` permission (for fetching URLs and AI)
-- `vaultWrite: allow` permission (for creating artifacts and notes)
-- AI provider API key configured
-
-**Run Command:**
 ```bash
-# Copy to vault
-cp fixtures/canonical/link-digest.md ~/vaultore-test-vault/Link-Digest.md
-
-# Create seed note (optional)
-echo "- https://example.com/article-1" > ~/vaultore-test-vault/Inbox/reading.md
+cp fixtures/canonical/hello-world.md ~/vaultore-test-vault/
 ```
 
----
-
-### 3. daily-summary.md
-
-**Purpose:** Test scheduling and time-based automation.
-
-**Tests:**
-- ✅ Cron schedule parsing
-- ✅ Workflow triggers at scheduled time
-- ✅ Time-based note reading (e.g., daily journal)
-- ✅ AI summarization of time-series data
-
-**Acceptance Criteria:**
-- Workflow runs automatically at scheduled time (when Obsidian is open)
-- Summary note is created/updated with daily content
-- Outputs reflect the scheduled run timestamp
-
-**Prerequisites:**
-- `schedule` field in frontmatter (e.g., `"0 9 * * 1-5"` for 9am weekdays)
-- `vaultWrite: allow` permission
-- AI provider API key (if using AI cells)
-
-**Status:** 📋 Planned for v0.1 (basic scheduling)
-
----
-
-### 4. smart-inbox.md
-
-**Purpose:** Inbox triage with what the engine supports today (#79). The full
-design with conditions and structured outputs is #80.
-
-**Tests:**
-- ✅ Open items (`- [ ] …`) read from `Inbox.md` (path set at the top of `readInbox`)
-- ✅ One `ore:ai` call, fed by a TS cell's prompt text via `{{prompt}}`
-- ✅ The AI answer checked strictly: anything malformed fails `parseAnswer`
-- ✅ One note per category under `Processed/`, appended to, with OKF frontmatter
-- ✅ Only the filed lines ticked in the inbox, after the notes exist
-
-**Acceptance Criteria:**
-- Category notes hold the filed items; existing notes are appended to, not rewritten
-- Exactly the filed lines change from `- [ ]` to `- [x]`; every other line is byte-identical
-- A line edited during the run is left alone and listed under `notTicked`
-- A second run files only items added since; ticked ones are not processed again
-
-**Automated:** `packages/core/src/fixtures/smart-inbox.integration.test.ts`
-(`bun run --cwd packages/core test:integration`; real container, stubbed provider).
-
-**Prerequisites:**
-- AI provider API key
-- `network`, `vaultRead`, `vaultWrite`: `allow`
-
----
-
-### 5. sys-snapshot.md
-
-**Purpose:** Test shell execution and cross-cell data flow.
-
-**Tests:**
-- ✅ Shell cell executes and captures stdout
-- ✅ TypeScript can parse shell output
-- ✅ Structured JSON is produced
-- ✅ Artifacts are written correctly
-
-**Acceptance Criteria:**
-- Shell output captured with system info sections
-- Normalized JSON with structured memory data
-- Derived metrics including memory usage percentage
-- Artifacts in `_vaultore/artifacts/sys-snapshot/<timestamp>/`
-  - `snapshot.json` exists and is valid JSON
-  - `raw.txt` exists with raw shell output
-
-**Prerequisites:**
-- `vaultWrite: allow` permission
-- No network required (runs offline)
-
-**Run Command:**
-```bash
-# Copy to vault
-cp fixtures/canonical/sys-snapshot.md ~/vaultore-test-vault/System-Snapshot.md
-```
-
----
-
-## Running Fixtures
-
-### Manual Testing
-
-1. **Copy fixture to vault:**
-   ```bash
-   cp fixtures/canonical/<fixture>.md ~/vaultore-test-vault/
-   ```
-
-2. **Open in Obsidian** and run:
-   - Command palette: "VaultOre: Run all cells"
-   - Or a custom hotkey assigned under Settings → Hotkeys
-
-3. **Verify outputs:**
-   - Check ore-output callouts below each cell
-   - Verify artifacts (if applicable)
-   - Check created notes (if applicable)
-
-### Automated Testing
+**With the CLI**, from a checkout after `bun run build`:
 
 ```bash
-# Run all canonical fixture tests
-bun run test:canonical
-
-# Run specific fixture
-bun run test:canonical -- fixtures/canonical/hello-world.md
-```
-
-**Note:** `test:canonical` only parses the fixtures — it asserts they are valid
-workflow notes and needs no container runtime, no test vault and no API keys.
-
-Executing a fixture is a separate, manual step and does require:
-- A container runtime running (Docker, Podman, Colima, or Apple container)
-- AI provider keys, for the fixtures containing `ore:ai` cells
-
-```bash
-bun run build
 node packages/cli/dist/cli.js run hello-world.md --vault fixtures/canonical --yes
 ```
 
+This writes `_vaultore/` and `.vaultore/config.json` into `fixtures/canonical/` (both
+gitignored).
+
 ---
 
-## Adding New Fixtures
+## Adding a Fixture
 
-### When to Add a Fixture
+Add one when a feature needs an end-to-end example, a real use case comes up, or a bug needs a
+regression case. The parse test picks up every `.md` file in the folder.
 
-Add a canonical fixture when:
-- ✅ A new feature needs end-to-end validation
-- ✅ A real-world use case emerges
-- ✅ A bug fix needs regression testing
-
-### Fixture Template
-
-```markdown
+````markdown
 ---
 ore: true
 name: Fixture Name
-version: 0.1
+version: "0.1"
 author: VaultOre Team
 tags: [canonical, <category>]
 description: >
-  Brief description of what this fixture tests.
+  What this fixture shows.
 
 runtime:
-  engine: docker
   image: oven/bun:1-alpine
 
 permissions:
-  network: deny|allow|ask
-  vaultWrite: deny|allow|ask
+  network: deny
   vaultRead: allow
+  vaultWrite: deny
+  buildNetwork: deny
 ---
 
 # Fixture Name
 
-## Test Criteria
-
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
-
----
-
 ## Step 1: Description
 
 ```ore:ts id=step1
-// Code here
+// code
 ```
 
 ## Expected Results
 
-After running successfully:
-1. Result 1
-2. Result 2
-3. Result 3
+1. …
+````
 
-## Validation
+Checklist:
 
-```bash
-# Validation commands
-test -f "expected-file"
-jq . "expected-json.json"
-```
-```
+- Frontmatter has `ore: true`, `name`, and a quoted `version`
+- Each cell has a unique `id`; dependencies are declared with `depends=[…]`
+- Only the permissions it needs, at `allow` or `deny`
+- Expected results written down
+- Only features the [workflow note spec](../specs/workflow-note-spec.md) lists as built (not
+  its "Planned" section)
 
-### Fixture Checklist
-
-- [ ] Frontmatter includes `ore: true` and `name`
-- [ ] Test criteria listed at top
-- [ ] Each cell has unique `id`
-- [ ] Dependencies specified with `depends=[...]`
-- [ ] Expected results documented
-- [ ] Validation commands provided (if applicable)
-- [ ] Tags include `canonical`
+When the format changes, update the spec first, then the fixtures.
 
 ---
 
-## TDD Workflow
-
-### 1. Write Fixture First
-
-Before implementing a feature, write a canonical fixture that demonstrates the desired behavior.
-
-### 2. Run Fixture (Should Fail)
-
-The fixture should fail or produce incorrect results until the feature is implemented.
-
-### 3. Implement Feature
-
-Implement the feature to make the fixture pass.
-
-### 4. Verify Fixture Passes
-
-Run the fixture and verify all acceptance criteria are met.
-
-### 5. Commit Both
-
-Commit the fixture and implementation together.
-
----
-
-## Future Fixtures (Planned)
-
-| Fixture | Version | Purpose |
-|---------|---------|---------|
-| `proc-snapshot.md` | v0.3 | Go cell integration, process aggregation |
-| `timeseries.md` | v0.3 | Time-series sampling, Go aggregation |
-| `branch-explore.md` | v0.3 | Branching workflow runs |
-| `loop-refine.md` | v0.3 | Iterative refinement with loops |
-
----
-
-## Fixture Maintenance
-
-### Updating Fixtures
-
-- **Breaking changes:** Update fixtures to reflect new behavior
-- **Bug fixes:** Update fixtures if they exposed incorrect behavior
-- **New features:** Add new fixtures for new capabilities
-
-### Versioning
-
-Fixtures include a `version` field in frontmatter. When a fixture's format changes significantly, increment the version.
-
----
-
-## Related Documentation
-
-- [Workflow Note Specification](../specs/workflow-note-spec.md) — Format and syntax
-- [Quickstart: Plugin Development](quickstart-plugin-dev.md) — How to run fixtures
-- [Architecture Guide](../ARCHITECTURE.md) — TDD approach
-
----
-
-**Questions?** Open an [issue](https://github.com/cronai-labs/vaultore/issues) or start a [discussion](https://github.com/cronai-labs/vaultore/discussions).
+Related: [workflow note spec](../specs/workflow-note-spec.md),
+[plugin development quickstart](quickstart-plugin-dev.md),
+[architecture](../ARCHITECTURE.md#tests).

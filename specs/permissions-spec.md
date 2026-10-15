@@ -1,41 +1,64 @@
 # Permissions and Security Specification
 
-> **Status:** Canonical  
-> **Version:** 0.1.0  
+> **Status:** Canonical. Sections 1–8 describe what the code does at version 0.1.0;
+> [Planned](#planned) lists what is specified but not built.
 > **Last Updated:** 2026-10-15
 
 ## Overview
 
-VaultOre executes user code in sandboxed containers. This specification defines the permission model that controls what workflows can do.
+VaultOre runs code that a note contains. This specification defines what a workflow may do,
+how that is decided, and how the container enforces it. It is the single source for the
+permission defaults; other documents link here.
+
+A workflow note is executable content. A permission set to `allow` in its frontmatter applies
+without asking; only `ask` prompts. Running a note you did not write, or that changed through
+sync, means trusting what it declares.
 
 ## 1. Design Principles
 
-1. **Secure by Default:** All permissions default to most restrictive
-2. **Explicit Consent:** Dangerous operations require user approval
-3. **Per-Workflow:** Permissions are scoped to individual workflows
-4. **Transparent:** Users can see exactly what a workflow will do
-5. **No Host Fallback:** If containers unavailable, fail safely (not unsafely)
+1. **Restrictive where it matters:** no network and no vault writes unless a workflow is
+   granted them. Reading the vault is allowed by default.
+2. **Enforced at the container:** a permission decides what the container is given (a network,
+   a mount), not only what helper functions allow.
+3. **Per workflow, per content:** a decision belongs to one note and to the content it was given
+   for (§5.3).
+4. **No host fallback:** without a container engine, nothing runs (§4.4).
 
 ---
 
 ## 2. Permission Types
 
-### 2.1 Overview
+### 2.1 Defaults
 
-| Permission | Default | Description |
-|------------|---------|-------------|
-| `network` | `deny` | Runtime network access |
-| `buildNetwork` | `ask` | Network during builds (Go, Python) |
-| `vaultRead` | `allow` | Read notes from vault |
-| `vaultWrite` | `deny` | Write/create notes |
+`DEFAULT_PERMISSIONS` (`packages/core/src/types/index.ts`):
+
+| Permission | Default | Controls |
+|------------|---------|----------|
+| `network` | `deny` | Network access for container cells; required by AI cells (§3.1) |
+| `buildNetwork` | `ask` | Nothing yet: reserved for dependency downloads of planned Python and Go cells (§3.2) |
+| `vaultRead` | `allow` | Whether the vault is mounted into containers, and `{{note:}}` in AI cells (§3.3) |
+| `vaultWrite` | `deny` | Whether the mount is writable (§3.4) |
+
+A workflow sets any of them in frontmatter; unset ones take the default:
+
+```yaml
+permissions:
+  network: allow
+  vaultWrite: ask
+  buildNetwork: deny
+```
 
 ### 2.2 Permission Values
 
-| Value | Behavior |
-|-------|----------|
-| `allow` | Always permit without prompting |
-| `deny` | Always block without prompting |
-| `ask` | Prompt user on first use, remember choice |
+| Value | Behaviour |
+|-------|-----------|
+| `allow` | Granted, without a prompt |
+| `deny` | Refused, without a prompt |
+| `ask` | Resolved to `allow` or `deny` by a prompt, and the answer stored for this content of the note (§5) |
+
+Because `buildNetwork` defaults to `ask`, a workflow that does not set it is asked about it
+once per content version, although nothing uses it yet. Set `buildNetwork: deny` to avoid the
+prompt.
 
 ---
 
@@ -43,99 +66,58 @@ VaultOre executes user code in sandboxed containers. This specification defines 
 
 ### 3.1 `network`
 
-Controls runtime network access for cells.
+**`deny` (default):** container cells run with no network attached (`--network=none`, Apple:
+`--network none`), so `fetch` and any other connection fail. AI cells fail with
+`AI cells require network permission`.
 
-**When `deny` (default):**
-- Container runs with `--network=none`
-- `fetch()` calls fail
-- External API calls fail
-- Only local operations work
+**`allow`:** containers get the engine's default network, and AI cells may call the provider.
+A cell can then send anything it can read to any host.
 
-**When `allow`:**
-- Container has network access
-- Can call external APIs
-- Can fetch URLs
-- Can send data externally
-
-**When `ask`:**
-- Prompt user on first run
-- Store decision per-workflow
-- Use stored decision on subsequent runs
-
-**Security considerations:**
-- Network access enables data exfiltration
-- Workflows from untrusted sources should not have network
-- AI cells require network (to call provider APIs)
+Pulling a missing image is done by the engine before the container starts and is not governed
+by this permission.
 
 ### 3.2 `buildNetwork`
 
-Controls network access during build phase (Go modules, pip install).
-
-**When `deny`:**
-- Builds must be offline
-- Go: vendored deps or stdlib only
-- Python: pre-installed packages only
-
-**When `allow`:**
-- Can download dependencies during build
-- Go: `go mod download` works
-- Python: `pip install` works
-
-**When `ask` (default):**
-- Prompt on first build needing network
-- Store decision per-workflow
-
-**Note:** Build network is separate from runtime network. A workflow can have `buildNetwork: allow` but `network: deny`.
+No cell type uses it. It is resolved, prompted for when `ask`, and stored like the others, then
+ignored. It is reserved for dependency downloads (`go mod download`, `pip install`) of the
+planned `ore:go` and `ore:py` cells.
 
 ### 3.3 `vaultRead`
 
-Controls reading notes from the vault.
+The mount is the enforcement (`vaultMounts`, `packages/core/src/executor/index.ts`). With
+`vaultRead` and `vaultWrite` together:
 
-**When `deny`:**
-- `vault.read()` throws error
-- `{{note:path}}` templates fail
-- Cell can only access its own context
-- The vault is not mounted into TS or shell containers. With `vaultWrite: allow`, only the
-  run's own directory (`<outputRoot>/runs/<workflow>/<runId>/`) is mounted, read-write, so a
-  cell can record output without seeing the vault or earlier runs; `vault.write()` elsewhere
-  throws
+| `vaultRead` | `vaultWrite` | What a container cell sees at `/workspace` |
+|-------------|--------------|--------------------------------------------|
+| `allow` | `deny` | The whole vault, read-only, with `.obsidian/` hidden (§4.1) |
+| `allow` | `allow` | The whole vault, read-write, with `.obsidian/` hidden |
+| `deny` | `allow` | Only this run's directory, `<outputRoot>/runs/<workflow>/<runId>/`, read-write, at the same path it has under a full mount |
+| `deny` | `deny` | Nothing |
 
-**When `allow` (default):**
-- Can read any note in vault
-- Templates resolve successfully
-- Full vault access for reading, except `.obsidian/` (§4.1)
+**`allow` (default):** `vault.read()`, `vault.exists()` and `{{note:path}}` work. Every file
+in the vault folder is readable except `.obsidian/`, including other workflows' run outputs.
 
-**When `ask`:**
-- Prompt before reading notes
-- Useful for sensitive vaults
+**`deny`:** `vault.read()` and `vault.exists()` throw; `{{note:path}}` fails the AI cell before
+anything is sent. A cell that may still write sees only its run directory, so it can record
+output without seeing the vault or earlier runs; `vault.write()` elsewhere throws.
 
-**Security considerations:**
-- Reading is generally safe (can't exfiltrate without network)
-- May expose sensitive note content to AI providers
-- Combined with network, could leak vault contents
+`vault.readRaw()` reads paths inside the container (`/proc`), not the vault, and is not
+checked.
+
+Only `.obsidian/` is hidden. Other dot-directories in the vault, among them the CLI's
+`.vaultore/`, are visible under a full mount, and writable with `vaultWrite`.
 
 ### 3.4 `vaultWrite`
 
-Controls writing/creating notes in the vault.
+**`deny` (default):** the vault is mounted read-only, or not at all. `vault.write()` and
+`vault.mkdirp()` throw.
 
-**When `deny` (default):**
-- `vault.write()` throws error
-- `vault.mkdirp()` throws error
-- Output stubs and run output files are written (always allowed)
+**`allow`:** cells can create, modify and delete any file in the vault except under
+`.obsidian/`. Writes go through the mount, not through Obsidian, so Obsidian sees them as
+external changes.
 
-**When `allow`:**
-- Can create new notes
-- Can modify existing notes
-- Can create directories
-
-**When `ask`:**
-- Prompt before write operations
-- Store decision per-workflow
-
-**Security considerations:**
-- Write access can modify/corrupt vault
-- Can overwrite important notes
-- Can create misleading content
+Output callouts, output files and run records are written by the host, not by cells, whatever
+this permission says.
 
 ---
 
@@ -205,301 +187,201 @@ Cells run as the host's `uid:gid` (`containerUser()`), never as root:
 | Timeout | 60s | Per workflow (`runtime.timeout`) or per cell (`timeout`) |
 | PIDs | 256 | No; `DEFAULT_PIDS_LIMIT`, overridable only through the `pidsLimit` option of `execContainer` |
 
+At the timeout VaultOre kills the engine's CLI process. The cell's error then reads `exit 1`
+rather than naming the timeout, and the container itself may keep running until it exits
+(a known follow-up of [#86](https://github.com/cronai-labs/vaultore/pull/86)).
+
 ### 4.4 No Unsafe Fallback
 
-If no container runtime is available:
-- Show error message with setup instructions
-- **Do not** offer to run code directly on host
-- **Do not** provide any bypass mechanism
+Every run checks the engine before any cell runs. When it is not available, the run fails with
+`Container runtime "<engine>" is not available: …`, says whether the note or the settings
+chose that engine, and lists the engines that were detected. There is no option to run cell
+code on the host.
 
 ---
 
-## 5. Permission Prompts
+## 5. Permission Decisions
 
-### 5.1 Prompt Triggers
+### 5.1 When a Prompt Appears
 
-A permission prompt is shown when:
-- Permission is set to `ask`
-- This is the first run of this workflow
-- (Or user has cleared stored permissions)
+At the start of each run, every permission that resolves to `ask` (from the frontmatter, or
+`buildNetwork` by default) is looked up in the stored decisions. A stored `allow` or `deny`
+for the same note and the same content (§5.3) is used. Otherwise the user is asked, once per
+permission.
 
-### 5.2 Prompt UI
+### 5.2 The Prompt
 
-```
-┌─────────────────────────────────────────────────────┐
-│  VaultOre: Permission Request                       │
-├─────────────────────────────────────────────────────┤
-│                                                     │
-│  Workflow: Link Digest                              │
-│  Path: Workflows/link-digest.md                     │
-│                                                     │
-│  This workflow requests:                            │
-│                                                     │
-│  ⚠️  Network Access                                 │
-│      Allows fetching external URLs and calling      │
-│      AI APIs.                                       │
-│                                                     │
-│  ⚠️  Vault Write Access                             │
-│      Allows creating and modifying notes in         │
-│      your vault.                                    │
-│                                                     │
-│  ┌─────────────────────────────────────────────┐   │
-│  │ [ ] Remember my choice for this workflow    │   │
-│  └─────────────────────────────────────────────┘   │
-│                                                     │
-│        [ Deny ]                    [ Allow ]        │
-│                                                     │
-└─────────────────────────────────────────────────────┘
-```
+- **Obsidian plugin:** a modal per permission, "VaultOre permission request: `<permission>`
+  for `<path>`. Allow?", with **Allow** and **Deny**. Closing it denies.
+- **CLI:** non-interactive. Without `--yes` the answer is `deny`; with `--yes` it is `allow`.
+  Either is printed to stderr.
+- **No way to ask** (an adapter without `confirm`): `deny`.
 
-### 5.3 Permission Storage
+A denied permission does not stop the run: it runs without that permission, and cells that
+needed it fail.
 
-Stored permissions are saved per-workflow:
+### 5.3 Stored Decisions
+
+After the prompts, the resolved values of all four permissions are stored per note path, with
+the hash of the content they were given for:
 
 ```json
 {
   "Workflows/link-digest.md": {
     "network": "allow",
+    "buildNetwork": "deny",
     "vaultWrite": "allow",
-    "grantedAt": "2026-01-09T08:00:00Z",
-    "workflowHash": "<sha256>"
+    "vaultRead": "allow",
+    "workflowHash": "<sha256>",
+    "grantedAt": "2026-10-15T08:00:00.000Z"
   }
 }
 ```
 
+They are kept as `permissionDecisions` in the plugin's settings
+(`.obsidian/plugins/vaultore/data.json`, hidden from cells) or in the CLI's
+`<vault>/.vaultore/config.json`.
+
 `workflowHash` is the SHA-256 of the note's frontmatter as written (including keys the
 schema does not know) and each cell's attributes and source, with object keys sorted. Line
 numbers and output callouts are not part of it: the engine rewrites outputs into the note on
-every run, and that must not re-prompt. Which parts a grant is bound to may become a user
-setting (#70).
+every run, and that must not prompt again. Which parts a grant is bound to may become a user
+setting ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
 
-**Re-prompt conditions:**
-- User clears permissions in settings
-- The frontmatter or any cell changes (hash differs)
-- A decision stored without a hash (before hashes were introduced)
-- New permission type is requested
+**Asked again when:**
 
-When there is no way to ask (no `confirm`), a re-prompt resolves to `deny`.
+- the frontmatter or any cell changes (the hash differs), including an edit arriving through
+  sync or another note saved under the same path;
+- the stored decision has no hash (stored before hashes were introduced).
 
----
-
-## 6. AI Provider Considerations
-
-### 6.1 API Key Security
-
-- API keys stored using Obsidian's secure storage
-- Never logged or exposed in outputs
-- Never sent to containers (injected at runtime)
-
-### 6.2 Data Sent to Providers
-
-AI cells send:
-- Prompt content (including interpolated variables)
-- System prompt (if configured)
-- Model parameters
-
-**Data that could be sent:**
-- Note content (via `{{note:path}}`)
-- Cell outputs (via `{{cellId}}`)
-- Block content (via `{{block:...}}`)
-
-**User awareness:**
-- AI cells require `network: allow`
-- Users should review prompts before running
-- Sensitive data should not be in AI prompts
+A stored `deny` is reused like an `allow`. In the CLI this means one run without `--yes` keeps
+the permission denied for that content, even on later runs with `--yes`
+([#28](https://github.com/cronai-labs/vaultore/issues/28)). There is no command or setting to
+clear decisions; remove the note's entry from the file above.
 
 ---
 
-## 7. Shared Workflow Security
+## 6. Scheduled Runs
 
-### 7.1 Workflow Trust Model
+A `schedule:` in frontmatter does not by itself make a note run unattended in the plugin:
 
-When importing a workflow from external source:
+- The "Run scheduled workflows" setting is off by default.
+- Each scheduled note must be approved in **Settings → VaultOre → Scheduled workflows**. The
+  approval is stored for the note's path and its exact schedule string. A changed schedule, a
+  renamed or deleted note, or a note that arrives through sync is listed but does not run until
+  approved again.
+- Approval is re-checked when a run is due. A scheduled run then resolves permissions like any
+  other run (§5).
 
-1. **Display warning** before first run
-2. **Show requested permissions** clearly
-3. **Require explicit approval** for each permission
-4. **Hash workflow content** for re-prompt on changes
-
-### 7.2 Warning UI
-
-```
-┌─────────────────────────────────────────────────────┐
-│  ⚠️  External Workflow                              │
-├─────────────────────────────────────────────────────┤
-│                                                     │
-│  This workflow was not created by you.              │
-│                                                     │
-│  Source: Community Gallery                          │
-│  Author: unknown-user                               │
-│                                                     │
-│  Please review the code before running.             │
-│  Malicious workflows could:                         │
-│  - Access your vault contents                       │
-│  - Send data to external servers                    │
-│  - Modify or delete your notes                      │
-│                                                     │
-│        [ Cancel ]         [ Review & Continue ]     │
-│                                                     │
-└─────────────────────────────────────────────────────┘
-```
-
-### 7.3 Best Practices for Shared Workflows
-
-- Default to `network: deny` unless necessary
-- Default to `vaultWrite: deny` unless necessary
-- Document why permissions are needed
-- Provide minimal example with reduced permissions
+`vaultore agent` (CLI) has no approval step: it runs every workflow in the vault that has a
+schedule, with permissions resolved non-interactively (§5.2).
 
 ---
 
-## 8. Audit Logging
+## 7. AI Providers
 
-### 8.1 Audit Log Format
+### 7.1 API Keys
 
-All executions logged to `.vaultore/audit.jsonl`:
+- **Plugin:** keys live in Obsidian's secret storage, which the user manages. VaultOre's
+  settings hold only the name of the secret selected for each provider; the value is read when
+  a request is sent. The plugin never writes or deletes a secret. A missing selection or an
+  empty secret fails the cell with an error naming the setting.
+- **CLI:** keys come from the environment: `VAULTORE_OPENAI_APIKEY` (or `OPENAI_API_KEY`),
+  `VAULTORE_ANTHROPIC_APIKEY` (or `ANTHROPIC_API_KEY`).
 
-```json
-{
-  "timestamp": "2026-01-09T08:00:00Z",
-  "event": "workflow:run",
-  "workflow": "Workflows/link-digest.md",
-  "cells": ["fetch", "summarize", "output"],
-  "permissions": {
-    "network": "allow",
-    "vaultWrite": "allow"
-  },
-  "status": "success",
-  "duration": 5200
-}
-```
+Keys are used only by the host for the provider request. They are not passed to containers and
+not written into outputs.
 
-### 8.2 Logged Events
+### 7.2 Data Sent to Providers
 
-| Event | Description |
-|-------|-------------|
-| `workflow:run` | Workflow execution started |
-| `workflow:complete` | Workflow completed |
-| `workflow:error` | Workflow failed |
-| `permission:grant` | User granted permission |
-| `permission:deny` | User denied permission |
-| `cell:run` | Cell execution started |
-| `cell:complete` | Cell completed |
-| `cell:error` | Cell failed |
-
-### 8.3 Log Retention
-
-- Default: Keep last 1000 entries
-- Configurable in settings
-- User can clear logs
+An AI cell sends one request: the model id, the prompt (the cell's text with `{{cellId}}`
+outputs and `{{note:path}}` contents inserted), and the temperature and token limit when set.
+No system prompt. It goes to `api.openai.com` or `api.anthropic.com` only, and only when the
+workflow is granted `network`.
 
 ---
 
-## 9. Threat Model
+## 8. Threat Model
 
-### 9.1 Threats Mitigated
+### 8.1 Mitigated
 
 | Threat | Mitigation |
 |--------|------------|
-| Code execution on host | Container isolation |
-| Network data exfiltration | `network: deny` default |
-| Vault corruption | `vaultWrite: deny` default |
-| Resource exhaustion | Memory/CPU/PID limits |
-| Privilege escalation | Non-root user, dropped caps |
-| Malicious shared workflows | Trust warnings, permission prompts |
+| Code execution on the host | Cells run only in containers (§4) |
+| Data leaving the machine | `network: deny` by default; AI cells need `network` |
+| Vault corruption | `vaultWrite: deny` by default; read-only or no mount |
+| Rewriting the plugin or its settings | `.obsidian/` hidden from every cell (§4.1) |
+| Resource exhaustion | Memory, CPU and timeout limits; a process limit on Docker, Podman and Colima |
+| Privilege escalation in the container | Non-root user, no capabilities, `no-new-privileges` (not on Apple) |
+| A note changing after it was granted `ask` permissions | Decisions bound to the content (§5.3) |
+| A synced or renamed note running unattended | Scheduling consent per path and schedule (§6), in the plugin |
 
-### 9.2 Threats Not Mitigated
+### 8.2 Not Mitigated
 
 | Threat | Notes |
 |--------|-------|
-| Side-channel attacks | Containers share kernel |
-| Container escape (0-day) | Rely on Docker security |
-| Malicious AI responses | AI can return anything |
-| Social engineering | User can approve anything |
-
-### 9.3 Risk Acceptance
-
-Users accept remaining risk by:
-1. Installing the plugin
-2. Granting permissions to workflows
-3. Running workflows with network access
+| A note that declares `allow` | Applied without a prompt. Read a workflow before running it |
+| `vaultore agent` | Runs every scheduled workflow without approval (§6) |
+| The CLI's `.vaultore/` | Visible to cells under a full mount and writable with `vaultWrite` (§3.3) |
+| Container escape, kernel side channels | Containers share a kernel or VM; VaultOre relies on the engine |
+| Prompt injection, malicious AI responses | AI output is text that later cells may act on |
+| Approving without reading | A prompt cannot judge the code it grants |
 
 ---
 
-## 10. Configuration
+## Planned
 
-### 10.1 Global Settings
+Specified in earlier versions of this document and **not built**.
 
-```yaml
-# In plugin settings
-security:
-  defaultNetwork: deny         # Default for new workflows
-  defaultVaultWrite: deny      # Default for new workflows
-  allowUntrustedWorkflows: true # Show warning but allow
-  requireReviewForExternal: true # Force code review
-  auditLogEnabled: true
-  auditLogMaxEntries: 1000
-```
-
-### 10.2 Per-Workflow Override
-
-Settings can make permissions stricter but not looser:
-- If global is `deny`, workflow cannot override to `allow`
-- If global is `ask`, workflow can be `deny` but not `allow`
-- If global is `allow`, workflow can override freely
+- **Trust warning for workflows from elsewhere:** a warning before the first run of a note the
+  user did not write, with its source and requested permissions.
+- **"Remember my choice" checkbox** in the prompt, and **one prompt listing all requested
+  permissions** instead of one modal each.
+- **Clearing stored decisions** from the settings, and from the CLI
+  ([#28](https://github.com/cronai-labs/vaultore/issues/28)).
+- **Audit log:** `.vaultore/audit.jsonl` with run, cell and permission events, retention and
+  a setting to clear it. Today the run records (`run.json`, `index.json`) are the only log, and
+  they do not record permission decisions.
+- **`security:` settings and global caps:** defaults for new workflows, and caps a workflow
+  cannot exceed (a global `deny` that frontmatter cannot loosen)
+  ([#28](https://github.com/cronai-labs/vaultore/issues/28)).
+- **`buildNetwork`** taking effect for the dependency downloads of `ore:py` and `ore:go` cells.
+- **Choosing what a grant is bound to** ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
 
 ---
 
 ## Appendix A: Permission Matrix
 
-| Operation | `network` | `vaultRead` | `vaultWrite` | `buildNetwork` |
-|-----------|-----------|-------------|--------------|----------------|
-| `fetch()` in TS | ✓ | | | |
-| `vault.read()` | | ✓ | | |
-| `vault.write()` | | | ✓ | |
-| `{{note:path}}` | | ✓ | | |
-| AI completion | ✓ | | | |
-| `go mod download` | | | | ✓ |
-| `pip install` | | | | ✓ |
-| Output comment | | | (always) | |
+| Operation | `network` | `vaultRead` | `vaultWrite` |
+|-----------|-----------|-------------|--------------|
+| `fetch()` or any connection from a TS or shell cell | ✓ | | |
+| AI cell | ✓ | | |
+| `vault.read()`, `vault.exists()`, reading `/workspace` in a shell cell | | ✓ | |
+| `{{note:path}}` in an AI cell | | ✓ | |
+| `vault.write()`, `vault.mkdirp()`, writing `/workspace` | | ✓ for paths outside the run directory | ✓ |
+| `vault.readRaw()` (container paths) | | | |
+| Output callouts, output files, run records (host) | | | |
 
----
-
-## Appendix B: Decision Flowchart
+## Appendix B: Decision Flow
 
 ```
-User runs workflow
-        │
-        ▼
-┌───────────────────┐
-│ Parse permissions │
-│ from frontmatter  │
-└─────────┬─────────┘
-          │
-          ▼
-┌───────────────────┐     ┌─────────────────┐
-│ Any permission    │ Yes │ Check stored    │
-│ set to 'ask'?     │────►│ permissions     │
-└─────────┬─────────┘     └────────┬────────┘
-          │ No                     │
-          │            ┌───────────┴───────────┐
-          │            │                       │
-          │       Has stored?              No stored
-          │            │                       │
-          │            ▼                       ▼
-          │     Use stored              Show prompt
-          │            │                       │
-          │            │           ┌───────────┴───────────┐
-          │            │           │                       │
-          │            │        Allowed?               Denied?
-          │            │           │                       │
-          │            │           ▼                       ▼
-          │            │      Store choice           Abort run
-          │            │           │
-          ▼            ▼           ▼
-    ┌─────────────────────────────────┐
-    │      Apply permissions          │
-    │      Configure container        │
-    │      Execute workflow           │
-    └─────────────────────────────────┘
+Run starts
+  │
+  ▼
+Merge frontmatter permissions over the defaults
+  │
+  ▼
+For each permission at "ask":
+  stored decision for this path with the same content hash?
+    yes → use it
+    no  → prompt (plugin modal; CLI: --yes allows, else deny)
+  │
+  ▼
+Store all four values with the content hash
+  │
+  ▼
+Check the engine (fail the run if unavailable)
+  │
+  ▼
+Run cells: network on or off, vault mounted per §3.3, AI cells refused without network
 ```

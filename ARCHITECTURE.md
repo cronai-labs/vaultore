@@ -1,398 +1,187 @@
 # VaultOre Architecture
 
-> **Version:** 0.2.0  
-> **Status:** Pre-MVP  
-> **Last Updated:** 2026-01-10  
-> **Repository:** [github.com/cronai-labs/vaultore](https://github.com/cronai-labs/vaultore)  
-> **npm Scope:** `@vaultore/*`
+> **Last Updated:** 2026-10-15
+> **Repository:** [github.com/cronai-labs/vaultore](https://github.com/cronai-labs/vaultore)
 
-## Design Principles
+How the code is organised and how a run moves through it. Behaviour is specified elsewhere,
+once: the workflow format in [specs/workflow-note-spec.md](specs/workflow-note-spec.md),
+permissions and their defaults in [specs/permissions-spec.md](specs/permissions-spec.md),
+container flags in [specs/sandbox-spec.md](specs/sandbox-spec.md) (exact flags in
+permissions-spec §4.1), plans in [docs/roadmap.md](docs/roadmap.md).
 
-1. **Brick by Brick**: Each feature is a self-contained module that can be developed, tested, and shipped independently
-2. **Core-First**: All logic lives in `@vaultore/core`; editor integrations are thin wrappers
-3. **Portable**: Same core powers Obsidian, VS Code, Zed, and CLI
-4. **Offline-First**: Everything works locally; cloud features are additive
-5. **TDD-Driven**: Canonical workflows serve as acceptance tests
-6. **Knowledge-First**: Your vault is the data source, not just a storage location
-7. **Time-Triggered**: True scheduling, not just reactive automation
+## Principles
 
-## Monorepo Structure
+1. **Core first.** All engine logic lives in `@vaultore/core`. The Obsidian plugin and the CLI
+   are adapters: each implements `PlatformAdapter` and calls the same executor.
+2. **Local first.** Everything runs on the user's machine; the only remote services are the AI
+   providers a workflow calls.
+3. **Fail closed.** No container engine means no run; a permission nobody granted is denied.
+4. **Fixtures as acceptance tests.** The notes in `fixtures/canonical/` are real workflows and
+   test inputs at the same time.
+
+## Repository
+
+Every tracked file outside `.github/`:
 
 ```
 vaultore/
+├── ARCHITECTURE.md, CHANGELOG.md, CONTRIBUTING.md, LICENSE, README.md
+├── package.json              # bun workspaces (packages/*), turbo scripts
+├── bun.lock
+├── turbo.json
+├── manifest.json             # Obsidian manifest (copy of packages/obsidian/manifest.json)
+├── versions.json             # plugin version → minAppVersion, for Obsidian
+├── version-bump.mjs          # sets the version in every location
+├── cliff.toml                # git-cliff changelog config
+├── commitlint.config.cjs
+├── containers/               # Dockerfiles that nothing builds or uses (see "Container images")
+│   ├── bun-base/Dockerfile
+│   ├── go-builder/Dockerfile
+│   ├── python-base/{Dockerfile,requirements.txt}
+│   └── shell-base/Dockerfile
+├── docs/
+│   ├── index.md, interoperability.md, local-intelligence.md
+│   ├── quickstart-plugin-dev.md, roadmap.md, testing-fixtures.md
+├── fixtures/canonical/       # daily-summary, hello-world, link-digest, smart-inbox, sys-snapshot (.md)
 ├── packages/
-│   ├── core/                    # @vaultore/core - The brain
+│   ├── core/                 # @vaultore/core
 │   │   ├── src/
-│   │   │   ├── parser/          # Workflow note parsing
-│   │   │   ├── executor/        # Cell execution engine
-│   │   │   ├── runtime/         # Container management
-│   │   │   ├── scheduler/       # Cron scheduling
-│   │   │   ├── providers/       # AI provider integrations
-│   │   │   ├── vault/           # Vault API abstraction
-│   │   │   └── types/           # Shared TypeScript types
-│   │   ├── package.json
-│   │   └── tsconfig.json
-│   │
-│   ├── obsidian/                # Obsidian plugin wrapper
-│   │   ├── src/
-│   │   │   ├── main.ts          # Plugin entry point
-│   │   │   ├── adapter.ts       # PlatformAdapter implementation
-│   │   │   ├── views/           # UI components
-│   │   │   ├── commands/        # Command palette integration
-│   │   │   └── settings/        # Settings tab
-│   │   ├── manifest.json
-│   │   └── styles.css
-│   │
-│   ├── vscode/                  # VS Code extension (v0.5+)
-│   │   └── ...
-│   │
-│   ├── zed/                     # Zed extension (v0.5+)
-│   │   └── ...
-│   │
-│   └── cli/                     # @vaultore/cli - Standalone CLI + headless agent
-│       └── ...
-│
-├── containers/                   # Runtime container definitions
-│   ├── bun-base/                # Base Bun runtime (TS)
-│   ├── bun-fetch/               # Bun + fetch utilities
-│   ├── shell-base/              # Shell-only runtime
-│   ├── python-base/             # Python runtime (v0.2)
-│   └── go-builder/              # Go build + run (v0.3)
-│
-├── specs/                       # Specifications (TDD anchors)
-│   ├── workflow-note-spec.md    # Workflow format v0.1
-│   ├── cell-types-spec.md       # Cell type definitions
-│   ├── go-cell-spec.md          # Go cell spec (v0.3)
-│   ├── permissions-spec.md      # Security model
-│   └── caching-spec.md          # Build/run caching
-│
-├── fixtures/                    # Canonical test workflows
-│   ├── canonical/
-│   │   ├── hello-world.md       # Minimal smoke test
-│   │   ├── link-digest.md       # Primary use case
-│   │   ├── daily-summary.md     # Scheduling test
-│   │   ├── smart-inbox.md       # Inbox triage: AI + vault write
-│   │   ├── sys-snapshot.md      # Shell + Go integration
-│   │   └── proc-snapshot.md     # Process aggregation
-│   └── unit/
-│       ├── parser/              # Parser test cases
-│       ├── executor/            # Executor test cases
-│       └── runtime/             # Runtime test cases
-│
-├── docs/                        # User documentation
-│   ├── getting-started.md
-│   ├── workflow-guide.md
-│   ├── api-reference.md
-│   └── security.md
-│
-├── turbo.json                   # Turborepo config
-├── pnpm-workspace.yaml          # pnpm workspace
-└── package.json                 # Root package.json
+│   │   │   ├── index.ts      # public exports
+│   │   │   ├── version.ts    # VERSION, rewritten by version-bump.mjs
+│   │   │   ├── types/        # types, defaults, the frontmatter schema
+│   │   │   ├── parser/       # note → workflow; output callouts; templates
+│   │   │   ├── executor/     # runs a workflow (index.ts); output notes (output-note.ts)
+│   │   │   ├── runtime/      # engine detection; container command line
+│   │   │   ├── providers/    # OpenAI and Anthropic
+│   │   │   ├── scheduler/    # cron registrations and ticks
+│   │   │   ├── vault/        # exported vault helpers (not used by the executor)
+│   │   │   ├── fixtures/     # canonical and smart-inbox tests
+│   │   │   └── testing/      # integration-test helpers, network guard
+│   │   ├── tsup.config.ts, tsconfig.json, eslint.config.mjs
+│   │   └── vitest.config.ts, vitest.canonical.config.ts, vitest.integration.config.ts
+│   ├── obsidian/             # the plugin
+│   │   ├── src/main.ts       # plugin, ObsidianAdapter, settings tab, permission modal
+│   │   ├── src/main.test.ts, src/__mocks__/obsidian.ts
+│   │   ├── manifest.json, styles.css
+│   │   └── esbuild.config.mjs, tsconfig.json, eslint.config.mts, vitest.config.ts
+│   └── cli/                  # @vaultore/cli
+│       ├── src/cli.ts        # the vaultore command
+│       ├── src/adapter.ts    # NodeAdapter
+│       ├── src/scan.ts       # workflow discovery, schedule manifest
+│       ├── src/args.ts, src/agent.ts, src/index.ts, *.test.ts
+│       └── tsup.config.ts, tsconfig.json, eslint.config.mjs, vitest.config.ts
+├── scripts/                  # package-obsidian.mjs, release*.mjs, release-gate.sh
+└── specs/                    # cronai-handover, go-cell, permissions, sandbox, workflow-note (-spec.md)
 ```
 
-## Module Dependency Graph
+`.github/` holds `ci.yml`, `release.yml`, `dependabot.yml` and the pull request template.
+
+## Packages
 
 ```
-                    ┌─────────────────┐
-                    │  @vaultore/core │
-                    └────────┬────────┘
-                             │
-         ┌───────────────────┼───────────────────┐
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│    obsidian     │ │     vscode      │ │       cli       │
-│    plugin       │ │   extension     │ │                 │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
+            @vaultore/core
+            ┌──────┴──────┐
+            ▼             ▼
+  @vaultore/obsidian   @vaultore/cli
+  (Obsidian plugin)    (vaultore command, NodeAdapter)
 ```
 
-## Brick-by-Brick Roadmap
-
-Each "brick" is a self-contained PR that adds one capability.  
-Bricks are numbered by version: `BRICK-0XX` = v0.1, `BRICK-2XX` = v0.2, etc.
-
-### v0.1 Bricks (MVP) — Week 1
-
-| Brick | Name | Description | Acceptance Criteria |
-|-------|------|-------------|---------------------|
-| BRICK-001 | Project scaffolding | Monorepo, build system, CI | `pnpm build` succeeds |
-| BRICK-002 | Workflow parser | Parse frontmatter + cells | Parses `hello-world.md` |
-| BRICK-003 | Runtime detection | Detect Docker/Podman/Colima | Returns available engines |
-| BRICK-004 | Bun executor | Execute `ore:ts` cells | Runs TS, captures output |
-| BRICK-005 | Shell executor | Execute `ore:shell` cells | Runs shell, captures output |
-| BRICK-006 | Output persistence | Write ore-output callouts + JSON | Outputs survive reload |
-| BRICK-007 | AI provider abstraction | Provider interface | Interface defined |
-| BRICK-008 | OpenAI provider | OpenAI API integration | Completes prompts |
-| BRICK-009 | Anthropic provider | Anthropic API integration | Completes prompts |
-| BRICK-010 | Obsidian plugin shell | Basic plugin structure | Loads in Obsidian |
-| BRICK-011 | Run Cell command | Execute cell at cursor | `Cmd+Enter` works |
-| BRICK-012 | Run All command | Execute all cells | `Cmd+Shift+Enter` works |
-| BRICK-013 | Settings UI | API keys, runtime selection | Settings persist |
-| BRICK-014 | Status sidebar | Show execution status | Displays runs |
-| BRICK-015 | Template interpolation | `{{cellId}}`, `{{note:path}}` | Variables resolve |
-| BRICK-016 | Basic scheduling | Cron in frontmatter | Triggers when due |
-
-### v0.2 Bricks (Notebooks That Don't Rot) — Month 1-2
-
-| Brick | Name | Description |
-|-------|------|-------------|
-| BRICK-020 | Cell dependency parser | Extract `depends=[...]` |
-| BRICK-021 | DAG builder | Build execution graph |
-| BRICK-022 | Staleness detection | Track input changes |
-| BRICK-023 | "Run Affected" command | Only run stale cells |
-| BRICK-024 | Python executor | `ore:py` cells |
-| BRICK-025 | Warm container pool | Reuse containers |
-| BRICK-026 | Vault API helpers | `vault.read()`, `vault.write()`, `cell()` |
-| BRICK-027 | Semantic conditions | `when` attribute with `{{ai: condition}}` |
-| BRICK-028 | Workflow-level runIf | `runIf` in frontmatter |
-| BRICK-029 | Implicit parallel | Auto-parallelize independent cells |
-
-### v0.3 Bricks (Go + Control Flow) — Month 2-3
-
-| Brick | Name | Description |
-|-------|------|-------------|
-| BRICK-030 | Go cell spec | `ore:go` cell type |
-| BRICK-031 | Go build caching | Cache compiled binaries |
-| BRICK-032 | Go executor | Build + run Go cells |
-| BRICK-033 | Control blocks parser | Parse `control:` in frontmatter |
-| BRICK-034 | Loop execution | `loop:` with `until` and `max` |
-| BRICK-035 | Loop iteration context | `{{loop.iteration}}`, `{{cell.previous}}` |
-| BRICK-036 | Branching data model | Fork workflow runs |
-| BRICK-037 | Branch UI | Visual branch management |
-| BRICK-038 | Branch diff view | Compare branch outputs |
-
-### v0.4 Bricks (Automation) — Month 3-4
-
-| Brick | Name | Description |
-|-------|------|-------------|
-| BRICK-040 | Scheduler engine | Production scheduler |
-| BRICK-041 | CLI runner | Headless execution |
-| BRICK-042 | CronAI cloud executor | Cloud execution option |
-| BRICK-043 | Event triggers | File change, webhook |
-
-### v0.5 Bricks (Portability) — Month 4-6
-
-| Brick | Name | Description |
-|-------|------|-------------|
-| BRICK-050 | VS Code extension shell | Basic extension |
-| BRICK-051 | Zed extension shell | Basic extension |
-| BRICK-052 | Language Server Protocol | Syntax support |
-
----
-
-## Container Strategy
-
-### Runtime Engines (v0.1)
-
-| Engine | Platform | Notes |
-|--------|----------|-------|
-| Docker | all | Reference engine; on Windows via Docker Desktop (WSL2 backend) or Docker Engine inside WSL2 |
-| Podman | all | Rootless supported |
-| Colima | macOS | Drives the docker CLI |
-| Apple `container` | macOS 26+, Apple silicon | CLI 1.0; per-container micro-VMs. No network-disable flag yet — workflows with `network: deny` fail closed on this engine |
-
-Beyond containers, a tiered sandbox strategy is specified in
-[specs/sandbox-spec.md](specs/sandbox-spec.md): Tier 2 adds an in-process
-QuickJS-in-WASM sandbox (v0.2) so `ore:ts` workflows run with no container
-runtime installed, and Tier 3 explores WASI 0.2 components for compiled
-cells (v0.3+).
-
-### Base Images (v0.1)
-
-| Image | Purpose | Size | Cold Start |
-|-------|---------|------|------------|
-| `vaultore/bun-base` | TypeScript cells | ~80MB | <100ms |
-| `vaultore/bun-fetch` | TS + HTTP client | ~85MB | <100ms |
-| `vaultore/shell-base` | Shell cells | ~50MB | <50ms |
-
-### Future Images (v0.2+)
-
-| Image | Purpose | Size | Cold Start |
-|-------|---------|------|------------|
-| `vaultore/python-base` | Python cells | ~150MB | <200ms |
-| `vaultore/go-builder` | Go compile + run | ~250MB | <300ms (build) |
-
-### Warm Container Pool (v0.2)
-
-Instead of `docker run` per cell, we:
-1. On plugin load: Start 1-2 "warm" containers per runtime type
-2. On cell execution: `docker exec` into warm container
-3. On workflow complete: Reset container state (clear /tmp, reset env)
-4. On plugin unload: Stop warm containers
-
-This gives Devcontainer-like performance without the complexity.
-
----
-
-## Parallel Execution (Open Design)
-
-Parallel cell execution is **not enabled in v0.1**. We run cells sequentially to keep behavior predictable and resource use bounded. The v0.2 roadmap introduces implicit parallelism for independent cells, but it must be gated by explicit budgets and safety rules.
-
-### Constraints & Edge Cases
-
-- **CPU/Mem Budget:** Avoid saturating the machine; limit total container CPU + memory.
-- **Runtime Mixing:** TS, shell, and AI containers have different profiles; concurrency should be per-runtime and global.
-- **Dependency DAG:** Only parallelize cells with no shared dependencies.
-- **Vault Writes:** Avoid write collisions; serialize writes or scope to separate paths.
-- **Network Load:** Cap concurrent AI calls to avoid rate limits or provider bans.
-- **User Experience:** Keep UI responsive; expose a pause/cancel control.
-
-### Proposed Settings (v0.2+)
-
-- `maxParallelCells` (global)
-- `maxParallelPerRuntime` (ts/shell/ai)
-- `cpuBudget` (e.g., 2.0 cores)
-- `memoryBudget` (e.g., 2GB)
-- `maxConcurrentAI` (per provider)
-
-### Implementation Sketch
-
-1. Build DAG from `depends[]`
-2. Queue ready nodes by runtime
-3. Dispatch with a resource-aware scheduler
-4. Track running cells, release budget on completion
-5. Fail fast or continue depending on user preference
-
----
-
-## Runtime Helpers
-
-VaultOre provides these helpers inside `ore:ts` cells:
-
-```typescript
-// Read a note from the vault
-const content = await vault.read("Path/To/Note.md");
-
-// Write a note to the vault
-await vault.write("Path/To/Output.md", content);
-
-// Check if a note exists
-const exists = await vault.exists("Path/To/Note.md");
-
-// Create directories
-await vault.mkdirp("Path/To/Folder");
-
-// Get parsed output of another cell
-const data = cell("other-cell-id");
-
-// Read raw container paths (for /proc, etc.)
-const meminfo = await vault.readRaw("/proc/meminfo");
-```
-
----
-
-## Security Model
-
-### Container Isolation
-
-```dockerfile
-# All containers run with:
-# --network=none (unless permissions.network: allow)
-# --read-only (except /tmp and /workspace)
-# --memory=512m
-# --cpus=1
-# --user=1000:1000 (non-root)
-```
-
-### Permission Layers
-
-| Permission | Default | Scope |
-|------------|---------|-------|
-| `network` | `deny` | Runtime network access |
-| `buildNetwork` | `ask` | Network during Go/Python builds |
-| `vaultRead` | `allow` | Read notes in vault |
-| `vaultWrite` | `ask` | Write/create notes |
-
-### Permission Prompts
-
-Before first run of a workflow with elevated permissions:
-1. Parse `permissions:` from frontmatter
-2. If any permission is `ask`, show confirmation dialog
-3. Store user decision (per-workflow, not global)
-4. On subsequent runs, use stored decision
-
----
-
-## Go Runtime (v0.3) — Design Preview
-
-Go cells provide a "compiled tools" lane with caching and repeatability.
-
-### Execution Model
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  ore:go     │ ──► │   Build     │ ──► │    Run      │
-│  source     │     │  (cached)   │     │  (sandbox)  │
-└─────────────┘     └─────────────┘     └─────────────┘
-                           │
-                    ┌──────┴──────┐
-                    │ Cache Key   │
-                    │ = hash(src  │
-                    │   + go.mod  │
-                    │   + flags)  │
-                    └─────────────┘
-```
-
-### Cache Key Components
-
-- Go source of the cell
-- `go.mod` + `go.sum` (resolved modules)
-- Go version
-- Build flags (cgo, tags, ldflags)
-- Target platform (GOOS/GOARCH)
-- Builder image digest
-
-### Interop Pattern
-
-```
-TS orchestrates → Go accelerates → Python visualizes
-     │                  │                 │
-     │    JSON/stdin    │    JSON/stdout  │
-     └──────────────────┴─────────────────┘
-```
-
----
-
-## TDD Approach
-
-### Canonical Fixtures as Tests
-
-Each fixture in `fixtures/canonical/` serves as an acceptance test:
-
-| Fixture | Tests | Pass Criteria |
-|---------|-------|---------------|
-| `hello-world.md` | Parser, TS executor | Output appears |
-| `link-digest.md` | Full pipeline, AI | Creates digest note |
-| `daily-summary.md` | Scheduling | Runs at scheduled time |
-| `smart-inbox.md` | AI cell, vault write | Category notes written, filed lines ticked |
-| `sys-snapshot.md` | Shell + Go | Artifacts created |
-
-### Test Pyramid
-
-```
-           ┌─────────────────┐
-           │  Canonical      │  ← End-to-end
-           │  Fixtures       │
-           └────────┬────────┘
-                    │
-         ┌──────────┴──────────┐
-         │  Integration Tests  │  ← Module combos
-         └──────────┬──────────┘
-                    │
-    ┌───────────────┴───────────────┐
-    │        Unit Tests             │  ← Functions
-    └───────────────────────────────┘
-```
-
-### Running Tests
-
-```bash
-# Unit tests
-pnpm test
-
-# Integration tests
-pnpm test:integration
-
-# Canonical fixture tests (requires Docker)
-pnpm test:canonical
-```
+| | Obsidian plugin | CLI |
+|---|---|---|
+| Built by | esbuild → `packages/obsidian/dist/main.js` (one CommonJS bundle, core included) | tsup → `packages/cli/dist/cli.js`, `index.js` |
+| Files | Obsidian's vault API; `.vaultore/` through the adapter | Node `fs`, confined to the vault root |
+| Settings | Plugin data (`.obsidian/plugins/vaultore/data.json`) | `<vault>/.vaultore/config.json` |
+| Secrets | Obsidian secret storage, by the name the user selected | Environment variables |
+| HTTP | `requestUrl` | `fetch` |
+| `ask` permissions | Modal | Deny, or allow with `--yes` |
+| Scheduling | Approved notes only, while Obsidian is open | `vaultore agent`, every scheduled note |
+
+## Core Modules
+
+| Module | Responsibility | Main symbols |
+|--------|----------------|--------------|
+| `types` | Shared types; `DEFAULT_PERMISSIONS`, `DEFAULT_RUNTIME`, `WorkflowFrontmatterSchema` (zod) | |
+| `parser` | Frontmatter and cells from note text; reading and writing output callouts; `{{…}}` templates | `WorkflowParser`, `OutputSerializer`, `TemplateInterpolator`, `isWorkflowFrontmatter` |
+| `executor` | A whole run: permissions, engine check, order, each cell, outputs, run records | `WorkflowExecutor`, `renderOutputMarkdown` |
+| `runtime` | Which engines answer; the `run` command line with its hardening; spawning it | `detectRuntimes`, `buildRunCommand`, `execContainer` |
+| `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` when it has one; model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
+| `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback | `WorkflowScheduler`, `computeNextRun` |
+| `vault` | `createVaultAPI`, `generateRuntimeScript`: exported, but the executor injects its own copy (`buildTypeScriptRuntime`), and the two have diverged ([#45](https://github.com/cronai-labs/vaultore/issues/45)) | |
+
+## How a Run Works
+
+`WorkflowExecutor.runWorkflow` (`packages/core/src/executor/index.ts`):
+
+1. **Parse** the note: frontmatter against the schema, cells, existing outputs.
+2. **Create the run**: a run id, `<outputRoot>/runs/<workflow>/<runId>/run.json` with status
+   `running`.
+3. **Resolve permissions**: defaults, then frontmatter, then a stored decision or a prompt for
+   each `ask`, bound to a hash of the frontmatter and cells (permissions-spec §5).
+4. **Choose and check the engine**: frontmatter, else setting, else `docker`; `detectRuntimes`
+   probes all four engines in parallel, each with a 10-second timeout.
+5. **Order the cells** by `depends`; for a single-cell run, keep the target and what it needs.
+6. **Hydrate** earlier outputs from the JSON files the note's callouts link, so `cell()` and
+   dependency checks can use them for cells that do not run this time.
+7. **For each cell, one at a time:** check its dependencies succeeded; run it (a container for
+   `ts` and `shell`, a provider request for `ai`); write its JSON record, Markdown view and the
+   run index; re-read the note and replace the cell's callout.
+8. **Finish** `run.json`: `completed`, `failed` (a cell failed) or `aborted` (the run threw).
+
+A container cell is `docker run --rm …` (or `podman`, or `container` for Apple; Colima uses
+the `docker` CLI). TS cells get a generated script on stdin that defines `cell()`, `vault` and
+`vaultore`, runs the cell body, and prints the last expression's value as JSON between markers
+the executor extracts.
+
+## Container Images
+
+| Image | Used for |
+|-------|----------|
+| `runtime.image`, default `oven/bun:1-alpine` | Every `ore:ts` and `ore:shell` cell |
+| `alpine:3.19` | Only the integration-test helper `waitForContainerView` |
+
+The Dockerfiles under `containers/` are not built by CI, not published, and not referenced by
+the code. They sketch images for a possible future (`bun-base`, `shell-base`, `python-base`,
+`go-builder`); each says so in its header.
+
+## Security
+
+What a cell may do, the mount model, prompts and stored decisions:
+[specs/permissions-spec.md](specs/permissions-spec.md). The container flags per engine:
+[specs/sandbox-spec.md](specs/sandbox-spec.md) and permissions-spec §4.1. Neither is repeated
+here.
+
+## Parallel Execution (Not Built)
+
+Cells run one at a time. Running independent cells at the same time is under consideration
+([roadmap](docs/roadmap.md#under-consideration)); these are the constraints a design has to
+meet:
+
+- **CPU and memory budget:** total container CPU and memory must not saturate the machine.
+- **Runtime mix:** TS, shell and AI cells load the machine differently; concurrency limits per
+  kind and globally.
+- **Vault writes:** two cells writing the same path must not race.
+- **Provider limits:** concurrent AI calls bounded per provider.
+- **Write-back:** the note is re-read before every callout write (step 7 above); parallel cells
+  would make those writes concurrent.
+
+A warm container pool (starting containers ahead and `exec`-ing cells into them) is part of
+the same consideration. It would change the isolation model: cells of one run would share a
+container's filesystem and processes unless it is reset between them.
+
+## Go Cells (Not Built)
+
+A design for compiled `ore:go` cells with build caching is in
+[specs/go-cell-spec.md](specs/go-cell-spec.md).
+
+## Tests
+
+| Suite | Command | Needs |
+|-------|---------|-------|
+| Unit | `bun run test` | Nothing; a shared setup fails any unstubbed `fetch` |
+| Canonical fixtures | `bun run test:canonical` | Nothing: it parses each fixture, it does not run them |
+| Container integration | `VAULTORE_IT_ENGINE=docker bun run --cwd packages/core test:integration` | A running engine (default `colima`); vaults are created under `~/.cache` |
+| Typecheck, lint | `bun run typecheck`, `bun run lint` | |
+
+CI runs all of them, the integration tests on Docker, and a reproducible-build check; see
+[CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). How each fixture is exercised:
+[docs/testing-fixtures.md](docs/testing-fixtures.md).

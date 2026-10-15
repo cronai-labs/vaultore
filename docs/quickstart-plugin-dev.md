@@ -1,318 +1,191 @@
 # Quickstart: Plugin Development
 
-> **Target:** Developers building VaultOre  
-> **Time:** 15-20 minutes  
-> **Prerequisites:** Node.js 20+, Bun 1.3+, Docker
+> **For:** developers working on VaultOre
+> **Needs:** Node.js 20+, Bun 1.3+, a container engine
 
-This guide walks you through setting up VaultOre for plugin development, building it, loading it in an Obsidian dev vault, and running a canonical fixture to verify everything works.
+Build the plugin, load it into a test vault, and run a canonical fixture.
 
 ---
 
 ## 1. Prerequisites
 
-### Required
+- **Node.js 20+**: [nodejs.org](https://nodejs.org/)
+- **Bun 1.3+** (CI uses 1.3.14): [bun.sh](https://bun.sh/)
+- **A container engine**, running: [Docker](https://www.docker.com/products/docker-desktop),
+  [Podman](https://podman.io/), [Colima](https://github.com/abiosoft/colima) (macOS), or
+  [Apple container](https://github.com/apple/container) (macOS 26+, Apple silicon). On Colima,
+  use virtiofs file sharing (`colima start --vm-type vz --mount-type virtiofs`); sshfs can serve
+  stale file contents ([#83](https://github.com/cronai-labs/vaultore/issues/83)).
 
-- **Node.js 20+** — [Download](https://nodejs.org/)
-- **Bun 1.3.14+** — [Install](https://bun.sh/)
-- **A container runtime** — [Docker Desktop](https://www.docker.com/products/docker-desktop), [Podman](https://podman.io/), [Colima](https://github.com/abiosoft/colima) (macOS), or [Apple container](https://github.com/apple/container) (macOS 26+, Apple silicon)
-  - **Windows:** Docker Desktop with the WSL2 backend, or Docker Engine/Podman inside a WSL2 distro
-  - **Apple container caveat:** no network-disable support yet, so `network: deny` workflows require Docker/Podman
-
-### Verify Installation
+Check that the engine answers. VaultOre treats an engine as available only when this exits 0:
 
 ```bash
-node --version   # Should be 20.x or higher
-bun --version    # Should be 1.3.x or higher
-docker --version  # Should show Docker/Podman/Colima
+docker version          # Docker, and Colima (which uses the docker CLI)
+podman version
+colima status
+container system status # Apple container
 ```
 
 ---
 
-## 2. Clone and Install
+## 2. Clone, Install, Build
 
 ```bash
-# Clone the repository
 git clone https://github.com/cronai-labs/vaultore.git
 cd vaultore
-
-# Install dependencies
 bun install
+bun run build             # all packages; or bun run core:build / bun run obsidian:build
 ```
 
-This installs dependencies for all packages in the monorepo.
+Each package gets a `dist/` folder; the plugin bundle is `packages/obsidian/dist/main.js`.
 
 ---
 
-## 3. Build the Project
+## 3. Package the Plugin
 
 ```bash
-# Build all packages
-bun run build
-
-# Or build individually
-bun run core:build        # Build @vaultore/core
-bun run obsidian:build    # Build Obsidian plugin
-```
-
-Expected output: `dist/` folders in each package.
-
----
-
-## 4. Package the Plugin (Recommended)
-
-```bash
-# Package the Obsidian plugin for easy copying
 bun run obsidian:package
 ```
 
-This creates a ready-to-copy plugin folder at:
-
-```text
-packages/obsidian/package/vaultore
-```
-
-It includes `main.js`, `manifest.json`, and `styles.css`.
+This copies `main.js`, `manifest.json` and `styles.css` into
+`packages/obsidian/package/vaultore/`. It builds only when `packages/obsidian/dist/` is
+missing: after a watch session (§5) it packages the development bundle, so run
+`bun run build` first ([#47](https://github.com/cronai-labs/vaultore/issues/47)).
 
 ---
 
-## 5. Set Up Obsidian Dev Vault
+## 4. Load It into a Test Vault
 
-### Option A: Create a Test Vault
+Use a vault without notes you care about.
 
-1. Open Obsidian
-2. Create a new vault (e.g., `~/vaultore-test-vault`)
-3. Enable Developer Mode:
-   - Settings → Community Plugins → Developer Mode (toggle ON)
-
-### Option B: Use Existing Vault
-
-If you have an existing vault, enable Developer Mode as above.
-
----
-
-## 6. Load the Plugin in Obsidian
-
-### Development Mode (Hot Reload)
-
-```bash
-# From the vaultore repo root
-bun run obsidian:dev
-```
-
-This:
-
-- Watches for changes
-- Builds the plugin
-- Copies it to your dev vault's `.obsidian/plugins/vaultore/`
-
-### Manual Installation
-
-If `obsidian:dev` isn't set up yet:
-
-1. Build or package the plugin:
-
-   ```bash
-   bun run obsidian:package
-   ```
-
-2. Create plugin directory:
+1. Create a vault in Obsidian, for example `~/vaultore-test-vault`.
+2. Copy the packaged plugin into it:
 
    ```bash
    mkdir -p ~/vaultore-test-vault/.obsidian/plugins/vaultore
+   cp packages/obsidian/package/vaultore/* ~/vaultore-test-vault/.obsidian/plugins/vaultore/
    ```
 
-3. Copy built files:
-
-   ```bash
-   cp -r packages/obsidian/package/vaultore/* ~/vaultore-test-vault/.obsidian/plugins/vaultore/
-   ```
-
-4. In Obsidian:
-
-   - Settings → Community Plugins
-   - Find "VaultOre" and toggle it ON
+3. In Obsidian: **Settings → Community plugins**, turn off restricted mode if asked, and
+   enable **VaultOre**.
 
 ---
 
-## 7. Configure VaultOre
-
-1. Open Obsidian Settings → VaultOre
-2. Ensure Obsidian 1.11.4+ for SecretStorage support
-3. **Default runtime engine:** Select Docker (or Podman/Colima/Apple container). A workflow
-   whose frontmatter sets `runtime.engine` overrides this — the setting is the default, not
-   the last word
-4. **Output Folder:** Default `_vaultore` (used for run outputs and artifacts)
-5. **AI Provider (optional):** Add API keys if you want to test `ore:ai` cells:
-
-   - OpenAI: Get key from [platform.openai.com](https://platform.openai.com)
-   - Anthropic: Get key from [console.anthropic.com](https://console.anthropic.com)
-6. **AI Defaults (optional):** Set Temperature and Max Tokens if you want explicit defaults
-7. **AI request timeout (optional):** Seconds before an AI request is abandoned; blank uses
-   120. The CLI reads the same value as `aiTimeoutSeconds` in `<vault>/.vaultore/config.json`
-
----
-
-## 8. Run Your First Workflow
-
-### Copy a Canonical Fixture
-
-Copy a test workflow from `fixtures/canonical/` into your vault:
+## 5. Rebuild While You Work
 
 ```bash
-# Example: Copy hello-world workflow
+bun run obsidian:dev
+```
+
+This runs esbuild in watch mode: it rebuilds `packages/obsidian/dist/main.js`, with an inline
+source map, on every change. **It does not copy anything into a vault.** After a rebuild, copy
+`dist/main.js` to `<vault>/.obsidian/plugins/vaultore/` and reload the plugin (turn it off and
+on, or reload Obsidian). A one-command install is planned in
+[#47](https://github.com/cronai-labs/vaultore/issues/47).
+
+Changes to `packages/core` reach the plugin bundle only after core is rebuilt
+(`bun run core:build`, or `bun run build`).
+
+---
+
+## 6. Configure VaultOre
+
+**Settings → VaultOre** (Obsidian 1.11.4 or later, for secret storage):
+
+1. **Default runtime engine:** the engine you run. A workflow whose frontmatter sets
+   `runtime.engine` overrides it.
+2. **Output folder:** default `_vaultore`.
+3. **API keys** (only for `ore:ai` cells): for "OpenAI API key" or "Anthropic API key", select
+   or create a secret in Obsidian's secret storage. VaultOre stores the secret's name, not the
+   key. Keys come from [platform.openai.com](https://platform.openai.com) or
+   [console.anthropic.com](https://console.anthropic.com).
+4. **Default provider, Default model, Temperature, Max tokens, AI request timeout:** optional;
+   defaults OpenAI, `gpt-5-mini`, provider default, 800, 120 seconds.
+
+---
+
+## 7. Run a Fixture
+
+```bash
 cp fixtures/canonical/hello-world.md ~/vaultore-test-vault/Hello-World.md
 ```
 
-### Run the Workflow
+`hello-world.md` sets `runtime.engine: docker`. On another engine, delete that line so your
+setting applies.
 
-1. Open `Hello-World.md` in Obsidian
-2. Open the command palette: **`Cmd+P`** (Mac) or **`Ctrl+P`** (Windows/Linux)
-3. Type "Run all" and select **"VaultOre: Run all cells"**
+Open the note and run **VaultOre: Run all cells** from the command palette (`Cmd+P` /
+`Ctrl+P`). No hotkeys are set by default; assign them under **Settings → Hotkeys**.
 
-> **Tip:** No default hotkeys are registered (to avoid conflicts). Assign your own under **Settings → Hotkeys** — search for "VaultOre".
+The first run asks about `buildNetwork`, which the fixture does not set; nothing uses it, so
+either answer works. The answer is remembered until the note changes.
 
-### Expected Result
+After a few seconds each cell has a callout under it:
 
-After a few seconds, you should see ore-output callouts appear below each cell:
-
-````markdown
-```ore:ts id=hello
-const message = "Hello from VaultOre!";
-message;
+```markdown
+> [!ore-output] hello
+> view: [[_vaultore/runs/Hello-World/RUN_ID/hello.md]]
+> ![[_vaultore/runs/Hello-World/RUN_ID/hello.md]]
+> json: [[_vaultore/runs/Hello-World/RUN_ID/hello.json]]
+> run: RUN_ID
+> status: success | duration: 1.20s | at: 2026-10-15T08:00:00.000Z
 ```
 
-> [!ore-output] hello
-> file: [[_vaultore/runs/hello-world/RUN_ID/hello.json]]
-> run: RUN_ID
-> status: success | duration: 0.12s | at: 2026-01-10T08:00:00Z
-````
-
-**Note:** Outputs are stored as JSON under `_vaultore/runs/...`. The callout links are clickable in Obsidian.
+`transform`'s output is `HELLO FROM VAULTORE!`. Outputs are stored under
+`_vaultore/runs/Hello-World/<runId>/`; the format is in the
+[workflow note spec](../specs/workflow-note-spec.md#7-outputs).
 
 ---
 
-## 9. Troubleshooting
+## 8. Troubleshooting
 
-### Docker Not Running
+**`Container runtime "docker" is not available: …`**
+The engine did not answer its probe (`docker version`, `podman version`, `colima status` or
+`container system status`) with exit code 0 within 10 seconds. Start it, or pick the engine
+you run in the settings. The message says whether the note or the settings chose the engine,
+and which engines were detected.
 
-**Error:** `Cannot connect to Docker daemon`
+**The plugin is not listed under Community plugins**
+Check that `.obsidian/plugins/vaultore/` holds `manifest.json` and `main.js`, reload Obsidian,
+and look for errors in the developer console (`Cmd+Option+I` / `Ctrl+Shift+I`).
 
-**Fix:**
+**`No secret selected for "OpenAI API key"`** (or Anthropic)
+Select a secret under **Settings → VaultOre → API keys**. If the message says the secret is
+missing or empty, set its value in Obsidian's secret storage.
 
-- Start Docker Desktop
-- Or verify Podman/Colima is running:
+**`Model "…" is an Anthropic model, but the configured provider is OpenAI`** (or the reverse)
+Set the default provider to match the model, or change the cell's `model=` or the default
+model.
 
-  ```bash
-  podman ps    # Should not error
-  # or
-  colima status
-  ```
+**Pulling the image fails**
+Your engine pulls `oven/bun:1-alpine` (or the workflow's `runtime.image`) on first use. Check
+its network and proxy settings, or pull by hand: `docker pull oven/bun:1-alpine`.
 
-### Plugin Not Loading
+**`Vault read permission denied`, `Vault write permission denied`, `AI cells require network permission`**
+The workflow lacks that permission. Check its `permissions:`; a permission at `ask` that was
+denied stays denied until the note changes
+([permissions spec](../specs/permissions-spec.md#5-permission-decisions)). On Linux, also
+check that your user may use the engine (for Docker, the `docker` group).
 
-**Error:** Plugin doesn't appear in Community Plugins list
-
-**Fix:**
-
-1. Check `.obsidian/plugins/vaultore/manifest.json` exists
-2. Verify `main.js` exists in the plugin directory
-3. Reload Obsidian: `Cmd+R` (Mac) or `Ctrl+R` (Windows/Linux)
-4. Check Developer Console: `Cmd+Option+I` (Mac) or `Ctrl+Shift+I` (Windows/Linux) for errors
-
-### Secret Storage Not Available
-
-**Error:** `VaultOre: Failed to save OpenAI key (Secret storage not available in this Obsidian version)`
-
-**Fix:**
-
-1. Update Obsidian to 1.11.4 or newer
-2. Reload Obsidian after update
-
-### Container Pull Fails
-
-**Error:** `Unable to pull image oven/bun:1-alpine`
-
-**Fix:**
-
-- Ensure Docker has network access
-- Manually pull: `docker pull oven/bun:1-alpine`
-- Check Docker Desktop settings for proxy/network issues
-
-### Permission Denied
-
-**Error:** `Permission denied` when running cells
-
-**Fix:**
-
-1. Check workflow frontmatter `permissions:` section
-2. If `network: ask` or `vaultWrite: ask`, approve the prompt
-3. Verify Docker permissions: your user should be in the `docker` group (Linux) or have Docker Desktop access (Mac/Windows)
-
-### Cell Execution Fails
-
-**Error:** Cell shows `status: error` in output
-
-**Fix:**
-
-1. Check the ore-output callout for error details
-2. Open Developer Console for runtime errors
-3. Verify the cell syntax matches the [Workflow Note Spec](specs/workflow-note-spec.md)
-4. For `ore:ts` cells, ensure code is valid JavaScript/TypeScript
+**A cell fails with `status: error`**
+The callout's `error:` line has the message, usually the cell's stderr. Check the cell against
+the [workflow note spec](../specs/workflow-note-spec.md). Plugin messages appear in the
+developer console, prefixed `[VaultOre]`.
 
 ---
 
 ## 9. Next Steps
 
-### Run More Canonical Fixtures
+- Run the other fixtures: [Testing Fixtures](testing-fixtures.md) says what each needs.
+- Run the tests:
 
-Test different workflows:
+  ```bash
+  bun run test              # unit tests, no engine needed
+  bun run test:canonical    # parses every fixture, no engine needed
+  VAULTORE_IT_ENGINE=docker bun run --cwd packages/core test:integration   # needs an engine
+  ```
 
-```bash
-# Copy all canonical fixtures
-cp fixtures/canonical/*.md ~/vaultore-test-vault/
-
-# Then run them in Obsidian
-```
-
-See [Testing Fixtures](testing-fixtures.md) for details on each fixture.
-
-### Explore the Codebase
-
-- **Core Engine:** `packages/core/src/` — Parser, executor, runtime
-- **Specifications:** `specs/` — TDD anchors and format definitions
-- **Architecture:** [ARCHITECTURE.md](../ARCHITECTURE.md) — System design
-
-### Run Tests
-
-```bash
-# Unit tests
-bun run test
-
-# Integration tests
-bun run test:integration
-
-# Canonical fixture tests (requires Docker)
-bun run test:canonical
-```
-
----
-
-## 10. Development Workflow
-
-### Making Changes
-
-1. Edit code in `packages/core/src/` or `packages/obsidian/src/`
-2. Run `bun run build` (or `bun run obsidian:dev` for hot reload)
-3. Reload Obsidian plugin: `Cmd+R` (Mac) or `Ctrl+R` (Windows/Linux)
-4. Test with a canonical fixture
-
-### Debugging
-
-- **Obsidian Dev Console:** `Cmd+Option+I` (Mac) or `Ctrl+Shift+I` (Windows/Linux)
-- **Container Logs:** Check Docker Desktop logs or `docker logs <container-id>`
-- **Plugin Logs:** Check Obsidian console for VaultOre messages
-
----
+- Read the code: `packages/core/src/` (parser, executor, runtime) and
+  `packages/obsidian/src/main.ts`; the [Architecture Guide](../ARCHITECTURE.md) maps it.
 
 ## Quick Reference
 
@@ -320,20 +193,12 @@ bun run test:canonical
 | --- | --- |
 | Install dependencies | `bun install` |
 | Build all packages | `bun run build` |
-| Build core only | `bun run core:build` |
-| Build plugin only | `bun run obsidian:build` |
-| Watch mode (dev) | `bun run obsidian:dev` |
-| Run tests | `bun run test` |
-| Run fixture tests | `bun run test:canonical` |
+| Build core / plugin only | `bun run core:build` / `bun run obsidian:build` |
+| Watch-build the plugin | `bun run obsidian:dev` |
+| Package the plugin | `bun run obsidian:package` |
+| Unit tests | `bun run test` |
+| Fixture parse tests | `bun run test:canonical` |
 
----
-
-## Getting Help
-
-- **Issues:** [GitHub Issues](https://github.com/cronai-labs/vaultore/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/cronai-labs/vaultore/discussions)
-- **Documentation:** [docs/](index.md)
-
----
-
-**Ready to build?** Start with the [Architecture Guide](ARCHITECTURE.md) or dive into the [PRD](PRD.md) for the full vision.
+Questions: [GitHub Issues](https://github.com/cronai-labs/vaultore/issues). More docs:
+[index](index.md). **Ready to build?** Start with the [Architecture Guide](../ARCHITECTURE.md);
+the [roadmap](roadmap.md) says what is planned.

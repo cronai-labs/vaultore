@@ -1,8 +1,9 @@
 # CronAI Schedule Handover Specification
 
 > **Version:** 0.1.0
-> **Status:** Implemented (export side); cloud side tracked for v0.4
-> **Last Updated:** 2026-07-21
+> **Status:** The export side is implemented (`vaultore schedules export`). The CronAI side and
+> local schedulers honouring `.vaultore/handover.json` are not built.
+> **Last Updated:** 2026-10-15
 
 ## Motivation
 
@@ -103,20 +104,24 @@ writes `.vaultore/handover.json` into the vault:
 Local schedulers (plugin and `vaultore agent`) must skip registering any
 path listed in a handover file with `owner: cronai`. Deleting the file —
 or removing a path from it — returns ownership to local scheduling on the
-next rescan. *(Local honoring ships in v0.2; until then, disable local
-schedules manually after handover.)*
+next rescan. *(Not built: neither the plugin nor `vaultore agent` reads
+`handover.json` yet. Until they do, stop local scheduling of a handed-over
+note yourself: withdraw its approval in the plugin, and do not run
+`vaultore agent` on that vault.)*
 
 ## Permission Semantics in the Cloud
 
 - Cloud runs are non-interactive: any permission still at `ask` resolves
   to **deny** (same fail-closed rule as `vaultore run` without `--yes`).
 - Users pre-grant per-workflow decisions in `.vaultore/config.json`
-  (`permissionDecisions`), which syncs with the vault.
+  (`permissionDecisions`), which syncs with the vault. A decision is bound to
+  a hash of the note's frontmatter and cells, so after an edit a permission
+  at `ask` resolves to deny until it is granted again (permissions-spec §5.3).
 - CronAI must never widen a permission beyond what the note's frontmatter
   requests.
 
-## Out of Scope (v0.1)
+## Out of Scope
 
-- Event triggers (file-change, webhook) — v0.4
+- Event triggers (file-change, webhook)
 - Partial-cell scheduling
 - Manifest signing (planned before any multi-tenant ingestion endpoint)

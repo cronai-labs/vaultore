@@ -33,6 +33,7 @@ module.exports = {
         "scheduler",  // Cron scheduling
         "providers",  // AI providers
         "vault",      // Vault API
+        "fixtures",   // Canonical workflow fixtures
         "deps",       // Dependency updates
         "release",    // Release infrastructure
       ],

@@ -318,7 +318,9 @@ export interface OutputMeta {
 }
 
 /**
- * A cell's output (stored as HTML comment)
+ * A cell's output. Persisted as a JSON record under the run directory and
+ * linked from an ore-output callout in the note; older notes held it in an
+ * HTML comment, which the parser still reads.
  */
 export interface CellOutput {
   cellId: string;
