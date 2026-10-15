@@ -1,8 +1,8 @@
 # Local Intelligence (RAG) Strategy
 
-> **Status:** Draft  
-> **Scope:** v0.2+ exploration  
-> **Goal:** Improve AI quality using local, permissioned context
+> **Status:** Exploration. Nothing in this document is built; the APIs below are proposals.  
+> **Goal:** Improve AI quality using local, permissioned context  
+> **Roadmap:** [under consideration](roadmap.md#under-consideration)
 
 VaultOre should provide **local intelligence** that helps AI cells answer with higher accuracy and lower hallucination risk. The core idea is a vault-local retrieval system (RAG) that can be used by workflows without sending unnecessary data to external providers.
 
@@ -75,29 +75,22 @@ So users can inspect and audit what the model saw.
 ## 4. Privacy & Permissions
 
 - Retrieval **uses local data only** by default
-- Export to AI provider requires explicit permission
+- Sending retrieved text to an AI provider stays under the existing `network` and `vaultRead`
+  permissions ([permissions spec](../specs/permissions-spec.md))
 - Workflows can opt‑out of retrieval entirely
 - All retrieved snippets are visible in the note/output
 
 ---
 
-## 5. Roadmap Phases (Draft)
+## 5. Possible Phases
 
-### v0.2
-- Basic indexing of notes
-- Local search API for `ore:ai`
+An order, not a schedule:
 
-### v0.3
-- Index workflow outputs and selected artifacts
-- Retrieval filters (tags, folders, modified time)
-
-### v0.4
-- Optional local model embeddings (Ollama / LM Studio)
-- Per‑workflow retrieval settings
-
-### v0.5
-- Semantic diffing across workflow runs
-- Output‑aware intelligence (suggest changes based on deltas)
+1. Basic indexing of notes; a local search API for `ore:ai`
+2. Index workflow outputs and selected artifacts; retrieval filters (tags, folders, modified
+   time)
+3. Optional local model embeddings (Ollama / LM Studio); per-workflow retrieval settings
+4. Semantic diffing across workflow runs; suggestions based on what changed
 
 ---
 
