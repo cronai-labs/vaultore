@@ -8,7 +8,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import type { PlatformAdapter } from "../types";
+import { execContainer } from "../runtime";
+import type { PlatformAdapter, RuntimeEngine } from "../types";
 
 /** The engine the integration tests run on. colima unless overridden. */
 export const IT_ENGINE = process.env.VAULTORE_IT_ENGINE ?? "colima";
@@ -67,4 +68,36 @@ export function filesystemPlatform(
 		},
 		log: () => undefined,
 	};
+}
+
+/**
+ * Wait until a container sees `path` with exactly `expected` in it.
+ *
+ * On colima (QEMU, sshfs mount) a container can read a file the host has just
+ * rewritten with its old size: the new text cut off where the old text ended.
+ * Seen in the smart-inbox test after a container's write and a host edit:
+ * stale for 0.3-0.9 s of polling, and a fixed 1.5 s delay before the run was
+ * not enough. A test that edits a note between container cells waits here
+ * rather than guessing a delay.
+ */
+export async function waitForContainerView(
+	root: string,
+	path: string,
+	expected: string,
+	timeoutMs = 20_000
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	let seen = "";
+	while (Date.now() < deadline) {
+		const result = await execContainer(IT_ENGINE as RuntimeEngine, {
+			image: "alpine:3.19",
+			command: ["cat", `/workspace/${path}`],
+			mounts: [{ source: root, target: "/workspace", readonly: true }],
+		});
+		seen = result.stdout;
+		if (seen === expected) return;
+	}
+	throw new Error(
+		`a container still sees a different ${path} after ${timeoutMs}ms: ${JSON.stringify(seen)}`
+	);
 }
