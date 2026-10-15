@@ -1,110 +1,63 @@
 # VaultOre Documentation
 
-Welcome to the VaultOre documentation. This index helps you find what you need.
+Where to find what. The [README](../README.md) covers installing and using the plugin.
 
----
+## Specifications
 
-## 🚀 Getting Started
+What the code does, and what is planned, per topic. Each topic has one source; other
+documents link to it.
 
-- **[Quickstart: Plugin Development](quickstart-plugin-dev.md)** — Set up the development environment, build the plugin, and run your first workflow
-- **[Product Requirements Document (PRD)](PRD.md)** — Complete product vision, objectives, and technical architecture
-- **[Architecture Guide](../ARCHITECTURE.md)** — System design, monorepo structure, and implementation details
+| Document | Covers |
+|----------|--------|
+| [Workflow note spec](../specs/workflow-note-spec.md) | The workflow format: frontmatter, cells, templates, outputs, execution order |
+| [Permissions spec](../specs/permissions-spec.md) | Permissions, their defaults, the vault mounts, stored decisions |
+| [Sandbox spec](../specs/sandbox-spec.md) | Container engines and hardening today; a container-free tier proposed |
+| [CronAI handover spec](../specs/cronai-handover-spec.md) | The schedule manifest `vaultore schedules export` writes |
+| [Go cell spec](../specs/go-cell-spec.md) | `ore:go` cells: a design, not built |
 
----
+## Guides
 
-## 📋 Specifications
+| Document | Covers |
+|----------|--------|
+| [Plugin development quickstart](quickstart-plugin-dev.md) | Build the plugin, load it into a test vault, run a fixture |
+| [Testing fixtures](testing-fixtures.md) | The canonical workflows and how they are tested |
+| [Interoperability](interoperability.md) | The CLI and headless agent, OKF, the Obsidian CLI, Quarto, CronAI |
+| [Architecture](../ARCHITECTURE.md) | Packages, modules, how a run flows through the code |
+| [Contributing](../CONTRIBUTING.md) | Setup, conventions, pull requests, releases |
 
-Technical specifications that serve as TDD anchors:
+## Planning
 
-- **[Workflow Note Specification](../specs/workflow-note-spec.md)** — Format, syntax, and semantics of workflow notes
-- **[Permissions Specification](../specs/permissions-spec.md)** — Security model and permission system
-- **[Sandbox Specification](../specs/sandbox-spec.md)** — Execution tiers: containers today, WASM next
-- **[CronAI Handover Specification](../specs/cronai-handover-spec.md)** — Schedule manifest and cloud execution contract
-- **[Go Cell Specification](../specs/go-cell-spec.md)** — Go cell type (v0.3+, future work)
+| Document | Covers |
+|----------|--------|
+| [Roadmap](roadmap.md) | What exists, what is next, what is under consideration |
+| [Local intelligence](local-intelligence.md) | An exploration of local retrieval for AI cells; nothing of it is built |
 
----
-
-## 🧪 Testing & Development
-
-- **[Testing Fixtures](testing-fixtures.md)** — Canonical workflows as acceptance tests
-- **[Roadmap](roadmap.md)** — Version timeline and feature planning
-- **[Interoperability](interoperability.md)** — CLI, headless agent, OKF, Obsidian CLI, Quarto, CronAI
-- **[Local Intelligence (RAG) Strategy](local-intelligence.md)** — Local retrieval and AI augmentation
-
----
-
-## 📚 Reference
-
-### For Users (Coming Soon)
-
-- Getting Started Guide — End-user installation and usage
-- Workflow Guide — How to write and run workflows
-- API Reference — Vault API and runtime helpers
-
-### For Developers
-
-- [Architecture Guide](../ARCHITECTURE.md) — System design and module structure
-- [PRD](PRD.md) — Product requirements and technical decisions
-- [Quickstart: Plugin Development](quickstart-plugin-dev.md) — Development setup
-
----
-
-## 🗂️ Documentation Structure
+## Layout
 
 ```
 docs/
-├── index.md                    # This file
-├── quickstart-plugin-dev.md   # Development quickstart
-├── PRD.md                      # Product requirements
-├── roadmap.md                  # Version timeline
-├── local-intelligence.md       # Local RAG strategy
-└── testing-fixtures.md         # Canonical workflows guide
+├── index.md                  # this file
+├── interoperability.md
+├── local-intelligence.md
+├── quickstart-plugin-dev.md
+├── roadmap.md
+└── testing-fixtures.md
 
 specs/
-├── workflow-note-spec.md        # Workflow format spec
-├── permissions-spec.md          # Security model
-└── go-cell-spec.md             # Go cells (v0.3+)
+├── cronai-handover-spec.md
+├── go-cell-spec.md
+├── permissions-spec.md
+├── sandbox-spec.md
+└── workflow-note-spec.md
 
-fixtures/
-└── canonical/                  # Test workflows
-    ├── hello-world.md
-    ├── link-digest.md
-    ├── daily-summary.md
-    ├── smart-inbox.md
-    └── sys-snapshot.md
+fixtures/canonical/           # workflow notes that double as acceptance tests
+├── daily-summary.md
+├── hello-world.md
+├── link-digest.md
+├── smart-inbox.md
+└── sys-snapshot.md
 ```
 
----
-
-## 🎯 Quick Links by Role
-
-### I want to...
-
-| Goal | Document |
-|------|----------|
-| **Set up development** | [Quickstart: Plugin Development](quickstart-plugin-dev.md) |
-| **Understand the vision** | [PRD](PRD.md) |
-| **See the architecture** | [Architecture Guide](../ARCHITECTURE.md) |
-| **Write a workflow** | [Workflow Note Spec](../specs/workflow-note-spec.md) |
-| **Test the system** | [Testing Fixtures](testing-fixtures.md) |
-| **Plan local RAG** | [Local Intelligence Strategy](local-intelligence.md) |
-| **Plan features** | [Roadmap](roadmap.md) |
-| **Understand security** | [Permissions Spec](../specs/permissions-spec.md) |
-| **Add Go support** | [Go Cell Spec](../specs/go-cell-spec.md) (v0.3+) |
-
----
-
-## 📝 Contributing
-
-When adding documentation:
-
-1. **User-facing docs** → `docs/`
-2. **Technical specs** → `specs/`
-3. **Test workflows** → `fixtures/canonical/`
-4. **Architecture notes** → `ARCHITECTURE.md` (root)
-
-Follow the existing style and link back to this index.
-
----
-
-**Need help?** Open an [issue](https://github.com/cronai-labs/vaultore/issues) or start a [discussion](https://github.com/cronai-labs/vaultore/discussions).
+User-facing guides go in `docs/`, format and behaviour specifications in `specs/`, workflows
+used as tests in `fixtures/canonical/`. Questions and proposals:
+[issues](https://github.com/cronai-labs/vaultore/issues).

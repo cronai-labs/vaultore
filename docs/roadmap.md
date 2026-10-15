@@ -1,224 +1,111 @@
-# VaultOre Roadmap
-
-> **Last Updated:** 2026-01-10  
-> **Status:** Active Development
-
-This roadmap outlines VaultOre's evolution from MVP to a full-featured automation platform. Each version builds on the previous without breaking changes, following the "brick-by-brick" philosophy.
-
----
-
-## Version Timeline
-
-| Version | Theme | Timeline | Status |
-|---------|-------|----------|--------|
-| **v0.1** | MVP | Week 1 | 🚧 In Progress |
-| v0.2 | Notebooks That Don't Rot | Month 1-2 | 📋 Planned |
-| v0.3 | Go + Control Flow | Month 2-3 | 📋 Planned |
-| v0.4 | Automation | Month 3-4 | 📋 Planned |
-| v0.5 | Portability | Month 4-6 | 📋 Planned |
-
----
-
-## v0.1: MVP (Week 1)
-
-**Goal:** Core functionality to validate the platform with the Link Digest Pipeline.
-
-### Features
-
-| Feature | Description | Priority |
-|---------|-------------|----------|
-| Workflow Parser | Parse frontmatter and `ore:*` cells | P0 |
-| TypeScript Execution | Execute `ore:ts` in Bun container | P0 |
-| Shell Execution | Execute `ore:shell` in Alpine container | P0 |
-| AI Integration | `ore:ai` with OpenAI/Anthropic | P0 |
-| Output Persistence | ore-output callouts + JSON runs | P0 |
-| Run Controls | Run Cell, Run All commands | P0 |
-| Settings UI | API keys, runtime selection | P0 |
-| Basic Scheduling | Cron in frontmatter | P1 |
-
-### Success Criteria
-
-- ✅ Link Digest Pipeline runs end-to-end
-- ✅ All canonical fixtures pass
-- ✅ Setup success rate >80% with Docker
-- ✅ Zero crashes during normal use
-
-### Out of Scope (Explicitly)
-
-- ❌ Python runtime (`ore:py`) — v0.2
-- ❌ Go runtime (`ore:go`) — v0.3
-- ❌ Dependency graph auto-run — v0.2
-- ❌ Branching UI — v0.3
-- ❌ Visual workflow builder — v0.4+
-- ❌ Cloud execution — v0.4
-
----
-
-## v0.2: Notebooks That Don't Rot (Month 1-2)
-
-**Goal:** Make workflows efficient and maintainable over time.
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| **WASM Sandbox Tier** | QuickJS-in-WASM execution for `ore:ts` cells — no container runtime required ([sandbox spec](../specs/sandbox-spec.md)) |
-| `engine: auto` | Prefer a detected container engine, fall back to the WASM tier for TS-only workflows |
-| OKF Bundle Export | `okf export` command: assemble run outputs into an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundle with wikilink→markdown-link normalization and generated `index.md` ([interoperability](interoperability.md)) |
-| Handover Ownership | Local schedulers honor `.vaultore/handover.json` so CronAI-owned workflows are not double-scheduled ([handover spec](../specs/cronai-handover-spec.md)) |
-| Python Runtime | `ore:py` cell execution in Python container |
-| Dependency Graph | Cell dependency tracking and visualization |
-| Staleness Detection | Know which cells need re-run based on input changes |
-| "Run Affected" | Only run stale cells, skip up-to-date ones |
-| Warm Container Pool | Pre-started containers for near-instant execution |
-| Semantic Conditions | `when` attribute with `{{ai: condition}}` |
-| Workflow-Level `runIf` | Skip entire workflow if condition fails |
-| Implicit Parallel | Auto-parallelize independent cells |
-| Declarative Settings | Adopt Obsidian 1.13's `getSettingDefinitions()` API so settings appear in the app-wide settings search |
-
-### Key Improvements
-
-- **Zero-install tier:** TS-only workflows run without Docker via the WASM sandbox
-- **Performance:** Warm containers reduce startup time from ~100ms to <10ms
-- **Efficiency:** Staleness detection prevents unnecessary re-runs
-- **Intelligence:** Semantic conditions enable smart filtering
-
----
-
-## v0.3: Go + Control Flow (Month 2-3)
-
-**Goal:** Add compiled tools lane and explicit control flow.
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| Go Runtime | `ore:go` compiled cells with caching (TinyGo→WASI in-process lane under evaluation — see [sandbox spec](../specs/sandbox-spec.md)) |
-| Go Build Caching | Cache compiled binaries keyed on source + deps |
-| Control Blocks | Explicit `loop:`, `parallel:` blocks in frontmatter |
-| Loop Execution | Iterative refinement with `until` and `max` |
-| Loop Context | `{{loop.iteration}}`, `{{cell.previous}}` variables |
-| Branching Data Model | Fork workflow runs for exploration |
-| Branch UI | Visual branch management |
-| Branch Diff View | Compare outputs across branches |
-
-### Go Positioning
-
-**Go is not a replacement for TS/Bun** — it's a complementary "compiled tools" lane:
-
-- **TS/Bun:** Orchestration, interactive notebooks, rapid iteration
-- **Go:** Fast, cached steps for stable tooling (parsers, transforms, heavy compute)
-- **Python:** Data science, analytics, visualization
-
-**Best model:** TS orchestrates; Go accelerates stable hot-path steps.
-
-See [Go Cell Specification](../specs/go-cell-spec.md) for details.
-
----
-
-## v0.4: Automation (Month 3-4)
-
-**Goal:** True automation with cloud execution and event triggers.
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| CLI Runner | ✅ Implemented in v0.1 (`vaultore run` / `vaultore agent` in `@vaultore/cli`); npm distribution still pending |
-| CronAI Cloud Integration | Cloud execution for true background scheduling — handover contract already specified ([cronai-handover-spec](../specs/cronai-handover-spec.md)) and `vaultore schedules export` shipped |
-| Event Triggers | File change, webhook, email triggers |
-| Quarto Engine Extension | `quarto-vaultore` engine executing ore:* cells during `quarto render` (Quarto 1.9+ engine extension API, once stabilized upstream) |
-| Workflow Templates | Pre-built workflow recipes |
-| Workflow Gallery | Community-shared workflows |
-
-### CronAI Synergy
-
-| Tier | Price | Features |
-|------|-------|----------|
-| Free | $0 | Full local functionality |
-| Pro | $10-15/mo | Cloud execution, true scheduling |
-| Team | $25+/seat | Shared workflows, RBAC, audit |
-
----
-
-## v0.5: Portability (Month 4-6)
-
-**Goal:** Expand beyond Obsidian to other editors.
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| VS Code Extension | Same core, VS Code UI |
-| Zed Extension | Same core, Zed UI |
-| Language Server Protocol | Syntax highlighting, completion, validation |
-| Workflow Hub | Community workflow exchange |
-
-### Core-First Architecture
-
-All editor integrations use the same `@vaultore/core`:
-
-```
-@vaultore/core (editor-agnostic)
-    ├── @vaultore/obsidian (Obsidian plugin)
-    ├── @vaultore/vscode (VS Code extension)
-    ├── @vaultore/zed (Zed extension)
-    └── @vaultore/cli (Standalone CLI)
-```
-
----
-
-## Control Flow Evolution
-
-VaultOre follows a "brick-by-brick" approach to control flow:
-
-| Version | Control Flow | Breaking Changes |
-|---------|--------------|------------------|
-| v0.1 | `depends[]` only | — |
-| v0.2 | `depends[]` + implicit parallel + `when` conditions | None |
-| v0.3 | `depends[]` + `control:` blocks (loop, parallel) | None (additive) |
-
-**Key principle:** Each feature adds capability without requiring rewrites.
-
----
-
-## Future Considerations (Post-v0.5)
-
-- **WASM Compilation:** Compile Go cells to WASM for browser execution
-- **Distributed Cache:** Shared build cache across team/cloud
-- **Workflow Versioning:** Git-like branching for workflow evolution
-- **Visual Editor:** Drag-and-drop workflow builder (optional)
-- **Mobile Support:** Limited execution on mobile (likely not feasible due to Docker requirement)
-
----
-
-## Success Metrics
-
-### MVP (v0.1)
-
-- Functional completeness: 100% of MVP features
-- Link Digest pipeline: Works end-to-end
-- Setup success rate: >80% with Docker
-- Crash rate: 0 during normal use
-
-### 6-Month (v0.5)
-
-- GitHub stars: 1,000+
-- Community plugins list: Listed
-- Community workflows: 10+ contributed
-- Discord activity: 100+ weekly active
-- CronAI integration: Beta users
-
----
-
-## Contributing to the Roadmap
-
-The roadmap is a living document. To propose changes:
-
-1. Open a [discussion](https://github.com/cronai-labs/vaultore/discussions) with the `roadmap` tag
-2. Reference this document
-3. Explain the rationale and impact
-
----
-
-**Questions?** See the [PRD](PRD.md) for detailed requirements or open an [issue](https://github.com/cronai-labs/vaultore/issues).
+# Roadmap
+
+What VaultOre does today, what is being worked on next, and what is under consideration.
+This is the one place the roadmap lives; other documents link here. It carries no dates:
+an item moves when its issue moves.
+
+## What exists now
+
+Everything in this section is in the code on `main`. The specs describe each part in detail.
+
+**Workflow notes** ([workflow note spec](../specs/workflow-note-spec.md))
+
+- A note with `ore: true` in its frontmatter is a workflow. Cells are fenced blocks:
+  `ore:ts` (TypeScript on Bun), `ore:shell` (`sh`) and `ore:ai` (one completion).
+- `depends=[…]` orders cells; `cell("id")` reads an upstream output in a TS cell;
+  `{{cellId}}` and `{{note:path}}` interpolate into AI prompts.
+- `vault.read`, `vault.write`, `vault.exists`, `vault.mkdirp` and `vault.readRaw` inside TS
+  cells.
+
+**Execution** ([sandbox spec](../specs/sandbox-spec.md))
+
+- Every TS and shell cell runs in its own container, on Docker, Podman, Colima, or Apple
+  `container` on macOS. Engine detection checks exit codes and times out.
+- Containers run hardened: read-only root filesystem, no capabilities, non-root user, network
+  off unless granted; Docker, Podman and Colima also get `no-new-privileges` and a process limit.
+- There is no fallback to running code on the host.
+
+**Permissions** ([permissions spec](../specs/permissions-spec.md))
+
+- `network`, `vaultRead` and `vaultWrite` per workflow, enforced at the container: no vault
+  mount, the run directory only, the vault read-only, or the vault read-write. `.obsidian/` is
+  hidden from cells.
+- A decision for `ask` is bound to the note's frontmatter and cells, and asked again when
+  either changes.
+
+**AI**
+
+- OpenAI and Anthropic, with the user's own API key, held in Obsidian's secret storage (the
+  plugin) or the environment (the CLI). A model that belongs to the other provider fails the
+  cell before anything is sent.
+
+**Outputs**
+
+- An `ore-output` callout under each cell; a JSON record and a Markdown view per cell under
+  the output folder (default `_vaultore`); a `run.json` per run. Output views and artifact
+  indexes are [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+  v0.2 concepts.
+
+**Scheduling**
+
+- A cron `schedule:` in frontmatter. In the plugin nothing runs on a schedule until the user
+  turns on "Run scheduled workflows" and approves each note's exact schedule.
+
+**CLI** ([interoperability](interoperability.md))
+
+- `vaultore run`, `list`, `agent` (a headless scheduler) and `schedules export` (the
+  [CronAI handover manifest](../specs/cronai-handover-spec.md)). Built from source; not on npm.
+
+**Release path**
+
+- One `ci-required` check over policy, commitlint, build, tests, lint, container integration
+  tests and a reproducible-build check; tag-driven, immutable, attested GitHub releases
+  ([CONTRIBUTING](../CONTRIBUTING.md#release-process)).
+
+## Next
+
+Open issues that are planned work:
+
+- [#83](https://github.com/cronai-labs/vaultore/issues/83): Colima with sshfs file sharing
+  can serve a container a stale copy of a note; a read-modify-write cell can truncate it.
+- [#45](https://github.com/cronai-labs/vaultore/issues/45): parser and executor defects:
+  output written under a cell whose id is a prefix of another, a non-numeric `timeout=`
+  disabling the timeout, dependency cycles running silently in document order, output file
+  name collisions, an unbounded run index.
+- [#28](https://github.com/cronai-labs/vaultore/issues/28): a `deny` the CLI stored without
+  `--yes` sticks until the note changes; global permission caps.
+- [#47](https://github.com/cronai-labs/vaultore/issues/47): one-command install into a vault,
+  and a demo vault.
+- [#82](https://github.com/cronai-labs/vaultore/issues/82),
+  [#84](https://github.com/cronai-labs/vaultore/issues/84): lint core and the CLI with the
+  Obsidian review config; typecheck the test files.
+- [#42](https://github.com/cronai-labs/vaultore/issues/42): repository baseline (task
+  runner, MegaLinter, secret scanning, licence checks).
+
+## Under consideration
+
+Designed in part or proposed, not committed to. Each item names where its design lives.
+
+- **Conditions and structured outputs**: `runIf`, `when=`, `{{cell.field}}` and JSON-mode AI
+  cells, which the full smart-inbox needs
+  ([#80](https://github.com/cronai-labs/vaultore/issues/80); the
+  [workflow note spec](../specs/workflow-note-spec.md#planned), "Planned").
+- **Dynamic note references** from an upstream cell, behind an explicit opt-in
+  ([#71](https://github.com/cronai-labs/vaultore/issues/71)).
+- **Choosing what a permission grant is bound to**
+  ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
+- **A container-free tier** for `ore:ts` cells (QuickJS in WebAssembly), and WASI components
+  for compiled cells ([sandbox spec](../specs/sandbox-spec.md), Tiers 2 and 3).
+- **More cell types**: `ore:py`, and `ore:go` with build caching
+  ([Go cell spec](../specs/go-cell-spec.md)).
+- **Parallel cells and a warm container pool**
+  ([architecture](../ARCHITECTURE.md#parallel-execution-not-built)).
+- **CronAI cloud execution**: the cloud side of the
+  [handover spec](../specs/cronai-handover-spec.md), and local schedulers honouring
+  `.vaultore/handover.json`.
+- **OKF bundle export** and an OKF ingestion helper ([interoperability](interoperability.md)).
+- **Local retrieval** for AI cells ([local intelligence](local-intelligence.md)).
+- **Other surfaces**: a Quarto engine extension; editor extensions beyond Obsidian.
+
+To propose an item or discuss one, open an
+[issue](https://github.com/cronai-labs/vaultore/issues).

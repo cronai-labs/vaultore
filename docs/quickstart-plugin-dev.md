@@ -336,4 +336,4 @@ bun run test:canonical
 
 ---
 
-**Ready to build?** Start with the [Architecture Guide](ARCHITECTURE.md) or dive into the [PRD](PRD.md) for the full vision.
+**Ready to build?** Start with the [Architecture Guide](../ARCHITECTURE.md); the [roadmap](roadmap.md) says what is planned.

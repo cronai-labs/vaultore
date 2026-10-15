@@ -6,8 +6,8 @@
 
 ## Motivation
 
-The container requirement is VaultOre's biggest setup barrier (see PRD risk
-matrix: "Docker not installed — High likelihood, High impact"). A tiered
+Needing a container engine is VaultOre's biggest setup barrier: a user without
+Docker, Podman, Colima or Apple `container` cannot run any cell. A tiered
 sandbox strategy keeps the strong isolation of containers where available
 while adding a zero-install execution tier so `ore:ts` workflows can run on
 any machine Obsidian runs on.
