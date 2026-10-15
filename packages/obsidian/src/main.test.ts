@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---- Core module mock (before importing main) ----
-vi.mock("@vaultore/core", () => ({
+vi.mock("@vaultore/core", async (importOriginal) => ({
+  // The real defaults: the plugin must not carry its own copy (#78).
+  DEFAULT_MODELS: (await importOriginal<typeof import("@vaultore/core")>()).DEFAULT_MODELS,
+  DEFAULT_PROVIDER: (await importOriginal<typeof import("@vaultore/core")>()).DEFAULT_PROVIDER,
   WorkflowExecutor: class {
     runWorkflow = vi.fn().mockResolvedValue({});
   },
@@ -24,6 +27,7 @@ vi.mock("@vaultore/core", () => ({
 // Import the plugin — obsidian is aliased via vitest.config.ts
 const { default: VaultOrePlugin } = await import("./main");
 const { requestUrl } = await import("obsidian");
+const { DEFAULT_MODELS, DEFAULT_PROVIDER } = await import("@vaultore/core");
 
 describe("VaultOrePlugin", () => {
   let plugin: InstanceType<typeof VaultOrePlugin>;
@@ -70,6 +74,9 @@ describe("VaultOrePlugin", () => {
     it("loads with defaults when no saved data", () => {
       expect(plugin.settings.defaultProvider).toBe("openai");
       expect(plugin.settings.defaultModel).toBe("gpt-5-mini");
+      // ...and those are core's defaults, not a second copy.
+      expect(plugin.settings.defaultProvider).toBe(DEFAULT_PROVIDER);
+      expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS[DEFAULT_PROVIDER]);
       expect(plugin.settings.runtimeEngine).toBe("docker");
       expect(plugin.settings.enableWarmPool).toBe(false);
       expect(plugin.settings.outputRoot).toBe("_vaultore");

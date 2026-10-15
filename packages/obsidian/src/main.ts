@@ -10,7 +10,13 @@ import {
   SecretComponent,
   requestUrl,
 } from "obsidian";
-import { WorkflowExecutor, WorkflowParser, WorkflowScheduler } from "@vaultore/core";
+import {
+  DEFAULT_MODELS,
+  DEFAULT_PROVIDER,
+  WorkflowExecutor,
+  WorkflowParser,
+  WorkflowScheduler,
+} from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
 
 interface VaultOreSettings {
@@ -26,8 +32,8 @@ interface VaultOreSettings {
 }
 
 const DEFAULT_SETTINGS: VaultOreSettings = {
-  defaultProvider: "openai",
-  defaultModel: "gpt-5-mini",
+  defaultProvider: DEFAULT_PROVIDER,
+  defaultModel: DEFAULT_MODELS[DEFAULT_PROVIDER],
   aiMaxTokens: 800,
   aiTimeoutSeconds: 120,
   runtimeEngine: "docker",
@@ -650,7 +656,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
         text.setValue(this.plugin.settings.defaultModel);
         text.onChange(async (value) => {
           this.plugin.settings.defaultModel =
-            value.trim() || DEFAULT_SETTINGS.defaultModel;
+            value.trim() || DEFAULT_MODELS[this.plugin.settings.defaultProvider];
           await this.plugin.saveSettings();
         });
       });

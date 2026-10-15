@@ -107,7 +107,17 @@ export { detectRuntimes, execContainer } from "./runtime";
 // PROVIDERS
 // =============================================================================
 
-export { createProviderFromSettings, fetchRequest } from "./providers";
+export {
+  createProviderFromSettings,
+  fetchRequest,
+  assertModelMatchesProvider,
+  resolveProviderName,
+  AI_PROVIDERS,
+  DEFAULT_MODELS,
+  DEFAULT_PROVIDER,
+} from "./providers";
+
+export type { AIProviderName } from "./providers";
 
 // =============================================================================
 // SCHEDULER

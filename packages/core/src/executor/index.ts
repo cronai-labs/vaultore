@@ -26,7 +26,12 @@ import {
   stripLeading,
   stripTrailing,
 } from "../parser";
-import { createProviderFromSettings } from "../providers";
+import {
+  DEFAULT_MODELS,
+  assertModelMatchesProvider,
+  createProviderFromSettings,
+  resolveProviderName,
+} from "../providers";
 import { renderArtifactIndex, renderOutputMarkdown } from "./output-note";
 import { parse } from "@babel/parser";
 
@@ -1007,13 +1012,16 @@ async function executeAICell(
     throw new Error("AI cells require network permission");
   }
 
+  const providerName = resolveProviderName(
+    platform.getSetting<string>("vaultore.defaultProvider")
+  );
   const model =
     cell.attributes.model ??
     platform.getSetting<string>("vaultore.defaultModel") ??
-    "gpt-4o-mini";
-
-  const providerName =
-    platform.getSetting<string>("vaultore.defaultProvider") ?? "openai";
+    DEFAULT_MODELS[providerName];
+  // Before anything is read or sent: a model the provider cannot serve fails
+  // here with the fix, not as a provider 4xx after the prompt went out.
+  assertModelMatchesProvider(providerName, model);
 
   const provider = await createProviderFromSettings(platform, providerName);
   const temperature =

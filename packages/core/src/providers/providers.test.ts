@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlatformAdapter } from "../types";
 import {
+	AI_PROVIDERS,
 	DEFAULT_AI_TIMEOUT_SECONDS,
+	DEFAULT_MODELS,
+	DEFAULT_PROVIDER,
+	assertModelMatchesProvider,
 	createAnthropicProvider,
 	createOpenAIProvider,
+	resolveProviderName,
 } from "./index";
 
 /** Minimal adapter: these tests only exercise secrets, settings and fetch. */
@@ -242,5 +247,61 @@ describe("requests through the platform adapter", () => {
 		await expect(
 			createOpenAIProvider(platform).complete({ model: "gpt-5-mini", prompt: "hi" })
 		).rejects.toThrow(/OpenAI request for model "gpt-5-mini" timed out after 0.05s/);
+	});
+});
+
+// =============================================================================
+// MODEL ↔ PROVIDER (#78)
+// =============================================================================
+
+describe("model and provider resolution", () => {
+	it("defines exactly one default model per provider", () => {
+		expect(Object.keys(DEFAULT_MODELS).sort()).toEqual([...AI_PROVIDERS].sort());
+		expect(DEFAULT_MODELS.openai).toBe("gpt-5-mini");
+		expect(DEFAULT_MODELS.anthropic).toMatch(/^claude-/);
+		expect(AI_PROVIDERS).toContain(DEFAULT_PROVIDER);
+	});
+
+	it("each default model passes its own provider's check", () => {
+		for (const provider of AI_PROVIDERS) {
+			expect(() => assertModelMatchesProvider(provider, DEFAULT_MODELS[provider])).not.toThrow();
+		}
+	});
+
+	it.each([
+		["openai", "claude-sonnet-4-20250514"],
+		["openai", "Claude-Haiku-4-5"],
+		["anthropic", "gpt-5-mini"],
+		["anthropic", "o1-preview"],
+		["anthropic", "o3-mini"],
+		["anthropic", "o4-mini"],
+	] as const)("rejects %s with model %s, naming both and the fix", (provider, model) => {
+		const other = provider === "openai" ? "Anthropic" : "OpenAI";
+		const own = provider === "openai" ? "OpenAI" : "Anthropic";
+		expect(() => assertModelMatchesProvider(provider, model)).toThrow(
+			new RegExp(
+				`Model "${model}" is an ${other} model, but the configured provider is ${own}.*defaultProvider`,
+				"s"
+			)
+		);
+	});
+
+	it.each([
+		["openai", "gpt-5-mini"],
+		["openai", "o3-mini"],
+		["anthropic", "claude-haiku-4-5"],
+		// Ids that belong to neither are the provider's to judge, not ours.
+		["openai", "my-fine-tune"],
+		["anthropic", "my-proxy-model"],
+	] as const)("accepts %s with model %s", (provider, model) => {
+		expect(() => assertModelMatchesProvider(provider, model)).not.toThrow();
+	});
+
+	it("resolves an unknown provider name to an error, not to OpenAI", () => {
+		expect(() => resolveProviderName("gemini")).toThrow(
+			/Unknown AI provider "gemini".*openai, anthropic/
+		);
+		expect(resolveProviderName(undefined)).toBe(DEFAULT_PROVIDER);
+		expect(resolveProviderName("anthropic")).toBe("anthropic");
 	});
 });
