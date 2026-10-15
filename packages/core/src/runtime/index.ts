@@ -131,16 +131,13 @@ export function buildRunCommand(
 
   if (!options.networkEnabled) {
     if (engine === "apple") {
-      // Apple's container CLI has no --network=none equivalent yet; every
-      // container gets its own network interface. Fail closed rather than
-      // silently running a network-denied workflow with network access.
-      throw new Error(
-        "Apple container does not support disabling network access yet. " +
-          "Use Docker or Podman for workflows with 'network: deny', or set " +
-          "'permissions.network: allow' in the workflow frontmatter."
-      );
+      // `--network none` attaches no network at all (apple/container #739,
+      // since 0.6). Never an `--internal` network: those still allow
+      // outbound TCP (apple/container #2062).
+      args.push("--network", "none");
+    } else {
+      args.push("--network=none");
     }
-    args.push("--network=none");
   }
 
   if (options.stdin) {

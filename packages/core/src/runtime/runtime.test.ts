@@ -47,13 +47,22 @@ describe("buildRunCommand", () => {
 
     expect(command).toBe("container");
     expect(args).not.toContain("--network=none");
+    expect(args).not.toContain("--network");
     expect(args).toContain("--rm");
   });
 
-  it("fails closed for apple engine when network must be denied", () => {
-    expect(() => buildRunCommand("apple", baseOptions)).toThrow(
-      /does not support disabling network/
-    );
+  it("detaches apple containers from every network when network is denied", () => {
+    const { command, args } = buildRunCommand("apple", baseOptions);
+
+    expect(command).toBe("container");
+    // `--network none` (apple/container #739): no network attachment at all.
+    // Never an `--internal` network: those still allow outbound TCP
+    // (apple/container #2062).
+    const at = args.indexOf("--network");
+    expect(at).toBeGreaterThan(-1);
+    expect(args[at + 1]).toBe("none");
+    expect(args.filter((arg) => arg.startsWith("--network"))).toHaveLength(1);
+    expect(args.join(" ")).not.toContain("internal");
   });
 
   it("omits --network=none when network is enabled", () => {

@@ -49,7 +49,7 @@ export const DEFAULT_PERMISSIONS: WorkflowPermissions = {
  * - docker/podman: standard OCI runtimes (Linux, macOS, Windows via WSL2)
  * - colima: docker-compatible runtime on macOS (uses the docker CLI)
  * - apple: Apple's `container` CLI (macOS 26+, Apple silicon) — runs each
- *   container in a lightweight VM; network isolation not yet supported
+ *   container in a lightweight VM; `network: deny` maps to `--network none`
  */
 export type RuntimeEngine = "docker" | "podman" | "colima" | "apple";
 

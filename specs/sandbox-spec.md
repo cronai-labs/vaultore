@@ -14,8 +14,7 @@ any machine Obsidian runs on.
 
 Every tier must preserve the same security contract: **cells never get a
 capability the workflow's permissions did not grant.** When a tier cannot
-enforce a permission, execution fails closed with a clear error (see the
-Apple container network rule below).
+enforce a permission, execution fails closed with a clear error.
 
 ## Tier Model
 
@@ -34,7 +33,7 @@ provide `sh` (shell cells run `sh -lc`) and, for `ore:ts`, `bun`.
 | Docker | all | namespaces / VM | `--network=none` | Reference engine |
 | Podman | all | namespaces / VM | `--network=none` | Rootless supported |
 | Colima | macOS | VM | `--network=none` | Uses the docker CLI |
-| Apple `container` | macOS 26+, Apple silicon | per-container micro-VM | **unsupported** | CLI 1.0 (June 2026); each container boots its own VM with its own IP. No `--network=none` equivalent yet, so VaultOre **fails closed**: workflows with `network: deny` refuse to run on this engine until upstream support lands. |
+| Apple `container` | macOS 26+, Apple silicon | per-container micro-VM | `--network none` | Each container boots its own VM. `--network none` (apple/container #739, CLI 0.6.0+) attaches no network. VaultOre never uses an `--internal` network for this: those still allow outbound TCP (apple/container #2062). Probed only on macOS. |
 
 Windows guidance: Docker Desktop (WSL2 backend), Docker Engine installed
 inside a WSL2 distro, or Podman. Microsoft's native WSL containers (`wslc`,
@@ -118,7 +117,7 @@ Pyodide-in-Electron packaging need prototyping before committing to a version.
 
 | Permission | Tier 1 (containers) | Tier 2 (wasm) |
 |------------|--------------------|----------------|
-| `network: deny` | `--network=none` (error on Apple engine) | No fetch injected (default) |
+| `network: deny` | `--network=none` (Apple: `--network none`) | No fetch injected (default) |
 | `network: allow` | No network flag | Gated `fetch` host function |
 | `vaultRead: deny` | No vault mount | Host-side check per call |
 | `vaultWrite: allow` | Vault mounted RW; without `vaultRead`, only the run directory | Host-side check per call |
@@ -134,8 +133,9 @@ Pyodide-in-Electron packaging need prototyping before committing to a version.
 3. **Streaming output** — QuickJS host calls are synchronous by default;
    async host functions (asyncify builds) cost performance. Evaluate
    `quickjs-emscripten` asyncify variants for the `fetch` bridge.
-4. **Apple network isolation** — track upstream `apple/container` for a
-   vmnet isolation mode to lift the fail-closed restriction.
+4. **Apple network isolation** — resolved: `--network none` shipped in
+   apple/container 0.6.0 (#739). `--internal` networks stay unusable for
+   isolation until apple/container #2062 is fixed.
 
 ## Rollout Plan
 
