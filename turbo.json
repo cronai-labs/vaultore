@@ -24,6 +24,7 @@
       "env": ["DOCKER_HOST"]
     },
     "lint": {
+      "dependsOn": ["^build"],
       "outputs": []
     },
     "typecheck": {
