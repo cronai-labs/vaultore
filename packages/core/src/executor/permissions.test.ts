@@ -29,8 +29,11 @@ ${body}
 `;
 }
 
-/** In-memory vault and settings store. */
-function vault(files: Record<string, string>) {
+/**
+ * In-memory vault and settings store. `links` stands in for symbolic links:
+ * resolveInVault refuses a path mapped to an Error.
+ */
+function vault(files: Record<string, string>, links: Record<string, Error> = {}) {
 	const settings = new Map<string, unknown>();
 	const reads: string[] = [];
 	const platform = {
@@ -48,6 +51,11 @@ function vault(files: Record<string, string>) {
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
 		getVaultRoot: async () => "/vault",
+		resolveInVault: async (path: string) => {
+			const refused = links[path];
+			if (refused) throw refused;
+			return path;
+		},
 		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
 			settings.set(key, value);
@@ -81,8 +89,12 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-async function run(content: string, files: Record<string, string> = {}) {
-	const v = vault({ "Private/secret.md": SECRET, "wf.md": content, ...files });
+async function run(
+	content: string,
+	files: Record<string, string> = {},
+	links: Record<string, Error> = {}
+) {
+	const v = vault({ "Private/secret.md": SECRET, "wf.md": content, ...files }, links);
 	const workflow = await new WorkflowExecutor().runWorkflow({
 		platform: v.platform,
 		workflowPath: "wf.md",
@@ -147,6 +159,24 @@ describe("{{note:}} in AI cells (#67)", () => {
 		expect(workflow.outputs.get("summary")?.meta.status).toBe("success");
 		expect(requests).toHaveLength(1);
 		expect(requests[0]).toContain(SECRET);
+	});
+
+	it("fails the cell when the note leads outside the vault through a symlink, and sends nothing", async () => {
+		const { workflow, reads } = await run(
+			note(
+				"  network: allow\n  vaultRead: allow",
+				"```ore:ai id=summary\nSummarise: {{note:notes/x/id_rsa}}\n```"
+			),
+			{ "notes/x/id_rsa": "a private key" },
+			{ "notes/x/id_rsa": new Error("notes/x/id_rsa leads outside the vault through the symbolic link notes/x; refused") }
+		);
+
+		const output = workflow.outputs.get("summary");
+		expect(output?.meta.status).toBe("error");
+		expect(String(output?.value)).toContain("{{note:notes/x/id_rsa}}");
+		expect(String(output?.value)).toContain("outside the vault");
+		expect(reads).not.toContain("notes/x/id_rsa");
+		expect(requests).toEqual([]);
 	});
 
 	it("fails the cell when a referenced note does not exist", async () => {

@@ -68,12 +68,18 @@ permissions:
 `;
 }
 
-/** In-memory vault recording the order of writes outside the run directory. */
-function vault(files: Record<string, string>) {
+/**
+ * In-memory vault recording the order of writes outside the run directory and
+ * every path read. `links` stands in for symbolic links: resolveInVault maps a
+ * path to where it really leads, or refuses it with the Error given.
+ */
+function vault(files: Record<string, string>, links: Record<string, string | Error> = {}) {
 	const written: string[] = [];
+	const reads: string[] = [];
 	const platform = {
 		platform: "cli",
 		readFile: async (path: string) => {
+			reads.push(path);
 			if (!(path in files)) throw new Error(`File not found: ${path}`);
 			return files[path] as string;
 		},
@@ -86,6 +92,11 @@ function vault(files: Record<string, string>) {
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
 		getVaultRoot: async () => "/vault",
+		resolveInVault: async (path: string) => {
+			const link = links[path];
+			if (link instanceof Error) throw link;
+			return link ?? path;
+		},
 		getSetting: () => undefined,
 		setSetting: async () => undefined,
 		getSecret: async () => undefined,
@@ -93,12 +104,17 @@ function vault(files: Record<string, string>) {
 		deleteSecret: async () => undefined,
 		log: () => undefined,
 	} as unknown as PlatformAdapter;
-	return { platform, files, written };
+	return { platform, files, written, reads };
 }
 
-async function run(files: Record<string, string>, read = "allow", write = "allow") {
+async function run(
+	files: Record<string, string>,
+	read = "allow",
+	write = "allow",
+	links: Record<string, string | Error> = {}
+) {
 	const content = note(read, write);
-	const v = vault({ "wf.md": content, ...files });
+	const v = vault({ "wf.md": content, ...files }, links);
 	const workflow = await new WorkflowExecutor().runWorkflow({
 		platform: v.platform,
 		workflowPath: "wf.md",
@@ -361,5 +377,149 @@ describe("the host enforces what vault.write may touch", () => {
 
 		expect(r.status).toBe("error");
 		expect(Object.keys(r.files).some((path) => path.includes("other"))).toBe(false);
+	});
+});
+
+describe("symbolic links a cell may have planted", () => {
+	const outside = (path: string) =>
+		new Error(`${path} leads outside the vault through the symbolic link notes/x; refused`);
+
+	it("refuses a write whose path leads outside the vault, and applies none of the cell's writes", async () => {
+		container(() =>
+			stdout([
+				{ path: "fine.md", content: "x", base: null },
+				{ path: "notes/x/authorized_keys", content: "ssh-ed25519 AAAA", base: null },
+			])
+		);
+
+		const r = await run({}, "allow", "allow", { "notes/x/authorized_keys": outside("notes/x/authorized_keys") });
+
+		expect(r.status).toBe("error");
+		expect(String(r.value)).toContain("notes/x/authorized_keys leads outside the vault");
+		expect(r.written).toEqual([]);
+	});
+
+	it("does not read a note through such a link to compare it", async () => {
+		container(() =>
+			stdout([{ path: "notes/x/id_rsa", content: "x", base: { sha256: sha("guess") } }])
+		);
+
+		const r = await run({ "notes/x/id_rsa": "a private key" }, "allow", "allow", {
+			"notes/x/id_rsa": outside("notes/x/id_rsa"),
+		});
+
+		expect(r.status).toBe("error");
+		expect(r.reads).not.toContain("notes/x/id_rsa");
+		expect(r.files["notes/x/id_rsa"]).toBe("a private key");
+	});
+
+	it("refuses a write that an in-vault link leads into .obsidian/", async () => {
+		container(() => stdout([{ path: "notes/cfg/main.js", content: "x", base: null }]));
+
+		const r = await run({}, "allow", "allow", {
+			"notes/cfg/main.js": ".obsidian/plugins/vaultore/main.js",
+		});
+
+		expect(r.status).toBe("error");
+		expect(String(r.value)).toMatch(/\.obsidian/);
+		expect(r.written).toEqual([]);
+	});
+
+	it("writes through an in-vault link to the real path", async () => {
+		container(() => stdout([{ path: "notes/alias/new.md", content: "x", base: null }]));
+
+		const r = await run({}, "allow", "allow", { "notes/alias/new.md": "real/new.md" });
+
+		expect(r.status).toBe("success");
+		expect(r.written).toEqual(["real/new.md"]);
+	});
+
+	it("refuses two writes that lead to the same note", async () => {
+		container(() =>
+			stdout([
+				{ path: "real/a.md", content: "1", base: null },
+				{ path: "notes/alias/a.md", content: "2", base: null },
+			])
+		);
+
+		const r = await run({}, "allow", "allow", { "notes/alias/a.md": "real/a.md" });
+
+		expect(r.status).toBe("error");
+		expect(String(r.value)).toContain("notes/alias/a.md is real/a.md");
+		expect(r.written).toEqual([]);
+	});
+
+	it("without vaultRead, refuses a link in the run directory that leads elsewhere in the vault", async () => {
+		let runDir = "";
+		container((opts) => {
+			runDir = String(opts.env?.VAULTORE_RUN_DIR);
+			return stdout([{ path: `${runDir}/up/note.md`, content: "x", base: null }]);
+		});
+		const v = vault({ "wf.md": note("deny", "allow") });
+		// The link's real target is only known once the run directory is.
+		const resolveInVault = v.platform.resolveInVault.bind(v.platform);
+		v.platform.resolveInVault = async (path: string) =>
+			path === `${runDir}/up/note.md` ? "Private/note.md" : resolveInVault(path);
+
+		const workflow = await new WorkflowExecutor().runWorkflow({
+			platform: v.platform,
+			workflowPath: "wf.md",
+			content: note("deny", "allow"),
+		});
+
+		const output = workflow.outputs.get("c");
+		expect(output?.meta.status).toBe("error");
+		expect(String(output?.value)).toContain("outside this run's directory");
+		expect(v.files["Private/note.md"]).toBeUndefined();
+	});
+
+	it("skips a recorded output whose path leads outside the vault, and says so", async () => {
+		container(() => stdout([]));
+		const logs: string[] = [];
+		const content = `${note("allow", "allow")}
+> [!ore-output] old
+> json: [[notes/x/secrets.json]]
+`;
+		const v = vault({ "wf.md": content, "notes/x/secrets.json": '{"cellId":"old","meta":{"status":"success"},"value":"secret"}' }, {
+			"notes/x/secrets.json": outside("notes/x/secrets.json"),
+		});
+		(v.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
+
+		const workflow = await new WorkflowExecutor().runWorkflow({
+			platform: v.platform,
+			workflowPath: "wf.md",
+			content,
+		});
+
+		expect(workflow.outputs.has("old")).toBe(false);
+		expect(v.reads).not.toContain("notes/x/secrets.json");
+		expect(logs.join("\n")).toContain("notes/x/secrets.json leads outside the vault");
+	});
+
+	it("does not run a workflow whose note is a link", async () => {
+		container(() => stdout([]));
+		const content = note("allow", "allow");
+		const v = vault({ "wf.md": content }, {
+			"wf.md": new Error("wf.md is a symbolic link; VaultOre does not read or write through one"),
+		});
+
+		await expect(
+			new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content })
+		).rejects.toThrow(/wf\.md is a symbolic link/);
+		expect(v.files["wf.md"]).toBe(content);
+		expect(vi.mocked(execContainer)).not.toHaveBeenCalled();
+	});
+
+	it("refuses to run on a platform that cannot resolve vault paths", async () => {
+		container(() => stdout([{ path: "out.md", content: "x", base: null }]));
+		const content = note("allow", "allow");
+		const v = vault({ "wf.md": content });
+		delete (v.platform as { resolveInVault?: unknown }).resolveInVault;
+
+		await expect(
+			new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content })
+		).rejects.toThrow(/no resolveInVault/);
+		expect(v.files["out.md"]).toBeUndefined();
+		expect(vi.mocked(execContainer)).not.toHaveBeenCalled();
 	});
 });

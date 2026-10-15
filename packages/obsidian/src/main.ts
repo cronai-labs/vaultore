@@ -18,6 +18,7 @@ import {
   WorkflowScheduler,
   computeNextRun,
   isWorkflowFrontmatter,
+  resolveInVaultRoot,
 } from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
 
@@ -189,6 +190,14 @@ class ObsidianAdapter implements PlatformAdapter {
       return adapter.getBasePath();
     }
     throw new Error("VaultOre requires a vault with file system access (desktop only)");
+  }
+
+  // On the file system, not through Obsidian's index: what matters is where
+  // the host's write would land, and a cell can plant a link Obsidian has not
+  // indexed yet. Without file system access there is nothing to check
+  // against, so getVaultRoot throws and nothing is read or written.
+  async resolveInVault(path: string): Promise<string> {
+    return resolveInVaultRoot(await this.getVaultRoot(), this.normalizePath(path));
   }
 
   getSetting<T>(key: string): T | undefined {

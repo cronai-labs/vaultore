@@ -20,7 +20,7 @@
 import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fetchRequest } from "@vaultore/core";
+import { fetchRequest, resolveInVaultRoot } from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
 
 const SKIP_DIRS = new Set([".git", ".obsidian", ".trash", "node_modules"]);
@@ -97,6 +97,10 @@ export class NodeAdapter implements PlatformAdapter {
 
 	async getVaultRoot(): Promise<string> {
 		return this.vaultRoot;
+	}
+
+	resolveInVault(path: string): Promise<string> {
+		return resolveInVaultRoot(this.vaultRoot, path);
 	}
 
 	// ── Settings ──────────────────────────────────────────────────────────

@@ -55,7 +55,11 @@ export class WorkflowExecutor {
 
   async runWorkflow(options: ExecuteOptions): Promise<Workflow> {
     const workflow = this.parser.parse(options.content, options.workflowPath);
-    const runContext = await createRunContext(options.platform, workflow.path);
+    const platform = confinedPlatform(options.platform);
+    // Before any cell runs: the output is written back into this note, which
+    // is refused when its path leads out of the vault through a link.
+    await platform.resolveInVault(workflow.path);
+    const runContext = await createRunContext(platform, workflow.path);
 
     const outputs = new Map<string, CellOutput>(workflow.outputs);
     let updatedContent = workflow.rawContent;
@@ -71,7 +75,7 @@ export class WorkflowExecutor {
     // just wrote stuck at "running" forever.
     try {
       const permissions = await resolvePermissions(
-        options.platform,
+        platform,
         workflow.path,
         workflow.frontmatter,
         await grantHash(this.parser, workflow)
@@ -79,7 +83,7 @@ export class WorkflowExecutor {
 
       const engineChoice = resolveEngine(
         workflow.frontmatter.runtime?.engine,
-        options.platform.getSetting<string>("vaultore.runtimeEngine")
+        platform.getSetting<string>("vaultore.runtimeEngine")
       );
       const runtime = {
         ...DEFAULT_RUNTIME,
@@ -99,7 +103,7 @@ export class WorkflowExecutor {
         : orderedCells;
       await hydrateOutputsFromStubs(
         this.parser,
-        options.platform,
+        platform,
         workflow.rawContent,
         outputs
       );
@@ -108,7 +112,7 @@ export class WorkflowExecutor {
         options.emitEvent?.("cell:started", { cellId: cell.attributes.id });
         const result = await this.runCell({
           cell,
-          platform: options.platform,
+          platform: platform,
           permissions,
           outputs,
           runtime,
@@ -116,7 +120,7 @@ export class WorkflowExecutor {
         });
 
         const outputPath = await persistCellOutput(
-          options.platform,
+          platform,
           runContext,
           workflow.path,
           result
@@ -128,7 +132,7 @@ export class WorkflowExecutor {
         ran.push(cell.attributes.id);
 
         updatedContent = await this.writeBackOutput(
-          options.platform,
+          platform,
           workflow.path,
           updatedContent,
           result
@@ -141,7 +145,7 @@ export class WorkflowExecutor {
       runError = err;
       throw err;
     } finally {
-      await finalizeRunContext(options.platform, runContext, ran, outputs, runError);
+      await finalizeRunContext(platform, runContext, ran, outputs, runError);
     }
 
     return {
@@ -274,6 +278,39 @@ export class WorkflowExecutor {
 // =============================================================================
 // EXECUTION HELPERS
 // =============================================================================
+
+/**
+ * The platform as the executor uses it: every vault path it reads, writes,
+ * tests or creates goes through `resolveInVault` first. Cells can plant
+ * symbolic links through their mount, and the host follows them where the
+ * container could not: a link to `~/.ssh` would otherwise let `vault.write`,
+ * `{{note:}}`, the output files or the note's write-back reach outside the
+ * vault. Paths that pass are used as resolved, so no link is followed again.
+ */
+function confinedPlatform(platform: PlatformAdapter): PlatformAdapter {
+  if (typeof (platform as Partial<PlatformAdapter>).resolveInVault !== "function") {
+    throw new Error(
+      "This platform cannot check where a vault path leads (it has no resolveInVault), " +
+        "so VaultOre does not read or write vault files through it."
+    );
+  }
+  const resolve = (path: string) => platform.resolveInVault(path.replace(/^[\\/]+/, ""));
+  const confined: Partial<PlatformAdapter> = {
+    readFile: async (path) => platform.readFile(await resolve(path)),
+    writeFile: async (path, content) => platform.writeFile(await resolve(path), content),
+    exists: async (path) => platform.exists(await resolve(path)),
+    mkdirp: async (path) => platform.mkdirp(await resolve(path)),
+  };
+  return new Proxy(platform, {
+    get(target, prop) {
+      if (typeof prop === "string" && prop in confined) {
+        return confined[prop as keyof typeof confined];
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
 
 interface ResolvedPermissions {
   network: boolean;
@@ -656,10 +693,19 @@ async function hydrateOutputsFromStubs(
   for (const [cellId, stub] of stubs.entries()) {
     if (outputs.has(cellId)) continue;
     if (!stub.outputPath) continue;
-    if (!(await platform.exists(stub.outputPath))) continue;
+
+    // The link in the note is text a cell can rewrite, and the path may lead
+    // through a symbolic link a cell planted: the platform refuses those.
+    let raw: string;
+    try {
+      if (!(await platform.exists(stub.outputPath))) continue;
+      raw = await platform.readFile(stub.outputPath);
+    } catch (err) {
+      platform.log("warn", `Not reading the recorded output of ${cellId}: ${messageOf(err)}`);
+      continue;
+    }
 
     try {
-      const raw = await platform.readFile(stub.outputPath);
       const record = JSON.parse(raw) as {
         cellId?: string;
         value?: unknown;
@@ -1070,10 +1116,33 @@ async function applyVaultWrites(
 ): Promise<void> {
   if (writes.length === 0) return;
 
-  const resolved = writes.map((write) => ({
+  const checked = writes.map((write) => ({
     ...write,
     path: writablePath(write.path, permissions, runContext.runDir),
   }));
+
+  // Where each path really leads, before anything is read or written: a cell
+  // can plant a symbolic link through the mount. The rules above apply again
+  // to the real path, so an in-vault link cannot reach .obsidian/ either.
+  const resolved: PendingVaultWrite[] = [];
+  for (const write of checked) {
+    let real: string;
+    try {
+      real = await platform.resolveInVault(write.path);
+    } catch (err) {
+      throw new Error(
+        `Vault write refused: ${messageOf(err)}. None of this cell's writes were applied.`
+      );
+    }
+    const path = writablePath(real, permissions, runContext.runDir);
+    if (resolved.some((other) => other.path === path)) {
+      throw new Error(
+        `Vault write refused: ${write.path} is ${path}, which this cell also writes under another path. ` +
+          "None of this cell's writes were applied."
+      );
+    }
+    resolved.push({ ...write, path });
+  }
 
   const conflicts: string[] = [];
   for (const write of resolved) {

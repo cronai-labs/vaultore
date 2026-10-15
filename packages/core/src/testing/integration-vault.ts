@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { execContainer } from "../runtime";
+import { resolveInVaultRoot } from "../vault/confine";
 import type { PlatformAdapter, RuntimeEngine } from "../types";
 
 /** The engine the integration tests run on. colima unless overridden. */
@@ -55,6 +56,7 @@ export function filesystemPlatform(
 		},
 		listFiles: async () => [],
 		getVaultRoot: async () => root,
+		resolveInVault: (path: string) => resolveInVaultRoot(root, path),
 		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
 			settings.set(key, value);

@@ -444,6 +444,14 @@ export interface PlatformAdapter {
   listFiles(directory: string, pattern?: string): Promise<string[]>;
   readRaw?(path: string): Promise<string>; // For /proc, etc.
   getVaultRoot(): Promise<string>;
+  /**
+   * The vault-relative path `path` really leads to, or a thrown error when it
+   * leaves the vault: through `..`, or through a symbolic link a cell may have
+   * planted via its mount. The executor reads and writes vault paths only
+   * through this, and refuses to run on a platform without it.
+   * `resolveInVaultRoot` implements it for a vault on a file system.
+   */
+  resolveInVault(path: string): Promise<string>;
 
   // Settings
   getSetting<T>(key: string): T | undefined;

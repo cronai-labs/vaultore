@@ -134,6 +134,8 @@ export {
   VaultError,
 } from "./vault";
 
+export { resolveInVaultRoot } from "./vault/confine";
+
 export type { VaultAPI, CellFn } from "./vault";
 
 // =============================================================================
