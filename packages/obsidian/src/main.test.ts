@@ -226,11 +226,15 @@ describe("versions.json", () => {
       expect(value).toMatch(/^\d+\.\d+\.\d+$/);
     }
 
-    // Obsidian uses this map to find the newest plugin release an older app
-    // can install, so an entry must never name a version that was never
-    // released. It is populated by version:bump at release time and is legally
-    // empty before the first release — the invariant is that once it has any
-    // entry, the version currently in the manifest is one of them.
+    // What this asserts: once versions.json has any entry, the manifest's
+    // version is one of them, mapped to the manifest's minAppVersion. The file
+    // is legally empty before the first release; version-bump.mjs adds the
+    // entry when `bun run release` cuts one, and at no other time.
+    //
+    // Why: an Obsidian app older than the manifest's minAppVersion falls back
+    // to the newest plugin version this map lists for it (docs.obsidian.md,
+    // Reference/Versions, read 2026-10-15), so an entry must name a version
+    // that was actually released.
     const manifestPath = path.resolve(__dirname, "../../../manifest.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
