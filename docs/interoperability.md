@@ -1,10 +1,10 @@
 # Interoperability
 
-> **Last Updated:** 2026-07-21
+> **Last Updated:** 2026-10-15
 
 VaultOre is core-first by design: all engine logic lives in
-`@vaultore/core`, and every surface — the Obsidian plugin, the CLI, future
-editor extensions, CronAI runners — is a thin adapter. This document maps
+`@vaultore/core`, and each surface (today the Obsidian plugin and the CLI)
+is a thin adapter. This document maps
 the interop surfaces and how VaultOre relates to neighboring formats and
 tools.
 
@@ -38,113 +38,97 @@ Conventions that differ from the plugin, on purpose:
 |---------|--------|-----|
 | Settings | Obsidian settings UI | `<vault>/.vaultore/config.json` |
 | Secrets | Obsidian secret storage | Environment (`VAULTORE_OPENAI_APIKEY`, `OPENAI_API_KEY`, …) |
-| Permission prompts | Modal dialog | Non-interactive: deny unless `--yes`; decisions persist to config |
+| Permission prompts | Modal dialog | Non-interactive: deny unless `--yes`; decisions persist to config, bound to the note's content |
+| Scheduling | Only notes the user approved, while Obsidian is open | `vaultore agent` runs every scheduled note |
 
 The same workflow note produces the same run either way — outputs, run
 JSON, and artifact indexes are written by shared core code.
 
 ### Headless agent
 
-`vaultore agent` is the always-on local scheduler: it scans the vault,
-registers every `schedule:` workflow, fires them on cron, and rescans
-periodically. Run it under systemd/launchd on a home server, or in CI for
-"poor-man's cloud" scheduling. For real always-on execution, hand
-schedules to CronAI (below).
+`vaultore agent` is a local scheduler daemon: it scans the vault,
+registers every workflow with a `schedule:`, runs them on cron, and rescans
+(every 300 seconds unless `--rescan` says otherwise). **It has no approval
+step**, unlike the plugin: point it only at a vault whose workflows you
+trust. It skips a scheduled run while the previous run of the same note is
+still going. Run it under systemd or launchd to keep it alive.
 
 ### Embedding as a library
 
 `@vaultore/cli` exports `NodeAdapter`, `discoverWorkflows`, and
-`buildScheduleManifest`; `@vaultore/core` exports the parser/executor/
-scheduler. Third-party runners embed headless execution without shelling
-out.
+`buildScheduleManifest`; `@vaultore/core` exports the parser, executor and
+scheduler. Other tools can embed headless execution without shelling out.
+Neither package is published to npm yet.
 
 ## CronAI Schedule Handover
 
-Scheduled jobs migrate to CronAI infrastructure via the schedule manifest
-(`vaultore schedules export`) — workflow notes stay the source of truth,
-the vault syncs via git, and the cloud runner executes the identical
-`vaultore run` CLI. Ownership handoff, drift detection, and permission
-semantics are specified in
-[specs/cronai-handover-spec.md](../specs/cronai-handover-spec.md).
+`vaultore schedules export` writes a manifest of the vault's scheduled
+workflows, meant to hand them to CronAI infrastructure that runs the same
+`vaultore run` CLI. The export exists; the CronAI side does not yet. The
+contract (ownership, drift detection, permissions in the cloud) is
+specified in [specs/cronai-handover-spec.md](../specs/cronai-handover-spec.md).
 
 ## Open Knowledge Format (OKF)
 
-Google released OKF v0.1 in June 2026
-([announcement](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/),
-[spec](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md),
-Apache 2.0) and v0.2 in July 2026: an open specification for agent-ready
-knowledge as **markdown files with YAML frontmatter**, organized in
-directory "bundles", linked into a graph with standard markdown links —
-only `type` is required; `title`, `description`, `resource`, `tags` are
-recommended; unknown fields must be preserved. v0.2 adds provenance
-(`generated: { by, at }`, which supersedes v0.1's `timestamp`), trust
-(`verified`) and lifecycle (`status: draft | stable | deprecated`,
-`stale_after`), with every timestamp an ISO 8601 datetime with an offset.
+[OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+(Apache 2.0) specifies knowledge as Markdown files with YAML frontmatter,
+organised in directory bundles and linked with standard Markdown links. Only
+`type` is required; `title`, `description` and `tags` are recommended, and
+consumers preserve unknown keys. Version 0.2, current when this was written
+(2026-10-15), adds provenance (`generated: { by, at }`, replacing v0.1's
+`timestamp`), trust (`verified`) and lifecycle (`status: draft | stable |
+deprecated`, `stale_after`), with every timestamp an ISO 8601 datetime with
+an offset.
 
-### Impact assessment
+What VaultOre does with it today:
 
-**OKF validates VaultOre's core thesis** — markdown + frontmatter as the
-machine interface for AI systems — and gives it an industry-backed
-interchange target:
+- **Output views and artifact indexes are OKF v0.2 concepts.** They carry
+  `type` (`VaultOre Output`, `VaultOre Artifacts`), `title`, `description`,
+  `tags` and `generated: { by: vaultore/<version>, at }`. The cell's run
+  state is `cellStatus`, leaving `status` to OKF's lifecycle, and artifact
+  indexes link their files with relative Markdown links
+  ([workflow note spec](../specs/workflow-note-spec.md#7-outputs)).
+- **Not yet a bundle.** The output folder has no bundle `index.md`, the JSON
+  records are not OKF concepts, and the callouts in workflow notes still use
+  wikilinks.
+- **Reading a bundle** works like reading any notes: an `ore:ts` cell can
+  `vault.read()` OKF files and pass them to an `ore:ai` cell.
 
-1. **Obsidian vaults are already OKF-shaped.** A vault is a directory of
-   frontmatter'd markdown with links. The deltas are small: OKF requires a
-   `type` field per concept and uses standard markdown links, where
-   Obsidian favors `[[wikilinks]]`.
-2. **VaultOre run outputs are now OKF v0.2 concepts** (shipped). Output
-   views and artifact indexes carry `type`, `title`, `description`,
-   `tags` and `generated: { by: vaultore/<version>, at }` in their
-   frontmatter; the cell's run state is `cellStatus`, leaving `status` to
-   OKF's lifecycle, and artifact indexes link their files with markdown
-   links. The `_vaultore/` output tree is consumable by any OKF consumer —
-   including Google's reference enrichment agent — with zero conversion.
-3. **Workflows can produce and consume knowledge bundles.** An `ore:ts`
-   cell can read an OKF bundle as structured context for `ore:ai` cells
-   today (it's just files); a first-class `vault.okf.*` helper and an
-   `okf export` command (bundle assembly + wikilink→markdown-link
-   normalization + generated `index.md`/`log.md`) are roadmap items.
-4. **Strategic positioning:** VaultOre becomes the *refinery* that turns
-   vault knowledge into OKF bundles on a schedule — "OKF producer" is a
-   differentiator no chat-only Obsidian plugin has.
-
-Planned work: v0.2 — `okf export` command and wikilink normalization;
-v0.2 — OKF bundle ingestion helper for AI cell context.
+An `okf export` command (bundle assembly, wikilink-to-Markdown-link
+normalisation, a generated `index.md`) and an OKF ingestion helper are under
+consideration ([roadmap](roadmap.md#under-consideration)).
 
 ## Obsidian CLI (official)
 
-Obsidian 1.12+ ships an official CLI (enable in **Settings → General**,
-docs at help.obsidian.md/cli) that can read/search/write notes and
-interact with plugins from the terminal against a running Obsidian
-instance. That composes with VaultOre from the outside: scripts can
-prepare or query notes via `obsidian …` and trigger VaultOre runs.
-The community tool formerly named obsidian-cli now lives on as
-[notesmd-cli](https://github.com/Yakitrak/notesmd-cli) and works vault-
-directly (no running app needed) — as does `vaultore` itself.
+Obsidian has an official command-line interface
+([obsidian.md/help/cli](https://obsidian.md/help/cli); read 2026-10-15: it needs
+the Obsidian 1.12 installer and a running app). It composes with VaultOre from the
+outside: scripts can prepare or query notes with it and open a workflow
+note. `vaultore`, by contrast, works on the vault's files and needs no
+running app.
 
 Rule of thumb: drive a **running Obsidian** with the official CLI; drive
 the **vault as files** with `vaultore`.
 
 ## Quarto (QMD)
 
-Quarto's `.qmd` notebooks are the closest neighbor format: markdown with
-executable ```` ```{python} ````-style cells, YAML frontmatter, rendered
-by `quarto render`. Two interop paths:
+Quarto's `.qmd` notebooks are the closest neighbour format: Markdown with
+executable ```` ```{python} ````-style cells and YAML frontmatter, rendered
+by `quarto render`.
 
-1. **Cell mapping** — the formats are mechanically convertible:
+1. **Cell mapping**: the formats translate mechanically.
 
    | Quarto | VaultOre |
    |--------|----------|
-   | ```` ```{python} ```` | ```` ```ore:py ```` (v0.2) |
+   | ```` ```{python} ```` | ```` ```ore:py ```` (planned) |
    | `#| option: value` cell options | fence attributes (`id=… depends=[…]`) |
    | `engine:` frontmatter | `runtime.engine:` frontmatter |
    | freeze/cache outputs | `_vaultore/runs/` output JSON |
 
-2. **Engine extension** — Quarto 1.9 (March 2026) introduced TypeScript
-   engine extensions with a markdown-in→markdown-out contract, which is
-   exactly the VaultOre executor's shape. A `quarto-vaultore` engine could
-   execute `ore:*` cells during `quarto render`, making workflow notes
-   publishable documents. The extension API is explicitly still in flux
-   upstream, so this is targeted for v0.4 rather than now.
+2. **Engine extension**: a `quarto-vaultore` engine that runs `ore:*` cells
+   during `quarto render`, which would make workflow notes publishable
+   documents. Under consideration; whether Quarto's engine-extension API fits
+   needs checking against the Quarto release current when the work starts.
 
 ## Surface Map
 
@@ -153,8 +137,8 @@ by `quarto render`. Two interop paths:
                                          │
         ┌──────────────┬─────────────────┼──────────────────┬───────────────┐
         ▼              ▼                 ▼                  ▼               ▼
-  Obsidian plugin   vaultore CLI    vaultore agent    CronAI runner    (v0.4) quarto-vaultore
-  (interactive)     (headless run)  (local cron)      (cloud cron)     (publish-time exec)
+  Obsidian plugin   vaultore CLI    vaultore agent    CronAI runner    quarto-vaultore
+  (interactive)     (headless run)  (local cron)      (not built)      (proposed)
         │                                                   ▲
         └── official Obsidian CLI drives the running app    └── schedule manifest handover
 ```
