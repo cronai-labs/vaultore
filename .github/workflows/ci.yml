@@ -238,3 +238,25 @@ jobs:
         env:
           VAULTORE_IT_ENGINE: docker
         run: bun run --cwd packages/core test:integration
+
+  # The one check the main ruleset should require. Every gate above feeds it,
+  # so adding or renaming a job never means editing the ruleset.
+  #
+  # `if: always()` makes it run, and report, even when a dependency failed or
+  # was cancelled; without it this job would be skipped, and a skipped job
+  # reports success. It never carries any other condition. The step fails
+  # unless every dependency's result is exactly `success`: failure, cancelled
+  # and skipped all fail it.
+  ci-required:
+    if: always()
+    needs: [policy, commitlint, build-and-test, integration, reproducible-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Every required job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'length > 0 and all(.[]; .result == "success")' > /dev/null
