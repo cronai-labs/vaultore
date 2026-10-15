@@ -2,7 +2,8 @@
 # Bash/Shell command execution
 #
 # As of 2026-10-15 nothing builds or runs this image: ore:shell cells run in
-# alpine:3.19 (executeShellCell, packages/core/src/executor/index.ts).
+# the workflow's runtime.image, default oven/bun:1-alpine (executeShellCell,
+# packages/core/src/executor/index.ts).
 
 FROM alpine:3.19
 

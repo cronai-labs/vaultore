@@ -224,9 +224,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # The images the ore:ts and ore:shell cells run in (DEFAULT_RUNTIME in
-      # packages/core/src/types/index.ts, executeShellCell in
-      # packages/core/src/executor/index.ts). Pulling them up front keeps
+      # The image the ore:ts and ore:shell cells run in (DEFAULT_RUNTIME in
+      # packages/core/src/types/index.ts) and the one waitForContainerView in
+      # packages/core/src/testing/integration-vault.ts reads the vault with.
+      # Pulling them up front keeps
       # registry time out of the per-test timeouts, and a registry outage fails
       # here, named, instead of as a test failure. If a cell image changes and
       # this list does not, nothing breaks: the tests pull on demand.
