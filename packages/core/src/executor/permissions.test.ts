@@ -333,7 +333,7 @@ ${runtime}permissions:
 	}
 });
 
-describe(".obsidian is hidden from cells (#28)", () => {
+describe(".obsidian and .vaultore are hidden from cells (#28, #94)", () => {
 	const PLUGIN = { ".obsidian/plugins/vaultore/data.json": "{}" };
 
 	async function maskedFor(
@@ -362,7 +362,10 @@ describe(".obsidian is hidden from cells (#28)", () => {
 	for (const type of ["ts", "shell"] as const) {
 		for (const write of ["deny", "allow"]) {
 			it(`${type}: masks /workspace/.obsidian under the full vault mount (vaultWrite: ${write})`, async () => {
-				expect(await maskedFor(type, "allow", write, PLUGIN)).toEqual(["/workspace/.obsidian"]);
+				expect(await maskedFor(type, "allow", write, PLUGIN)).toEqual([
+					"/workspace/.obsidian",
+					"/workspace/.vaultore",
+				]);
 			});
 		}
 
@@ -374,9 +377,11 @@ describe(".obsidian is hidden from cells (#28)", () => {
 			expect(await maskedFor(type, "deny", "allow", PLUGIN)).toEqual([]);
 		});
 
-		it(`${type}: masks nothing in a vault without .obsidian`, async () => {
-			// Masking a missing directory would make the engine create it in the vault.
-			expect(await maskedFor(type, "allow", "allow", {})).toEqual([]);
+		it(`${type}: masks .vaultore even in a vault that has none yet`, async () => {
+			// A cell must not be able to create the CLI's config with forged
+			// decisions; .obsidian stays unmasked when missing, since masking would
+			// make the engine create it in the vault.
+			expect(await maskedFor(type, "allow", "allow", {})).toEqual(["/workspace/.vaultore"]);
 		});
 	}
 });

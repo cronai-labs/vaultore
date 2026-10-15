@@ -175,7 +175,8 @@ The defaults ([permissions spec](specs/permissions-spec.md), the single source):
 
 **The mount enforces them.** A container cell sees the whole vault read-only, the whole vault
 read-write, only its own run directory, or nothing, depending on `vaultRead` and `vaultWrite`.
-`.obsidian/`, which holds the plugin and its settings, is hidden from every cell.
+`.obsidian/`, which holds the plugin and its settings, and `.vaultore/`, which holds the CLI's
+settings and stored permission decisions, are hidden from every cell.
 
 **Containers are hardened** on every engine: read-only root filesystem, a `noexec` `/tmp`, no
 Linux capabilities, a non-root user, no network unless granted, and memory and CPU limits.
@@ -205,8 +206,8 @@ are used for the provider request only, not passed to containers.
   ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
 - **A cell timeout stops the engine's CLI, not the container**, which may keep running until it
   exits; the error reads `exit 1`.
-- **Only `.obsidian/` is hidden** from cells. Obsidian's "Override config folder" setting is
-  not followed.
+- **Only `.obsidian/` and `.vaultore/` are hidden** from cells. Obsidian's "Override config
+  folder" setting is not followed.
 - **Switching the provider keeps the default model** of the other provider; AI cells then fail
   with a message saying so, until you change the model.
 - **The Apple `container` engine** is covered by unit tests only, not yet by runs against a

@@ -888,16 +888,24 @@ function vaultMounts(
 }
 
 /**
- * Vault directories no cell may see, even under a full vault mount. Obsidian's
- * config directory holds this plugin's code and settings: a cell granted
- * vaultWrite could otherwise rewrite the plugin that runs it (#28).
+ * Vault directories no cell may see, even under a full vault mount.
+ *
+ * `.obsidian` holds this plugin's code and settings: a cell granted vaultWrite
+ * could otherwise rewrite the plugin that runs it (#28). It is masked only when
+ * it exists, since masking a missing directory makes the engine create it, and
+ * an empty `.obsidian` turns any folder into an Obsidian vault.
+ *
+ * `.vaultore` holds the CLI's settings and stored permission decisions: a cell
+ * could otherwise forge a grant for another workflow (#94). VaultOre owns this
+ * directory, so it is created before the run and always masked; otherwise a
+ * cell could create the config itself in a vault that has none yet.
  */
 const HIDDEN_VAULT_DIRS = [".obsidian"];
+const VAULTORE_STATE_DIR = ".vaultore";
 
 /**
  * Container paths to cover with an empty read-only tmpfs. Only under the full
- * vault mount, the only one that reaches them, and only for directories that
- * exist: masking a missing one would make the engine create it in the vault.
+ * vault mount, the only one that reaches them.
  */
 async function maskedVaultPaths(
   platform: PlatformAdapter,
@@ -908,6 +916,8 @@ async function maskedVaultPaths(
   for (const dir of HIDDEN_VAULT_DIRS) {
     if (await platform.exists(dir)) masked.push(`/workspace/${dir}`);
   }
+  await platform.mkdirp(VAULTORE_STATE_DIR);
+  masked.push(`/workspace/${VAULTORE_STATE_DIR}`);
   return masked;
 }
 
