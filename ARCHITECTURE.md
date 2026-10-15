@@ -71,7 +71,7 @@ vaultore/
 │   │   ├── hello-world.md       # Minimal smoke test
 │   │   ├── link-digest.md       # Primary use case
 │   │   ├── daily-summary.md     # Scheduling test
-│   │   ├── smart-inbox.md       # Semantic conditions test
+│   │   ├── smart-inbox.md       # Inbox triage: AI + vault write
 │   │   ├── sys-snapshot.md      # Shell + Go integration
 │   │   └── proc-snapshot.md     # Process aggregation
 │   └── unit/
@@ -364,7 +364,7 @@ Each fixture in `fixtures/canonical/` serves as an acceptance test:
 | `hello-world.md` | Parser, TS executor | Output appears |
 | `link-digest.md` | Full pipeline, AI | Creates digest note |
 | `daily-summary.md` | Scheduling | Runs at scheduled time |
-| `smart-inbox.md` | Semantic conditions | Conditional cells work |
+| `smart-inbox.md` | AI cell, vault write | Category notes written, filed lines ticked |
 | `sys-snapshot.md` | Shell + Go | Artifacts created |
 
 ### Test Pyramid

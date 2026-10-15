@@ -30,7 +30,7 @@ VaultOre uses **canonical workflows** as acceptance tests. Each fixture in `fixt
 | [hello-world.md](../fixtures/canonical/hello-world.md) | Minimal smoke test | Parser, TS executor, output persistence | ✅ MVP |
 | [link-digest.md](../fixtures/canonical/link-digest.md) | Primary use case | Full pipeline, AI, vault write | ✅ MVP |
 | [daily-summary.md](../fixtures/canonical/daily-summary.md) | Scheduling | Cron scheduling, time-based triggers | 📋 v0.1 |
-| [smart-inbox.md](../fixtures/canonical/smart-inbox.md) | Semantic conditions | AI-evaluated conditions, conditional cells | 📋 v0.2 |
+| [smart-inbox.md](../fixtures/canonical/smart-inbox.md) | Inbox triage | One AI call with a strictly checked answer, category notes, line-exact inbox ticks | ✅ MVP |
 | [sys-snapshot.md](../fixtures/canonical/sys-snapshot.md) | Shell + TS integration | Shell execution, cross-cell data flow | ✅ MVP |
 
 ---
@@ -124,25 +124,28 @@ echo "- https://example.com/article-1" > ~/vaultore-test-vault/Inbox/reading.md
 
 ### 4. smart-inbox.md
 
-**Purpose:** Test semantic conditions and conditional execution.
+**Purpose:** Inbox triage with what the engine supports today (#79). The full
+design with conditions and structured outputs is #80.
 
 **Tests:**
-- ✅ `runIf` workflow-level condition
-- ✅ `when` cell-level condition
-- ✅ AI-evaluated conditions (`{{ai: condition}}`)
-- ✅ Conditional cell skipping
+- ✅ Open items (`- [ ] …`) read from `Inbox.md` (path set at the top of `readInbox`)
+- ✅ One `ore:ai` call, fed by a TS cell's prompt text via `{{prompt}}`
+- ✅ The AI answer checked strictly: anything malformed fails `parseAnswer`
+- ✅ One note per category under `Processed/`, appended to, with OKF frontmatter
+- ✅ Only the filed lines ticked in the inbox, after the notes exist
 
 **Acceptance Criteria:**
-- Workflow skips if `runIf` evaluates to false
-- Cells with `when` attribute skip if condition is false
-- Skipped cells show `status: skipped` in output
-- Conditions can reference `{{note:path}}` and `{{cellId}}`
+- Category notes hold the filed items; existing notes are appended to, not rewritten
+- Exactly the filed lines change from `- [ ]` to `- [x]`; every other line is byte-identical
+- A line edited during the run is left alone and listed under `notTicked`
+- A second run files only items added since; ticked ones are not processed again
+
+**Automated:** `packages/core/src/fixtures/smart-inbox.integration.test.ts`
+(`bun run --cwd packages/core test:integration`; real container, stubbed provider).
 
 **Prerequisites:**
-- AI provider API key (for condition evaluation)
-- `v0.2+` features (semantic conditions)
-
-**Status:** 📋 Planned for v0.2
+- AI provider API key
+- `network`, `vaultRead`, `vaultWrite`: `allow`
 
 ---
 

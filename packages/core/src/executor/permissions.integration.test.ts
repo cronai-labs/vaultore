@@ -1,17 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { WorkflowExecutor } from "./index";
-import type { PlatformAdapter } from "../types";
+import { IT_ENGINE, filesystemPlatform, makeIntegrationVaultRoot } from "../testing/integration-vault";
 
 /**
  * vaultRead enforced at the mount (#68) and the container hardening (#28),
@@ -21,16 +12,13 @@ import type { PlatformAdapter } from "../types";
  *   bun run --cwd packages/core test:integration
  */
 
-const ENGINE = process.env.VAULTORE_IT_ENGINE ?? "colima";
 const SECRET = "the contents of a private note";
 const PLUGIN_SETTINGS = '{"apiKey":"the plugin settings"}';
 
 let root: string;
 
 beforeAll(() => {
-	const base = join(homedir(), ".cache");
-	mkdirSync(base, { recursive: true });
-	root = mkdtempSync(join(base, "vaultore-it-"));
+	root = makeIntegrationVaultRoot();
 	mkdirSync(join(root, "Private"));
 	writeFileSync(join(root, "Private/secret.md"), SECRET);
 	mkdirSync(join(root, ".obsidian/plugins/vaultore"), { recursive: true });
@@ -40,33 +28,6 @@ beforeAll(() => {
 afterAll(() => {
 	rmSync(root, { recursive: true, force: true });
 });
-
-function platform(): PlatformAdapter {
-	const settings = new Map<string, unknown>([["vaultore.runtimeEngine", ENGINE]]);
-	const abs = (path: string) => join(root, path);
-	return {
-		platform: "cli",
-		readFile: async (path: string) => readFileSync(abs(path), "utf8"),
-		writeFile: async (path: string, content: string) => {
-			mkdirSync(dirname(abs(path)), { recursive: true });
-			writeFileSync(abs(path), content);
-		},
-		exists: async (path: string) => existsSync(abs(path)),
-		mkdirp: async (path: string) => {
-			mkdirSync(abs(path), { recursive: true });
-		},
-		listFiles: async () => [],
-		getVaultRoot: async () => root,
-		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
-		setSetting: async (key: string, value: unknown) => {
-			settings.set(key, value);
-		},
-		getSecret: async () => undefined,
-		setSecret: async () => undefined,
-		deleteSecret: async () => undefined,
-		log: () => undefined,
-	} as unknown as PlatformAdapter;
-}
 
 async function runCell(read: string, write: string, fence: string) {
 	const content = `---
@@ -82,7 +43,7 @@ ${fence}
 `;
 	writeFileSync(join(root, "wf.md"), content);
 	const workflow = await new WorkflowExecutor().runWorkflow({
-		platform: platform(),
+		platform: filesystemPlatform(root),
 		workflowPath: "wf.md",
 		content,
 	});
@@ -219,7 +180,7 @@ grep -E '^(CapEff|NoNewPrivs):' /proc/self/status | tr -d ' \t'`)
 		expect(out).not.toContain("the plugin settings");
 		expect(out).toMatch(/^CapEff:0+$/m);
 		// Apple's CLI has no no-new-privileges flag (permissions-spec §4.1).
-		if (ENGINE !== "apple") expect(out).toMatch(/^NoNewPrivs:1$/m);
+		if (IT_ENGINE !== "apple") expect(out).toMatch(/^NoNewPrivs:1$/m);
 
 		const written = join(root, String(field("runDir")), "sh.txt");
 		expect(readFileSync(written, "utf8")).toBe("from shell\n");
