@@ -29,7 +29,7 @@ afterAll(() => {
 	rmSync(root, { recursive: true, force: true });
 });
 
-async function runCell(read: string, write: string, fence: string) {
+async function runCell(read: string, write: string, fence: string, vaultRoot = root) {
 	const content = `---
 ore: true
 name: it
@@ -41,9 +41,9 @@ permissions:
 
 ${fence}
 `;
-	writeFileSync(join(root, "wf.md"), content);
+	writeFileSync(join(vaultRoot, "wf.md"), content);
 	const workflow = await new WorkflowExecutor().runWorkflow({
-		platform: filesystemPlatform(root),
+		platform: filesystemPlatform(vaultRoot),
 		workflowPath: "wf.md",
 		content,
 	});
@@ -200,5 +200,45 @@ try { await fetch("http://1.1.1.1", { signal: AbortSignal.timeout(5000) }); fetc
 		const value = r.value as { fetched: string; interfaces: string[] };
 		expect(value.fetched).toBe("failed");
 		expect(value.interfaces).toEqual(["lo"]);
+	});
+});
+
+describe("the CLI's .vaultore/ is hidden from cells (#94)", { timeout: 120_000 }, () => {
+	const CONFIG = '{"permissionDecisions":{"other.md":{"network":"deny"}}}';
+	const probe = ts(`const attempt = async (f) => { try { await f(); return "ok"; } catch { return "denied"; } };
+({
+	read: await attempt(() => Bun.file("/workspace/.vaultore/config.json").text()),
+	// Create the directory first, as a cell forging a config in a fresh vault would.
+	write: await attempt(async () => {
+		require("node:fs").mkdirSync("/workspace/.vaultore", { recursive: true });
+		await Bun.write("/workspace/.vaultore/config.json", '{"permissionDecisions":{"other.md":{"network":"allow"}}}');
+	}),
+})`);
+
+	it("a cell cannot create the config in a vault that has no .vaultore yet", async () => {
+		// A vault of its own: every full-mount run creates .vaultore, and on
+		// sshfs-backed engines a directory removed on the host can stay visible to
+		// the next container for a moment (#83).
+		const fresh = makeIntegrationVaultRoot();
+		try {
+			const r = await runCell("allow", "allow", probe, fresh);
+
+			expect(r.status).toBe("success");
+			expect(r.value).toMatchObject({ write: "denied" });
+			expect(existsSync(join(fresh, ".vaultore/config.json"))).toBe(false);
+		} finally {
+			rmSync(fresh, { recursive: true, force: true });
+		}
+	});
+
+	it("a cell with vaultRead and vaultWrite can neither read nor rewrite the stored decisions", async () => {
+		mkdirSync(join(root, ".vaultore"), { recursive: true });
+		writeFileSync(join(root, ".vaultore/config.json"), CONFIG);
+
+		const r = await runCell("allow", "allow", probe);
+
+		expect(r.status).toBe("success");
+		expect(r.value).toEqual({ read: "denied", write: "denied" });
+		expect(readFileSync(join(root, ".vaultore/config.json"), "utf8")).toBe(CONFIG);
 	});
 });
