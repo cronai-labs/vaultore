@@ -96,6 +96,14 @@ jobs:
       - name: Test
         run: bun run test
 
+      # The last gate before a public, immutable artifact checks no less than
+      # the PR gate does (#48).
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
       - name: Package plugin
         run: bun run obsidian:package
 
