@@ -849,7 +849,13 @@ class VaultOreSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Default provider")
-      .setDesc("Provider used for ore:ai cells.")
+      .setDesc(
+        createFragment((f) => {
+          f.appendText("Provider used for ");
+          f.createEl("code", { text: "ore:ai" });
+          f.appendText(" cells.");
+        })
+      )
       .addDropdown((dropdown) => {
         dropdown.addOption("openai", "OpenAI");
         dropdown.addOption("anthropic", "Anthropic");
@@ -994,8 +1000,13 @@ class VaultOreSettingsTab extends PluginSettingTab {
     const notes = this.plugin.getScheduledNotes();
     if (notes.length === 0) {
       new Setting(containerEl).setDesc(
-        "No scheduled workflows found. Notes with ore: true and a schedule in their " +
-          "frontmatter are listed here."
+        createFragment((f) => {
+          f.appendText("No scheduled workflows found. Notes with ");
+          f.createEl("code", { text: "ore: true" });
+          f.appendText(" and a ");
+          f.createEl("code", { text: "schedule" });
+          f.appendText(" in their frontmatter are listed here.");
+        })
       );
       return;
     }

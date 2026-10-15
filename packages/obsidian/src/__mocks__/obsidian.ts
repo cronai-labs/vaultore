@@ -55,6 +55,25 @@ export class Plugin {
   registerEvent(_event: any) {}
 }
 
+// Obsidian's global createFragment, reduced to the text it would show.
+class MockFragment {
+  textContent = "";
+  appendText(text: string) {
+    this.textContent += text;
+  }
+  createEl(_tag: string, options?: { text?: string }) {
+    this.textContent += options?.text ?? "";
+    return {};
+  }
+}
+(globalThis as any).createFragment = (
+  callback?: (fragment: MockFragment) => void,
+) => {
+  const fragment = new MockFragment();
+  callback?.(fragment);
+  return fragment;
+};
+
 // The settings mocks record what a tab renders, so tests can assert on the
 // visible settings (names, descriptions, toggles) and drive their handlers.
 export class MockContainer {
@@ -158,8 +177,8 @@ export class Setting {
     this.name = name;
     return this;
   }
-  setDesc(desc: string) {
-    this.desc = desc;
+  setDesc(desc: string | MockFragment) {
+    this.desc = typeof desc === "string" ? desc : desc.textContent;
     return this;
   }
   setHeading() {

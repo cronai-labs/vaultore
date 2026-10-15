@@ -131,6 +131,11 @@ describe("VaultOrePlugin", () => {
       );
     });
 
+    it("shows ore:ai as code in the provider description", () => {
+      const provider = renderSettings().find((setting) => setting.name === "Default provider");
+      expect(provider?.desc).toBe("Provider used for ore:ai cells.");
+    });
+
     it("preserves all default fields on fresh load", () => {
       expect(plugin.settings.aiTemperature).toBeUndefined();
       expect(plugin.settings.aiMaxTokens).toBe(800);
