@@ -154,7 +154,7 @@ export const DEFAULT_PROVIDER: AIProviderName = "openai";
  */
 export const DEFAULT_MODELS: Readonly<Record<AIProviderName, string>> = {
   openai: "gpt-5-mini",
-  anthropic: "claude-haiku-4-5",
+  anthropic: "claude-haiku-5-5",
 };
 
 const PROVIDER_LABELS: Record<AIProviderName, string> = {

@@ -199,7 +199,7 @@ describe("requests through the platform adapter", () => {
 		}));
 
 		const result = await createAnthropicProvider(platform).complete({
-			model: "claude-haiku-4-5",
+			model: "claude-haiku-5-5",
 			prompt: "hi",
 		});
 
@@ -211,7 +211,7 @@ describe("requests through the platform adapter", () => {
 			"x-api-key": "test-key",
 			"anthropic-version": "2023-06-01",
 		});
-		expect(JSON.parse(req.body as string)).toMatchObject({ model: "claude-haiku-4-5" });
+		expect(JSON.parse(req.body as string)).toMatchObject({ model: "claude-haiku-5-5" });
 	});
 
 	it("keeps the status and body of an HTTP error the adapter returns", async () => {
@@ -221,7 +221,7 @@ describe("requests through the platform adapter", () => {
 		}));
 
 		await expect(
-			createAnthropicProvider(platform).complete({ model: "claude-haiku-4-5", prompt: "hi" })
+			createAnthropicProvider(platform).complete({ model: "claude-haiku-5-5", prompt: "hi" })
 		).rejects.toThrow(/Anthropic error: 401 \{"error":"invalid x-api-key"\}/);
 	});
 
@@ -289,7 +289,7 @@ describe("model and provider resolution", () => {
 	it.each([
 		["openai", "gpt-5-mini"],
 		["openai", "o3-mini"],
-		["anthropic", "claude-haiku-4-5"],
+		["anthropic", "claude-haiku-5-5"],
 		// Ids that belong to neither are the provider's to judge, not ours.
 		["openai", "my-fine-tune"],
 		["anthropic", "my-proxy-model"],
