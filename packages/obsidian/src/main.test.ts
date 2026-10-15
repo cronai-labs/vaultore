@@ -28,8 +28,9 @@ vi.mock("@vaultore/core", async () => {
 
 // Import the plugin — obsidian is aliased via vitest.config.ts
 const { default: VaultOrePlugin } = await import("./main");
-const { Notice, TFile, requestUrl } = await import("obsidian");
-const { DEFAULT_MODELS, DEFAULT_PROVIDER } = await import("@vaultore/core");
+// Typed as the mock, which records notices and event handlers for assertions.
+const { Notice, TFile, requestUrl } = (await import("obsidian")) as unknown as typeof import("./__mocks__/obsidian");
+const { DEFAULT_MODELS, DEFAULT_PROVIDER, WorkflowScheduler } = await import("@vaultore/core");
 type RecordedSetting = import("./__mocks__/obsidian").Setting;
 
 describe("VaultOrePlugin", () => {
@@ -354,6 +355,241 @@ describe("VaultOrePlugin", () => {
       expect(cmd.editorCheckCallback(true, editor, { file: null })).toBe(false);
       expect(cmd.editorCheckCallback(true, editor, { file: workflow })).toBe(true);
     });
+  });
+});
+
+describe("scheduled workflows", () => {
+  type Frontmatter = Record<string, unknown>;
+  let plugin: InstanceType<typeof VaultOrePlugin>;
+  let notes: Record<string, Frontmatter>;
+
+  function note(path: string): InstanceType<typeof TFile> {
+    return Object.assign(new TFile(), { path, extension: "md", basename: path });
+  }
+
+  // Replaces the vault with these notes; frontmatter is served from the
+  // metadata cache the way Obsidian does.
+  function useVault(next: Record<string, Frontmatter>) {
+    notes = next;
+  }
+
+  const scheduler = () => (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+  const armed = () => scheduler().list().map((entry) => `${entry.path} ${entry.cronExpression}`);
+  const refresh = () => (plugin as any).refreshScheduledWorkflows();
+
+  function renderSettings(): RecordedSetting[] {
+    const calls = (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls;
+    const tab = calls[0][0];
+    tab.display();
+    return tab.containerEl.settings;
+  }
+
+  function row(name: string): RecordedSetting {
+    const found = renderSettings().find((setting) => setting.name === name);
+    expect(found, `setting "${name}"`).toBeDefined();
+    return found!;
+  }
+
+  async function toggle(name: string, value: boolean) {
+    await row(name).toggles[0].changeHandler!(value);
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    // The plugin debounces with window.setTimeout; tests run without a DOM.
+    vi.stubGlobal("window", globalThis);
+    Notice.shown.length = 0;
+    notes = {};
+    plugin = new VaultOrePlugin(undefined as any, undefined as any);
+    vi.spyOn(plugin, "addSettingTab");
+    vi.spyOn(plugin, "saveData");
+    vi.spyOn(plugin, "loadData").mockResolvedValue(null);
+    (plugin.app.vault as any).handlers = {};
+    plugin.app.vault.getMarkdownFiles = () => Object.keys(notes).map(note);
+    plugin.app.vault.getAbstractFileByPath = (path: string) => (path in notes ? note(path) : null);
+    plugin.app.vault.modify = vi.fn();
+    plugin.app.metadataCache.getFileCache = (file: { path: string }) =>
+      file.path in notes ? { frontmatter: notes[file.path] } : null;
+    await plugin.onload();
+  });
+
+  afterEach(() => {
+    plugin.onunload();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("is off by default and arms nothing, including notes that arrive by sync", () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    refresh();
+
+    expect(armed()).toEqual([]);
+    expect(plugin.settings.runScheduledWorkflows).toBe(false);
+    expect(plugin.settings.scheduleApprovals).toEqual({});
+  });
+
+  it("lists every scheduled workflow note with its schedule and a toggle", () => {
+    useVault({
+      "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" },
+      "Workflows/manual.md": { ore: true },
+      "Notes/plain.md": { schedule: "0 18 * * *" },
+    });
+    const settings = renderSettings();
+
+    expect(settings.find((s) => s.heading && s.name === "Scheduled workflows")).toBeDefined();
+    const master = row("Run scheduled workflows");
+    expect(master.toggles[0].value).toBe(false);
+
+    const daily = row("Workflows/daily.md");
+    expect(daily.desc).toContain("0 18 * * *");
+    expect(daily.desc).toMatch(/not approved/i);
+    expect(daily.toggles[0].value).toBe(false);
+    expect(settings.map((s) => s.name)).not.toContain("Workflows/manual.md");
+    expect(settings.map((s) => s.name)).not.toContain("Notes/plain.md");
+  });
+
+  it("runs a note only with the master switch on and the note approved", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+
+    await toggle("Workflows/daily.md", true);
+    expect(plugin.settings.scheduleApprovals).toEqual({ "Workflows/daily.md": "0 18 * * *" });
+    expect(armed()).toEqual([]);
+
+    await toggle("Run scheduled workflows", true);
+    expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
+    expect(row("Workflows/daily.md").desc).toMatch(/next run/i);
+
+    await toggle("Workflows/daily.md", false);
+    expect(plugin.settings.scheduleApprovals).toEqual({});
+    expect(armed()).toEqual([]);
+  });
+
+  it("keeps the decisions in plugin settings, not in the notes", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+
+    expect(plugin.saveData).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        runScheduledWorkflows: true,
+        scheduleApprovals: { "Workflows/daily.md": "0 18 * * *" },
+      })
+    );
+    expect(plugin.app.vault.modify).not.toHaveBeenCalled();
+  });
+
+  it("needs a new approval when the schedule changes", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+
+    notes["Workflows/daily.md"].schedule = "* * * * *";
+    refresh();
+
+    expect(armed()).toEqual([]);
+    const daily = row("Workflows/daily.md");
+    expect(daily.toggles[0].value).toBe(false);
+    expect(daily.desc).toMatch(/changed from "0 18 \* \* \*" to "\* \* \* \* \*"/);
+  });
+
+  it("lists notes that appear later without arming them", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+
+    notes["Inbox/from-sync.md"] = { ore: true, schedule: "* * * * *" };
+    refresh();
+
+    expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
+    expect(row("Inbox/from-sync.md").toggles[0].value).toBe(false);
+  });
+
+  it("keeps the timers of unchanged notes when the vault changes", async () => {
+    useVault({
+      "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" },
+      "Workflows/hourly.md": { ore: true, schedule: "0 * * * *" },
+    });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+    await toggle("Workflows/hourly.md", true);
+    const hourly = scheduler().list().find((e) => e.path === "Workflows/hourly.md")!;
+    const due = new Date(Date.now() - 1000);
+    hourly.nextRun = due;
+    const unregister = vi.spyOn(scheduler(), "unregister");
+
+    // Another note changes: nothing is re-registered.
+    notes["Notes/other.md"] = { title: "x" };
+    refresh();
+    expect(unregister).not.toHaveBeenCalled();
+
+    // Only the note whose approval changed is touched.
+    await toggle("Workflows/daily.md", false);
+    expect(unregister.mock.calls).toEqual([["Workflows/daily.md"]]);
+    expect(scheduler().list().find((e) => e.path === "Workflows/hourly.md")?.nextRun).toBe(due);
+  });
+
+  it("runs a due approved note on the tick", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+    const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
+
+    scheduler().list()[0].nextRun = new Date(Date.now() - 1000);
+    scheduler().tick();
+
+    expect(run).toHaveBeenCalledWith("Workflows/daily.md");
+  });
+
+  it("does not run a note whose schedule changed before the refresh caught up", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await toggle("Run scheduled workflows", true);
+    await toggle("Workflows/daily.md", true);
+    const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
+
+    notes["Workflows/daily.md"].schedule = "* * * * *";
+    scheduler().list()[0].nextRun = new Date(Date.now() - 1000);
+    scheduler().tick();
+
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("shows an invalid schedule and warns once instead of swallowing it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useVault({ "Workflows/typo.md": { ore: true, schedule: "every day" } });
+    await toggle("Run scheduled workflows", true);
+    plugin.settings.scheduleApprovals = { "Workflows/typo.md": "every day" };
+
+    refresh();
+    refresh();
+
+    expect(armed()).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0])).toContain("Workflows/typo.md");
+    expect(Notice.shown.filter((m) => m.includes("Workflows/typo.md"))).toHaveLength(1);
+    const typo = row("Workflows/typo.md");
+    expect(typo.desc).toMatch(/invalid/i);
+    expect(typo.toggles[0].disabled).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("drops the approval of a note that is deleted or renamed", async () => {
+    useVault({
+      "Workflows/a.md": { ore: true, schedule: "0 18 * * *" },
+      "Workflows/b.md": { ore: true, schedule: "0 9 * * *" },
+    });
+    await toggle("Workflows/a.md", true);
+    await toggle("Workflows/b.md", true);
+
+    const [onDelete] = (plugin.app.vault as any).handlers.delete;
+    const [onRename] = (plugin.app.vault as any).handlers.rename;
+    await onDelete(note("Workflows/a.md"));
+    await onRename(note("Archive/b.md"), "Workflows/b.md");
+
+    expect(plugin.settings.scheduleApprovals).toEqual({});
+    expect(plugin.saveData).toHaveBeenLastCalledWith(
+      expect.objectContaining({ scheduleApprovals: {} })
+    );
   });
 });
 

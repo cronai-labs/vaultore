@@ -16,6 +16,7 @@ import {
   WorkflowExecutor,
   WorkflowParser,
   WorkflowScheduler,
+  computeNextRun,
   isWorkflowFrontmatter,
 } from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
@@ -33,6 +34,26 @@ interface VaultOreSettings {
   // SecretComponent. The keys themselves never enter data.json.
   openaiSecretName: string;
   anthropicSecretName: string;
+  // Master switch for scheduled runs. Off by default: enabling the plugin, or
+  // a note arriving through sync, must not start anything unattended.
+  runScheduledWorkflows: boolean;
+  // Notes the user approved to run on a schedule: note path → the exact
+  // schedule approved. A changed schedule no longer matches and needs a new
+  // approval. Kept here rather than in the notes, which sync can rewrite.
+  scheduleApprovals: Record<string, string>;
+}
+
+// A workflow note with a schedule, as the settings tab lists it.
+export interface ScheduledNote {
+  path: string;
+  schedule: string;
+  // The schedule the user approved for this path, which may differ from the
+  // note's current one.
+  approvedSchedule?: string;
+  // Why the schedule cannot run, when it is not a valid cron expression.
+  error?: string;
+  // Set while the note is armed.
+  nextRun?: Date;
 }
 
 const DEFAULT_SETTINGS: VaultOreSettings = {
@@ -45,6 +66,8 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   outputRoot: "_vaultore",
   openaiSecretName: "",
   anthropicSecretName: "",
+  runScheduledWorkflows: false,
+  scheduleApprovals: {},
 };
 
 type SecretNameSetting = "openaiSecretName" | "anthropicSecretName";
@@ -392,13 +415,25 @@ export default class VaultOrePlugin extends Plugin {
   private scheduler = new WorkflowScheduler({
     tickIntervalMs: 60 * 1000,
     onTick: (workflows) => {
-      workflows.forEach((workflow) => {
+      for (const workflow of workflows) {
+        // Re-checked at fire time: a schedule edit or a withdrawn approval
+        // reaches the registrations only after the debounced refresh.
+        if (!this.isApprovedSchedule(workflow.path, workflow.cronExpression)) {
+          this.adapter.log(
+            "info",
+            `Skipped the scheduled run of ${workflow.path}: its schedule or approval changed`
+          );
+          continue;
+        }
         void this.runWorkflowByPath(workflow.path);
-      });
+      }
     },
   });
   private schedulerRefreshTimer: number | null = null;
   private runningWorkflows = new Set<string>();
+  // Invalid schedules already reported, as "path\nschedule", so a typo is
+  // reported once rather than on every vault change.
+  private reportedInvalidSchedules = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -454,7 +489,7 @@ export default class VaultOrePlugin extends Plugin {
     // Defer the initial vault scan until the workspace layout (and metadata
     // cache) is ready, so plugin load stays fast on large vaults.
     this.app.workspace.onLayoutReady(() => {
-      void this.refreshScheduledWorkflows();
+      this.refreshScheduledWorkflows();
     });
 
     this.registerEvent(
@@ -462,16 +497,21 @@ export default class VaultOrePlugin extends Plugin {
         this.debouncedRefreshScheduledWorkflows();
       })
     );
+    // An approval belongs to a path. When the note leaves that path, the
+    // approval goes with it, so a different note arriving there later is not
+    // armed by a decision made about another one.
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
         if (file instanceof TFile && file.extension === "md") {
+          void this.dropScheduleApproval(file.path);
           this.debouncedRefreshScheduledWorkflows();
         }
       })
     );
     this.registerEvent(
-      this.app.vault.on("rename", (file) => {
+      this.app.vault.on("rename", (file, oldPath) => {
         if (file instanceof TFile && file.extension === "md") {
+          void this.dropScheduleApproval(oldPath);
           this.debouncedRefreshScheduledWorkflows();
         }
       })
@@ -488,7 +528,12 @@ export default class VaultOrePlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const data = (await this.loadData()) as Partial<VaultOreSettings> | null;
-    const settings = { ...DEFAULT_SETTINGS, ...(data ?? {}) };
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      ...(data ?? {}),
+      // A fresh object, so approving a note never mutates DEFAULT_SETTINGS.
+      scheduleApprovals: { ...(data?.scheduleApprovals ?? {}) },
+    };
     // Settings that no longer exist, dropped so data.json stops carrying them.
     for (const key of REMOVED_SETTINGS) {
       delete (settings as Record<string, unknown>)[key];
@@ -560,28 +605,118 @@ export default class VaultOrePlugin extends Plugin {
     }
     this.schedulerRefreshTimer = window.setTimeout(() => {
       this.schedulerRefreshTimer = null;
-      void this.refreshScheduledWorkflows();
+      this.refreshScheduledWorkflows();
     }, SCHEDULER_DEBOUNCE_MS);
   }
 
-  private async refreshScheduledWorkflows(): Promise<void> {
-    // Clear existing registrations without destroying the scheduler instance
-    for (const entry of this.scheduler.list()) {
-      this.scheduler.unregister(entry.path);
-    }
-
-    // Use the metadata cache instead of reading file contents — frontmatter
-    // is already parsed, so this stays cheap even on very large vaults.
-    const files = this.app.vault.getMarkdownFiles();
-    for (const file of files) {
-      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-      if (frontmatter?.ore !== true || !frontmatter.schedule) continue;
+  /**
+   * Every workflow note with a schedule, approved or not, sorted by path.
+   * Reads the metadata cache, so it stays cheap on large vaults.
+   */
+  getScheduledNotes(): ScheduledNote[] {
+    const registered = new Map(this.scheduler.list().map((entry) => [entry.path, entry]));
+    const notes: ScheduledNote[] = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const schedule = this.scheduleOf(file);
+      if (schedule === undefined) continue;
+      let error: string | undefined;
       try {
-        this.scheduler.register(file.path, String(frontmatter.schedule));
-      } catch {
-        // Skip invalid cron expressions instead of blocking other schedules
+        computeNextRun(schedule);
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+      }
+      const entry = registered.get(file.path);
+      notes.push({
+        path: file.path,
+        schedule,
+        approvedSchedule: this.settings.scheduleApprovals[file.path],
+        error,
+        nextRun: entry?.cronExpression === schedule ? entry.nextRun : undefined,
+      });
+    }
+    return notes.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  async setRunScheduledWorkflows(enabled: boolean): Promise<void> {
+    this.settings.runScheduledWorkflows = enabled;
+    await this.saveSettings();
+    this.refreshScheduledWorkflows();
+  }
+
+  /** Approve a note's schedule, or withdraw the approval with null. */
+  async setScheduleApproval(path: string, schedule: string | null): Promise<void> {
+    if (schedule === null) {
+      delete this.settings.scheduleApprovals[path];
+    } else {
+      this.settings.scheduleApprovals[path] = schedule;
+    }
+    await this.saveSettings();
+    this.refreshScheduledWorkflows();
+  }
+
+  private async dropScheduleApproval(path: string): Promise<void> {
+    if (!(path in this.settings.scheduleApprovals)) return;
+    delete this.settings.scheduleApprovals[path];
+    await this.saveSettings();
+  }
+
+  // The note's schedule, or undefined when it is not a scheduled workflow.
+  private scheduleOf(file: TFile): string | undefined {
+    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!isWorkflowFrontmatter(frontmatter)) return undefined;
+    const schedule: unknown = frontmatter?.schedule;
+    if (schedule === undefined || schedule === null || schedule === "") return undefined;
+    // A non-string schedule is kept in its YAML-ish form, so the list shows it
+    // as invalid instead of dropping the note.
+    return typeof schedule === "string" ? schedule : JSON.stringify(schedule);
+  }
+
+  // True when the switch is on, the user approved this exact schedule for the
+  // path, and the note still carries it.
+  private isApprovedSchedule(path: string, schedule: string): boolean {
+    if (!this.settings.runScheduledWorkflows) return false;
+    if (this.settings.scheduleApprovals[path] !== schedule) return false;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    return file instanceof TFile && this.scheduleOf(file) === schedule;
+  }
+
+  /**
+   * Arms exactly the approved notes. Only entries whose schedule or approval
+   * changed are unregistered or registered; every other timer keeps its
+   * nextRun, so editing notes does not push due runs back.
+   */
+  private refreshScheduledWorkflows(): void {
+    const wanted = new Map<string, string>();
+    for (const note of this.getScheduledNotes()) {
+      if (note.error !== undefined) {
+        this.reportInvalidSchedule(note.path, note.schedule, note.error);
+        continue;
+      }
+      if (this.settings.runScheduledWorkflows && note.approvedSchedule === note.schedule) {
+        wanted.set(note.path, note.schedule);
       }
     }
+
+    for (const entry of this.scheduler.list()) {
+      if (wanted.get(entry.path) !== entry.cronExpression) {
+        this.scheduler.unregister(entry.path);
+      }
+    }
+    const registered = new Set(this.scheduler.list().map((entry) => entry.path));
+    for (const [path, schedule] of wanted) {
+      if (!registered.has(path)) {
+        this.scheduler.register(path, schedule);
+      }
+    }
+  }
+
+  private reportInvalidSchedule(path: string, schedule: string, error: string): void {
+    const key = `${path}\n${schedule}`;
+    if (this.reportedInvalidSchedules.has(key)) return;
+    this.reportedInvalidSchedules.add(key);
+    const message = `VaultOre: ${path} has an invalid schedule "${schedule}" and will not run (${error})`;
+    this.adapter.log("warn", message);
+    new Notice(message);
   }
 
   private async runCellAtLine(
@@ -702,6 +837,11 @@ class VaultOreSettingsTab extends PluginSettingTab {
   }
 
   display(): void {
+    this.render();
+  }
+
+  // Re-rendered after a scheduling change so statuses and next runs update.
+  private render(): void {
     const { containerEl } = this;
     containerEl.empty();
 
@@ -830,5 +970,73 @@ class VaultOreSettingsTab extends PluginSettingTab {
 
     this.addSecretSetting(containerEl, "openaiSecretName");
     this.addSecretSetting(containerEl, "anthropicSecretName");
+
+    this.displayScheduledWorkflows(containerEl);
+  }
+
+  private displayScheduledWorkflows(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName("Scheduled workflows").setHeading();
+
+    new Setting(containerEl)
+      .setName("Run scheduled workflows")
+      .setDesc(
+        "Off by default. When on, a workflow note runs on its schedule while Obsidian " +
+          "is open, but only if you approved it below."
+      )
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.runScheduledWorkflows);
+        toggle.onChange(async (value) => {
+          await this.plugin.setRunScheduledWorkflows(value);
+          this.render();
+        });
+      });
+
+    const notes = this.plugin.getScheduledNotes();
+    if (notes.length === 0) {
+      new Setting(containerEl).setDesc(
+        "No scheduled workflows found. Notes with ore: true and a schedule in their " +
+          "frontmatter are listed here."
+      );
+      return;
+    }
+
+    for (const note of notes) {
+      const approved = note.error === undefined && note.approvedSchedule === note.schedule;
+      new Setting(containerEl)
+        .setName(note.path)
+        .setDesc(this.describeSchedule(note, approved))
+        .addToggle((toggle) => {
+          toggle.setValue(approved);
+          toggle.setDisabled(note.error !== undefined);
+          toggle.setTooltip(approved ? "Approved to run on schedule" : "Approve to run on schedule");
+          toggle.onChange(async (value) => {
+            await this.plugin.setScheduleApproval(note.path, value ? note.schedule : null);
+            this.render();
+          });
+        });
+    }
+  }
+
+  private describeSchedule(note: ScheduledNote, approved: boolean): string {
+    const schedule = `Schedule "${note.schedule}"`;
+    if (note.error !== undefined) {
+      return `${schedule} is invalid, so this note does not run: ${note.error}`;
+    }
+    if (note.approvedSchedule !== undefined && !approved) {
+      return (
+        `Schedule changed from "${note.approvedSchedule}" to "${note.schedule}" since you ` +
+        "approved it. Approve it again to run it."
+      );
+    }
+    if (!approved) {
+      return `${schedule}. Not approved, so it does not run.`;
+    }
+    if (!this.plugin.settings.runScheduledWorkflows) {
+      return `${schedule}. Approved; runs once "Run scheduled workflows" is on.`;
+    }
+    if (!note.nextRun) {
+      return `${schedule}. Approved; not armed yet.`;
+    }
+    return `${schedule}. Next run: ${note.nextRun.toLocaleString()}.`;
   }
 }

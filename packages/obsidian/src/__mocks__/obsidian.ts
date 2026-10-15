@@ -25,7 +25,12 @@ export class Plugin {
       modify: async () => {},
       create: async () => {},
       createFolder: async () => {},
-      on: () => ({ unload: () => {} }),
+      // Handlers registered with on(), by event name, so tests can fire them.
+      handlers: {} as Record<string, Array<(...args: any[]) => unknown>>,
+      on(name: string, cb: (...args: any[]) => unknown) {
+        (this.handlers[name] ??= []).push(cb);
+        return { unload: () => {} };
+      },
     },
     workspace: {
       getActiveFile: () => null,

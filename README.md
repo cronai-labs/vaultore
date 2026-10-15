@@ -119,6 +119,12 @@ schedule: "0 18 * * *"   # every day at 6pm
 ---
 ```
 
+Nothing runs on a schedule until you opt in. **Settings → VaultOre → Scheduled workflows**
+lists every note with a schedule, its next run or why its schedule is invalid. Turn on
+**Run scheduled workflows**, then approve each note you want to run. An approval covers that
+note's path and exact schedule: a changed schedule, a renamed note, or a note that arrives
+later through sync is listed but does not run until you approve it.
+
 ## 🔐 Security & Privacy
 
 - **Code execution is sandboxed.** `ore:ts` and `ore:shell` cells run inside containers with **network disabled by default**, memory/CPU limits, and your vault mounted read-only unless a workflow is granted write permission.
