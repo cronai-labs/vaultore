@@ -1,169 +1,133 @@
-# Workflow Note Specification v0.2
+# Workflow Note Specification
 
-> **Status:** Canonical  
-> **Version:** 0.2.0  
-> **Last Updated:** 2026-01-10  
-> **Repository:** [github.com/cronai-labs/vaultore](https://github.com/cronai-labs/vaultore)
+> **Status:** Canonical for the format. Sections 1–8 describe what the code does at
+> version 0.1.0; [Planned](#planned) lists what is specified but not built.
+> **Last Updated:** 2026-10-15
 
-## Overview
+A VaultOre workflow is a Markdown note in the vault that contains executable cells. This
+specification defines its format and how it runs. Where a behaviour comes from a specific
+place in the code, the section names the symbol (`packages/core/src/…`).
 
-A VaultOre "workflow" is a markdown file in the vault that contains executable cells. This specification defines the format, syntax, and semantics.
+Permissions and their defaults are specified in [permissions-spec.md](permissions-spec.md),
+the container sandbox in [sandbox-spec.md](sandbox-spec.md). This document links to them
+rather than repeating them.
 
 ## 1. File Structure
 
-A workflow note has two parts:
-1. **YAML Frontmatter** — Metadata and configuration
-2. **Markdown Body** — Content with embedded `ore:*` cells
+A workflow note has YAML frontmatter with `ore: true`, and a Markdown body with `ore:*` cells.
+After a run, VaultOre writes an output callout under each cell:
 
 ````markdown
 ---
 ore: true
 name: My Workflow
-...
 ---
 
 # My Workflow
 
-Description and documentation.
+Any Markdown.
 
 ```ore:ts id=step1
-// Code here
+1 + 1;
 ```
 
 > [!ore-output] step1
 > view: [[_vaultore/runs/my-workflow/RUN_ID/step1.md]]
+> ![[_vaultore/runs/my-workflow/RUN_ID/step1.md]]
 > json: [[_vaultore/runs/my-workflow/RUN_ID/step1.json]]
 > run: RUN_ID
-> status: success | duration: 0.12s | at: 2026-01-09T08:00:00Z
+> status: success | duration: 0.12s | at: 2026-10-15T08:00:00.000Z
 ````
+
+A note is a workflow when its frontmatter parses and `ore` is the boolean `true`
+(`isWorkflowFrontmatter`). The plugin offers its run commands only on such notes.
 
 ---
 
-## 2. Frontmatter Schema
+## 2. Frontmatter
+
+The frontmatter is validated against `WorkflowFrontmatterSchema`
+(`packages/core/src/types/index.ts`). A known key with the wrong type fails the run with
+`Invalid frontmatter: …`. **Unknown keys are dropped without a warning**: a `runIf:` or
+`defaultModel:` in frontmatter is ignored, not rejected. Every key, known or not, is still part
+of what a permission decision is bound to (permissions-spec §5.3).
 
 ### 2.1 Required Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ore` | `true` | **Required.** Marks this note as a workflow. |
-| `name` | `string` | **Required.** Human-readable workflow name. |
+| `ore` | `true` | Marks the note as a workflow |
+| `name` | string | Human-readable name; `vaultore list` shows it |
 
 ### 2.2 Optional Fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `version` | `string` | `"0.1"` | Semantic version of the workflow |
-| `author` | `string` | — | Creator's name |
-| `tags` | `string[]` | `[]` | Tags for categorization |
-| `description` | `string` | — | Longer description |
-| `runIf` | `string` | — | Semantic condition for workflow execution (v0.2+) |
+| Field | Type | Description |
+|-------|------|-------------|
+| `version` | string | The workflow's own version. Quote it: `version: "0.1"`. Unquoted, `0.1` is a YAML number and fails validation |
+| `author` | string | |
+| `tags` | string[] | |
+| `description` | string | |
 
-### 2.3 Runtime Configuration
+### 2.3 Runtime
 
 ```yaml
 runtime:
-  engine: docker           # docker | podman | colima
-  image: oven/bun:1-alpine # Default container image
-  timeout: 60              # Default timeout per cell (seconds)
-  memoryLimit: "512m"      # Container memory limit
-  cpuLimit: 1              # Container CPU limit
+  engine: docker            # docker | podman | colima | apple
+  image: oven/bun:1-alpine  # image for ore:ts and ore:shell cells
+  timeout: 60               # seconds per container cell
+  memoryLimit: "512m"       # passed to --memory
+  cpuLimit: 1               # passed to --cpus
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `runtime.engine` | `string` | `"docker"` | Container runtime |
-| `runtime.image` | `string` | `"oven/bun:1-alpine"` | Default image for TS |
-| `runtime.timeout` | `number` | `60` | Seconds per cell |
-| `runtime.memoryLimit` | `string` | `"512m"` | Memory limit |
-| `runtime.cpuLimit` | `number` | `1` | CPU limit |
+| Field | Default (`DEFAULT_RUNTIME`) | Description |
+|-------|-----------------------------|-------------|
+| `runtime.engine` | the plugin's "Default runtime engine" setting (CLI: `runtimeEngine` in `.vaultore/config.json`), else `docker` | Container engine. When set here it overrides the setting; if that engine is unavailable, the error says the note asked for it |
+| `runtime.image` | `oven/bun:1-alpine` | Image for every `ore:ts` and `ore:shell` cell. It must provide `sh`, and `bun` for TS cells |
+| `runtime.timeout` | `60` | Seconds a container cell may run; a cell's `timeout=` overrides it. AI cells use the AI request timeout instead (§5.3) |
+| `runtime.memoryLimit` | `"512m"` | Container memory limit |
+| `runtime.cpuLimit` | `1` | Container CPU limit |
+
+Every run checks that the engine is available before any cell runs, even when the workflow has
+only AI cells.
 
 ### 2.4 Permissions
 
 ```yaml
 permissions:
-  network: ask          # allow | deny | ask
-  vaultWrite: ask       # allow | deny | ask
-  vaultRead: allow      # allow | deny | ask
-  buildNetwork: ask     # allow | deny | ask (for Go/Python builds)
+  network: deny        # allow | deny | ask
+  vaultRead: allow
+  vaultWrite: deny
+  buildNetwork: deny
 ```
 
-| Permission | Default | Description |
-|------------|---------|-------------|
-| `network` | `deny` | Runtime network access |
-| `buildNetwork` | `ask` | Network during builds (Go modules, pip) |
-| `vaultRead` | `allow` | Read notes from vault |
-| `vaultWrite` | `deny` | Write/create notes |
+Defaults, what each permission controls and how `ask` is resolved: permissions-spec §2–§5.
 
-### 2.5 Scheduling
+### 2.5 Schedule
 
 ```yaml
-schedule: "0 9 * * 1-5"  # Cron expression
+schedule: "0 9 * * 1-5"   # 09:00 on weekdays, machine local time
 ```
 
-Standard 5-field cron syntax. Workflow runs when Obsidian is open and the time matches.
+A cron expression as `cron-parser` 5 reads it: five fields, or six with a leading seconds
+field. Schedulers check every 60 seconds, so the effective resolution is one minute.
 
-### 2.6 Semantic Conditions (v0.2+)
+- **Obsidian plugin:** runs a scheduled note only while Obsidian is open, only when the
+  "Run scheduled workflows" setting is on (off by default), and only when the user approved
+  that note's exact schedule in the settings list. A changed schedule, a renamed note or a note
+  that arrives through sync is listed but not run until approved. An invalid expression is
+  shown in the list and reported once as a notice.
+- **`vaultore agent`:** runs every workflow in the vault that has a schedule. It has no
+  approval list.
 
-VaultOre supports AI-evaluated conditions using the `{{ai: condition}}` syntax. This allows dynamic workflow behavior based on content understanding.
+### 2.6 `go:`
 
-```yaml
-# Run only if condition is met
-runIf: "{{ai: the inbox has more than 5 unprocessed items}}"
-
-# Skip weekends intelligently
-runIf: "{{ai: today is a workday and there are pending tasks}}"
-```
-
-#### Condition Evaluation
-
-1. Conditions are evaluated **before** any cells run
-2. The AI receives the condition text + relevant context (referenced notes)
-3. AI returns `true` or `false`
-4. If `false`, the workflow is skipped (logged, not errored)
-
-#### Cell-Level Conditions
-
-Individual cells can also have conditions:
-
-````markdown
-```ore:ai id=summarize when="{{ai: the content is longer than 500 words}}"
-Summarize this content: {{fetch}}
-```
-````
-
-#### Condition Context
-
-Conditions can reference:
-- `{{note:path}}` — content of a note
-- `{{cellId}}` — output of a prior cell
-- `{{meta:date}}` — current date/time
-- `{{meta:vault}}` — vault metadata
-
-### 2.7 Go Configuration (v0.3+, Future)
-
-> **Status:** Planned for v0.3. See [Go Cell Specification](go-cell-spec.md) for complete details.
-
-```yaml
-go:
-  version: "1.23"
-  builderImage: "ghcr.io/vaultore/go-builder:1.23"
-  cgo: 0
-  tags: ""
-  ldflags: "-s -w"
-  cache:
-    enabled: true
-    dir: ".vaultore/cache/go"
-```
-
-**Note:** Go support is not part of the MVP (v0.1). TS/Bun is the primary runtime for rapid development and iteration. Go will be added in v0.3 as a complementary "compiled tools" lane for performance-critical, stable transforms. See [Roadmap](../docs/roadmap.md#v03-go--control-flow-month-2-3) for timeline.
+The schema accepts a `go:` block ([go-cell-spec.md](go-cell-spec.md)); nothing reads it.
 
 ---
 
-## 3. Cell Syntax
+## 3. Cells
 
-### 3.1 Basic Form
-
-Cells are fenced code blocks with the `ore:` prefix:
+### 3.1 Form
 
 ````markdown
 ```ore:<type> <attributes>
@@ -171,531 +135,350 @@ Cells are fenced code blocks with the `ore:` prefix:
 ```
 ````
 
-### 3.2 Cell Types
+| Type | Status |
+|------|--------|
+| `ore:ts` | TypeScript or JavaScript, run by Bun in a container (§5.1) |
+| `ore:shell` | `sh -lc <content>` in a container (§5.2) |
+| `ore:ai` | One completion from the configured provider (§5.3) |
+| `ore:py`, `ore:go` | Parsed, but the cell fails at run time with `Cell type not supported in v0.1` ([Planned](#planned)) |
 
-| Type | Syntax | Description | Version |
-|------|--------|-------------|---------|
-| TypeScript | `ore:ts` | JavaScript/TypeScript via Bun | v0.1 |
-| Shell | `ore:shell` | Bash commands | v0.1 |
-| AI Prompt | `ore:ai` | LLM completion | v0.1 |
-| Python | `ore:py` | Python 3 | v0.2+ |
-| Go | `ore:go` | Compiled Go with caching | v0.3+ (future) |
+The content is trimmed. A fence with any other `ore:` type is not a cell.
 
-**Note:** Go cells are planned for v0.3. See [Go Cell Specification](go-cell-spec.md) for details.
+### 3.2 Attribute Syntax
+
+Attributes follow the type on the fence line, separated by spaces: `key=value`,
+`key="value with spaces"`, `key='value'`, or `key=[a, b]` for lists. Keys are letters, digits
+and `_`. Unknown attributes are ignored.
+
+````markdown
+```ore:ai id=summarize depends=[fetch, config] model=gpt-5-mini temperature=0
+````
 
 ### 3.3 Attributes
 
-Attributes are specified as `key=value` or `key="value"` pairs:
+| Attribute | Applies to | Description |
+|-----------|------------|-------------|
+| `id` | all | **Required.** Unique within the note; a missing or duplicate id is a parse error. Use letters, digits, `_` and `-`: only those can be referenced as `{{id}}`, and other characters become `_` in output file names |
+| `depends` | all | Ids of cells that must succeed first (§6). An unknown id is a parse error |
+| `timeout` | `ts`, `shell` | Seconds; overrides `runtime.timeout`. A non-numeric value currently disables the timeout ([#45](https://github.com/cronai-labs/vaultore/issues/45)) |
+| `model` | `ai` | Model id (§5.3) |
+| `temperature` | `ai` | Number; overrides the temperature setting |
+| `maxTokens` | `ai` | Integer; `max_tokens` is accepted as well. Overrides the max tokens setting |
 
-```markdown
-```ore:ts id=fetch depends=[config] timeout=120
-```
-
-#### Required Attributes
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `id` | `string` | **Required.** Unique identifier within the workflow. |
-
-#### Common Optional Attributes
-
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `depends` | `string[]` | `[]` | Cell IDs that must run first |
-| `timeout` | `number` | `60` | Timeout in seconds |
-| `env` | `object` | `{}` | Environment variables |
-| `when` | `string` | — | Semantic condition (v0.2+) |
-| `retry` | `number` | `0` | Retry count on failure |
-| `continueOnError` | `boolean` | `false` | Continue workflow if cell fails |
-
-#### Semantic Condition Attribute (v0.2+)
-
-The `when` attribute accepts a semantic condition that's evaluated by AI:
-
-````markdown
-```ore:ai id=summarize when="{{ai: the content exceeds 500 words}}"
-Summarize: {{fetch}}
-```
-````
-
-If the condition evaluates to `false`, the cell is **skipped** (not errored). This enables:
-
-- Conditional processing based on content
-- Smart filtering without explicit code
-- Dynamic workflow paths
-
-#### AI-Specific Attributes
-
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `model` | `string` | (from settings) | Model to use |
-| `temperature` | `number` | (from settings) | Model sampling temperature |
-| `maxTokens` | `number` | (from settings) | Max tokens for the response |
-
-#### Go-Specific Attributes (v0.3+, Future)
-
-> **Status:** Planned for v0.3. See [Go Cell Specification](go-cell-spec.md) for complete details.
-
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `mode` | `string` | `"tool"` | `tool` or `module` |
-| `stdin` | `string` | `"none"` | Input source: `none`, `cell:<id>`, `note:<path>`, `file:<path>` |
-| `stdout` | `string` | `"text"` | Output format: `text`, `json`, `jsonl` |
-| `goVersion` | `string` | (from config) | Go version |
-| `builderImage` | `string` | (from config) | Build container image |
-| `cgo` | `number` | `0` | CGO_ENABLED value |
-| `tags` | `string` | `""` | Build tags |
-| `ldflags` | `string` | `"-s -w"` | Linker flags |
-| `args` | `string` | `""` | CLI args passed to tool |
+`mode`, `stdin` and `stdout` are parsed for `ore:go` and unused.
 
 ---
 
-## 4. Template Variables
+## 4. Templates
 
-Inside cell content (especially AI prompts), use double braces for interpolation:
+Templates are resolved in **`ore:ai` cells only**. TS and shell cell content is passed
+through as written; a TS cell reads upstream values with `cell()`.
 
-| Syntax | Description |
+| Syntax | Resolves to |
 |--------|-------------|
-| `{{cellId}}` | Output of cell with given ID |
-| `{{note:Path/To/Note.md}}` | Content of a vault note |
-| `{{block:Note#^blockId}}` | Specific block from a note |
+| `{{cellId}}` | That cell's output: a string as is, anything else as indented JSON. An id with no output yet stays as the literal text |
+| `{{note:Path/To/Note.md}}` | The note's content, by vault-relative path |
 
-Variables are resolved in one pass over the cell's own text. Inserted text is not scanned
-again: an output that contains `{{note:…}}` reaches the prompt as those literal characters,
-so fetched text cannot pull a note into a prompt. Building a note path in one cell and loading
-it in the next is tracked as a future feature (#71); until then, use `vault.read()` in an
-`ore:ts` cell.
+Templates are resolved in one pass over the cell's own text (`interpolateAsync`). Inserted
+text is not scanned again: an output that contains `{{note:…}}` reaches the prompt as those
+characters, so fetched text cannot pull a note into a prompt. Building a note path in one cell
+and loading it in the next is a proposed feature
+([#71](https://github.com/cronai-labs/vaultore/issues/71)); a TS cell can do it today with
+`vault.read(cell("path"))`.
 
 `{{note:path}}` is a vault read. Under `vaultRead: deny`, or when the note cannot be read, the
 cell fails before anything is sent.
 
-### 4.1 Examples
-
-```markdown
-```ore:ai id=summarize depends=[fetch]
-Summarize this content:
-{{fetch}}
-```
-
-```markdown
-```ore:ai id=analyze
-Based on my notes:
-{{note:Research/findings.md}}
-```
-
 ---
 
-## 5. Output Persistence
+## 5. Cell Semantics
 
-### 5.1 Format
+Each container cell runs in a fresh container that is removed afterwards (`--rm`). Nothing
+persists between cells except outputs and files written into the vault. How the vault is
+mounted, and the container's hardening, are in permissions-spec §3–§4.
 
-VaultOre writes a lightweight output stub (ore-output callout) after each cell and stores full outputs under the output root (default `_vaultore`):
+### 5.1 `ore:ts`
+
+The cell runs as `/tmp/vaultore.ts` under `bun` in `runtime.image`, with the working
+directory `/workspace` (the vault mount).
+
+**Output:** the value of the cell's last top-level expression statement, awaited, then passed
+through `JSON.stringify`; what JSON cannot hold (a function, a `Map`, a `Date` as an object) does not
+survive. A cell that ends in a declaration or a block has no value and records the text
+`undefined`. A non-zero exit fails the cell with its stderr.
 
 ````markdown
-```ore:ts id=example
-1 + 1
+```ore:ts id=sum
+const x = 1;
+const y = 2;
+x + y;          // output: 3
 ```
-
-> [!ore-output] example
-> view: [[_vaultore/runs/my-workflow/RUN_ID/example.md]]
-> json: [[_vaultore/runs/my-workflow/RUN_ID/example.json]]
-> run: RUN_ID
-> status: success | duration: 0.12s | at: 2026-01-09T08:00:00Z
 ````
 
-### 5.2 Output Files
+**Globals** (injected by `buildTypeScriptRuntime`, `packages/core/src/executor/index.ts`):
 
-- **JSON record:** `<outputRoot>/runs/<workflowPath>/<runId>/<cellId>.json`
-- **Markdown view:** same path with `.md` extension (human-friendly)
+| Global | Behaviour |
+|--------|-----------|
+| `cell(id)` | The output value of cell `id`, from this run or, if it did not run, from its last recorded output. Throws if there is none. Declare the cell in `depends` so this cell waits for it and does not run when it failed |
+| `vault.read(path)` | Reads `/workspace/<path>`. Needs `vaultRead` |
+| `vault.exists(path)` | Needs `vaultRead` |
+| `vault.write(path, content)` | Writes through the mount, not through Obsidian. Needs `vaultWrite`; without `vaultRead`, only inside this run's directory |
+| `vault.mkdirp(path)` | Same rule as `vault.write` |
+| `vault.readRaw(path)` | Reads any path inside the container, such as `/proc/meminfo`. No permission check |
+| `vaultore` | `{ runId, outputRoot, runDir, workflowPath }` for this run |
 
-Example JSON record:
+The permission checks in these helpers only turn a doomed access into a clear error; the mount
+is what enforces them (permissions-spec §3.3). Bun's own APIs and `fetch` are available;
+`fetch` reaches the network only under `network: allow`.
 
-```json
-{
-  "runId": "RUN_ID",
-  "workflowPath": "vaultore/fixtures/canonical/hello-world.md",
-  "cellId": "example",
-  "value": 2,
-  "meta": {
-    "status": "success",
-    "duration": 120,
-    "timestamp": "2026-01-09T08:00:00Z",
-    "runId": "RUN_ID",
-    "outputPath": "_vaultore/runs/my-workflow/RUN_ID/example.json",
-    "outputViewPath": "_vaultore/runs/my-workflow/RUN_ID/example.md"
-  }
-}
-```
+The environment has `VAULTORE_RUN_ID`, `VAULTORE_OUTPUT_ROOT`, `VAULTORE_RUN_DIR` and
+`HOME=/tmp`.
 
-### 5.3 Payload Format
+### 5.2 `ore:shell`
 
-- **TypeScript/Shell:** Last expression or stdout
-- **AI:** Model response text
-- **JSON cells:** Pretty-printed JSON
+The content runs as `sh -lc <content>` in `runtime.image` (the default image's `sh` is
+busybox), with the working directory `/workspace` and the same environment, mounts and
+hardening as a TS cell.
 
-### 5.4 Properties
+**Output:** stdout as a string, untrimmed. A non-zero exit fails the cell with its stderr.
 
-- Output stubs are **visible in preview and source**
-- Full outputs are stored as JSON for **diff/history**
-- Output stubs **update in place** on re-run
-- Output stubs can include **artifact links** when a cell returns `artifactDir` or `files`
+### 5.3 `ore:ai`
+
+1. The cell fails with `AI cells require network permission` unless `network` resolves to
+   `allow`.
+2. **Provider:** the "Default provider" setting (CLI: `defaultProvider`), `openai` or
+   `anthropic`; default `openai`. Any other value fails the cell.
+3. **Model:** the cell's `model=`, else the "Default model" setting, else the provider's
+   default (`DEFAULT_MODELS`: `gpt-5-mini` for OpenAI, `claude-haiku-5-5` for Anthropic).
+   VaultOre never switches provider per cell: a `claude-*` model under OpenAI, or a `gpt-*`,
+   `o1*`, `o3*` or `o4*` model under Anthropic, fails the cell before anything is read or sent.
+4. **Prompt:** the cell content with templates resolved (§4), sent as one user message, with
+   no system prompt.
+5. **Parameters:** `temperature` and `maxTokens` from the cell, else from settings. OpenAI
+   models starting with `o1`, `o3` or `gpt-5` get no temperature and receive `max_completion_tokens`
+   instead of `max_tokens`. Anthropic requests always carry `max_tokens`, 800 when nothing is
+   set.
+6. **Timeout:** the "AI request timeout" setting (CLI: `aiTimeoutSeconds`), default 120
+   seconds.
+
+Requests go to `https://api.openai.com/v1/chat/completions` or
+`https://api.anthropic.com/v1/messages`: from the plugin through Obsidian's `requestUrl`, from
+the CLI through `fetch`.
+
+**Output:** the response text, as a string. It is not parsed; a TS cell that needs JSON calls
+`JSON.parse(cell("id"))` (see `fixtures/canonical/smart-inbox.md`).
 
 ---
 
 ## 6. Execution Order
 
-### 6.1 Default Order (v0.1)
-
-Cells execute **top-to-bottom** unless dependencies specify otherwise. This is simple, predictable, and covers 90% of use cases.
-
-### 6.2 Dependency Resolution
-
-If `depends` is specified, VaultOre builds a DAG and executes in topological order.
+Cells run **one at a time**. The order respects `depends`: first every cell without
+dependencies, in document order, then each cell once all of its dependencies have run
+(`orderCells`).
 
 ````markdown
 ```ore:ts id=a
-// Runs first
 ```
 
 ```ore:ts id=b depends=[a]
-// Runs second
 ```
 
 ```ore:ts id=c depends=[a]
-// Runs second (parallel with b in v0.2+)
 ```
 
 ```ore:ts id=d depends=[b, c]
-// Runs third
 ```
 ````
 
-### 6.3 Cycle Detection
+runs `a`, `b`, `c`, `d`.
 
-Circular dependencies are an error:
+- **A cell runs only when every cell it depends on has a successful output.** Otherwise it
+  fails with `Dependency output missing: <id>` or `Dependency failed: <id>`.
+- **A failing cell does not stop the run.** Later cells still run; the ones that depend on it
+  fail as above.
+- **Running one cell** ("Run cell", `vaultore run --cell`) runs that cell and, transitively,
+  what it depends on. "Run cell only (skip dependencies)" (`--skip-deps`) runs just the cell,
+  with its dependencies' last recorded outputs.
+- **A run stops before any cell** when the frontmatter or a cell does not parse, or the engine
+  is not available.
+- **A dependency cycle is not detected.** All cells then run in document order and the first
+  one whose dependency has no output fails
+  ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
+- **One run per note at a time.** The plugin refuses to start a second run of a note that is
+  running; `vaultore agent` skips a scheduled run while the previous one is in progress.
 
-````markdown
-```ore:ts id=a depends=[b]
+---
+
+## 7. Outputs
+
+The host writes outputs, whatever the workflow's `vaultWrite` permission says: that permission
+governs what cells may write.
+
+### 7.1 The Output Callout
+
+After each cell, the note is re-read and the cell's callout replaced, so edits made in the
+note while the run was in flight are kept. If the note was deleted or renamed during the run,
+it is not recreated.
+
+```markdown
+> [!ore-output] <cellId>
+> view: [[<outputRoot>/runs/<workflow>/<runId>/<cellId>.md]]
+> ![[<outputRoot>/runs/<workflow>/<runId>/<cellId>.md]]
+> json: [[<outputRoot>/runs/<workflow>/<runId>/<cellId>.json]]
+> run: <runId>
+> status: success | duration: 0.12s | at: <ISO 8601>
 ```
 
-```ore:ts id=b depends=[a]  # ERROR: Cycle detected
-```
-````
+A failed cell adds `> error: <message>`. A cell whose output names artifacts (§7.3) adds
+`> artifactDir: [[<dir>/_index.md]]` and `> artifacts: [[file]], …`. Older notes may hold
+outputs as `<!-- ore:output:<id> … -->` comments; they are read, and replaced by a callout on
+the next write.
 
-### 6.4 Control Flow Evolution (v0.2+)
+### 7.2 Files
 
-VaultOre v0.1 uses implicit control flow via `depends[]`. Future versions add explicit control flow blocks **without breaking existing workflows**.
+`<outputRoot>` is the "Output folder" setting (CLI: `outputRoot`), default `_vaultore`.
+`<workflow>` is the note's path without `.md`. `<runId>` is the start time with `:` and `.`
+replaced by `-`, and six random characters.
 
-#### v0.2: Parallel Execution (Implicit)
+| File | Content |
+|------|---------|
+| `<outputRoot>/runs/<workflow>/<runId>/<cellId>.json` | The record: `runId`, `workflowPath`, `cellId`, `value`, `meta` (`status`, `duration`, `timestamp`, `error`, `outputPath`, `outputViewPath`, `artifacts`) |
+| `<outputRoot>/runs/<workflow>/<runId>/<cellId>.md` | The same output as a note (below) |
+| `<outputRoot>/runs/<workflow>/<runId>/run.json` | The run: `status` (`running`, then `completed`, `failed` or `aborted`), start and finish times, and each cell's status and duration |
+| `<outputRoot>/runs/<workflow>/index.json` | Every run of the workflow, newest first, with its outputs |
 
-Cells with the same dependencies run in parallel automatically:
+`<cellId>` in file names has every character other than letters, digits, `_` and `-`
+replaced by `_`.
 
-````markdown
-```ore:ts id=fetch1 depends=[config]
-```
-
-```ore:ts id=fetch2 depends=[config]
-// fetch1 and fetch2 run in parallel
-```
-````
-
-#### v0.3: Explicit Control Blocks (Optional)
-
-For power users, explicit control flow blocks in frontmatter:
+The `.md` view is an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+v0.2 concept (`renderOutputMarkdown`, `packages/core/src/executor/output-note.ts`). The
+cell's run state is `cellStatus`, because OKF reserves `status` for the document lifecycle:
 
 ```yaml
-control:
-  - parallel:
-      - fetch1
-      - fetch2
-      - fetch3
-  - sequential:
-      - transform
-      - summarize
-  - loop:
-      cells: [refine]
-      until: "{{ai: the output meets quality standards}}"
-      max: 3
+---
+type: VaultOre Output
+title: step1 output
+description: Output of workflow cell step1 (status success).
+tags:
+  - vaultore
+  - output
+vaultore: output
+cellId: step1
+runId: RUN_ID
+cellStatus: success
+durationMs: 120
+source: _vaultore/runs/my-workflow/RUN_ID/step1.json
+generated:
+  by: vaultore/0.1.0
+  at: 2026-10-15T08:00:00.000Z
+---
 ```
 
-**Key design decision:** Control blocks are **optional and additive**. Existing workflows with `depends[]` continue to work unchanged.
+The body is the value in a fenced block (`text` for a string, `json` otherwise), fenced longer
+than any backtick run inside it.
 
-#### Migration Path
+### 7.3 Artifacts
 
-| Version | Control Flow | Breaking Changes |
-|---------|--------------|------------------|
-| v0.1 | `depends[]` only | — |
-| v0.2 | `depends[]` + implicit parallel | None |
-| v0.3 | `depends[]` + `control:` blocks | None (additive) |
-
-This ensures the "brick-by-brick" philosophy: each feature adds capability without requiring rewrites.
+A TS cell whose output is an object with `artifactDir` (a vault path) and/or `files` (vault
+paths) gets an index note, `<artifactDir>/_index.md`, an OKF concept of type
+`VaultOre Artifacts` that links each file with a relative Markdown link. See the last cell of
+`fixtures/canonical/sys-snapshot.md`.
 
 ---
 
-## 7. TypeScript Cell Semantics
+## 8. Validation Summary
 
-### 7.1 Runtime Environment
+A run fails before any cell when:
 
-- **Engine:** Bun (Node.js compatible)
-- **Container:** Isolated per cell (stateless)
-- **State:** Variables do not persist between cells; use `cell(id)` to pass data
+- there is no frontmatter, it is not valid YAML, or a known key has the wrong type (§2);
+- a cell has no `id`, two cells share one, or `depends` names an unknown cell (§3.3).
 
-### 7.2 Available Globals
-
-```typescript
-// Vault operations
-vault.read(path: string): Promise<string>
-vault.write(path: string, content: string): Promise<void>
-vault.exists(path: string): Promise<boolean>
-vault.mkdirp(path: string): Promise<void>
-vault.readRaw(path: string): Promise<string>  // For /proc, etc.
-
-// Cell references
-cell(id: string): any  // Returns parsed output of cell
-
-// Standard globals
-fetch, console, JSON, Date, etc.
-```
-
-### 7.3 Output Capture
-
-The **last expression** of the cell becomes its output:
-
-````typescript
-```ore:ts id=example
-const x = 1;
-const y = 2;
-x + y;  // Output: 3
-````
+Not validated: unknown frontmatter keys and cell attributes (ignored), dependency cycles
+(§6), whether a `{{cellId}}` names an upstream cell (left as text when it has no output).
 
 ---
 
-## 8. Shell Cell Semantics
+## Planned
 
-### 8.1 Runtime Environment
+Specified in earlier versions of this document and **not built**. The parser drops the keys
+and attributes below, or the engine ignores them. Design work for conditions and structured
+outputs is [#80](https://github.com/cronai-labs/vaultore/issues/80); the
+[roadmap](../docs/roadmap.md) lists the rest.
 
-- **Shell:** Bash (or sh on Alpine)
-- **Container:** Isolated per cell (no shared state)
-- **Working directory:** `/workspace` (vault mounted)
+### Conditions
 
-### 8.2 Output Capture
-
-**stdout** is captured as the cell output.
-
-````bash
-```ore:shell id=example
-echo "Hello"
-ls -la
-```
-<!-- Output: "Hello\n<ls output>" -->
-````
-
-### 8.3 Exit Codes
-
-Non-zero exit codes result in `status: error`.
-
----
-
-## 9. AI Cell Semantics
-
-### 9.1 Prompt Processing
-
-1. Parse template variables (`{{...}}`)
-2. Resolve references (cells, notes)
-3. Send to configured provider
-4. Capture response
-
-### 9.2 Model Selection
-
-Priority order:
-1. `model` attribute on cell
-2. `defaultModel` in workflow frontmatter
-3. Default from plugin settings
-
-### 9.3 Output Format
-
-AI responses are captured as text. If the response is valid JSON, it's parsed for downstream cells.
-
----
-
-## 10. Validation Rules
-
-### 10.1 Frontmatter Validation
-
-- `ore: true` is required
-- `name` is required
-- Unknown fields are warnings (not errors)
-
-### 10.2 Cell Validation
-
-- `id` is required
-- `id` must be unique within the workflow
-- `depends` must reference existing cells
-- No circular dependencies
-
-### 10.3 Template Validation
-
-- `{{cellId}}` must reference a cell that runs before this one
-- `{{note:path}}` must be a valid vault path
-
----
-
-## 11. Example Workflow
-
-### 11.1 Minimal Example
+- **`runIf`** in frontmatter: a condition evaluated before any cell runs; when false, the run
+  is skipped and logged, not failed.
+- **`when=`** on a cell: the cell is skipped when the condition is false, with a `skipped`
+  status that `OutputMeta` does not have yet.
+- **Semantic conditions** `{{ai: …}}`: a condition the AI provider evaluates to true or false.
+  Open in #80: whether conditions are plain expressions over `cell()` outputs, or AI-evaluated
+  (costly and non-deterministic, so it would need its own permission).
 
 ````markdown
 ---
-ore: true
-name: Hello World
-version: 0.1
-
-runtime:
-  engine: docker
-  image: oven/bun:1-alpine
-
-permissions:
-  network: deny
-  vaultWrite: deny
+runIf: "{{ai: the inbox note has unprocessed items}}"
 ---
 
-# Hello World
-
-A minimal VaultOre workflow.
-
-## Step 1: Compute
-
-````ore:ts id=compute
-const message = "Hello from VaultOre!";
-message;
-```
-
-## Step 2: Transform
-
-```ore:ts id=transform depends=[compute]
-const msg = cell("compute");
-msg.toUpperCase();
+```ore:ai id=summarize when="{{ai: the content is longer than 500 words}}"
+Summarize: {{fetch}}
 ```
 ````
 
-### 11.2 Semantic Conditions Example
+### Templates
 
-````markdown
----
-ore: true
-name: Smart Inbox Processor
-version: 0.2
+- `{{block:Note#^blockId}}`: one block of a note.
+- `{{meta:date}}`, `{{meta:vault}}`: run metadata.
+- `{{cell.field}}`: a field of a structured output (#80).
+- Note references whose path comes from an upstream cell
+  ([#71](https://github.com/cronai-labs/vaultore/issues/71)).
 
-schedule: "0 9 * * 1-5"
-runIf: "{{ai: the inbox note has unprocessed items marked with [ ]}}"
+### Cell Attributes
 
-permissions:
-  network: allow
-  vaultWrite: allow
----
+- `env`: environment variables for the cell.
+- `retry`: retries on failure.
+- `continueOnError`: today every failure lets the run continue (§6); this would let a
+  dependent run after a failed dependency.
 
-# Smart Inbox Processor
+### Execution
 
-Processes inbox items only when there's work to do.
+- **Cycle detection:** a dependency cycle or self-dependency as a parse error naming the
+  cycle ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
+- **Parallel cells:** independent cells running at the same time, within resource budgets
+  ([architecture](../ARCHITECTURE.md#parallel-execution-not-built)).
+- **Control blocks:** `control:` in frontmatter with `parallel`, `sequential` and `loop`
+  (`until`, `max`), with `{{loop.iteration}}` and `{{cell.previous}}`. Additive: workflows with
+  only `depends` keep working.
 
-## Step 1: Load Inbox
+### AI Cells
 
-```ore:ts id=loadInbox
-const inbox = await vault.read("Inbox.md");
-inbox;
-```
+- **`defaultModel` in frontmatter**, between the cell's `model=` and the settings.
+- **JSON outputs:** an AI response that is valid JSON parsed for downstream cells, or a
+  JSON mode per provider (#80).
 
-## Step 2: Extract Items (conditional)
+### Cell Types
 
-```ore:ts id=extractItems depends=[loadInbox] when="{{ai: the inbox has at least 3 items}}"
-const inbox = cell("loadInbox");
-const items = inbox.match(/- \[ \] .+/g) || [];
-items;
-```
+- `ore:py`: Python 3.
+- `ore:go`: compiled Go with build caching ([go-cell-spec.md](go-cell-spec.md)).
 
-## Step 3: Categorize with AI
+### Validation
 
-```ore:ai id=categorize depends=[extractItems]
-Categorize these inbox items into: Work, Personal, or Reference.
-
-Items:
-{{extractItems}}
-
-Return as JSON: { "work": [...], "personal": [...], "reference": [...] }
-```
-
-## Step 4: Create Notes
-
-```ore:ts id=createNotes depends=[categorize]
-const categories = JSON.parse(cell("categorize"));
-
-for (const [category, items] of Object.entries(categories)) {
-  if (items.length > 0) {
-    const content = items.map(i => `- [ ] ${i}`).join("\n");
-    await vault.write(`${category}/Inbox-${Date.now()}.md`, content);
-  }
-}
-
-"Notes created successfully";
-```
-````
-
-### 11.3 Loop Example (v0.3+)
-
-````markdown
----
-ore: true
-name: Iterative Refinement
-version: 0.3
-
-control:
-  - loop:
-      cells: [draft, review]
-      until: "{{ai: the draft meets publication quality}}"
-      max: 3
----
-
-# Iterative Refinement
-
-## Draft
-
-```ore:ai id=draft
-Write a blog post about {{note:Topics/Current.md}}
-{{#loop.iteration > 1}}
-Previous draft: {{draft.previous}}
-Feedback: {{review}}
-{{/loop}}
-```
-
-## Review
-
-```ore:ai id=review depends=[draft]
-Review this draft for clarity, accuracy, and engagement:
-{{draft}}
-
-Provide specific, actionable feedback.
-```
-````
+- Warnings for unknown frontmatter keys and cell attributes, instead of dropping them.
+- A JSON Schema for the frontmatter, generated from `WorkflowFrontmatterSchema`.
 
 ---
 
-## Appendix A: EBNF Grammar
+## Appendix A: Grammar
 
 ```ebnf
 workflow     = frontmatter body
-frontmatter  = "---" newline yaml newline "---" newline
+frontmatter  = "---" newline yaml newline "---"
 body         = (text | cell | outputStub)*
 cell         = "```ore:" type attributes newline content "```"
-outputStub   = "> [!ore-output] " id newline ("> " text newline)+
+outputStub   = "> [!ore-output] " cellId newline ("> " text newline)*
 type         = "ts" | "shell" | "ai" | "py" | "go"
-attributes   = (attribute)*
-attribute    = id "=" value
-id           = [a-zA-Z_][a-zA-Z0-9_-]*
-value        = string | "[" string ("," string)* "]"
+attributes   = ((" " | tab) attribute)*
+attribute    = key "=" value
+key          = [A-Za-z0-9_]+
+value        = '"' [^"]* '"' | "'" [^']* "'" | "[" [^\]]* "]" | [^ \t]+
 ```
-
----
-
-## Appendix B: JSON Schema
-
-See `specs/schemas/workflow-frontmatter.json` for the complete JSON Schema.
