@@ -20,7 +20,30 @@ permissions:
   contents: write
 
 jobs:
+  # A tag can point at any commit. Only a commit on main whose ci-required
+  # check concluded success may be released; the gate reads that evidence
+  # rather than re-running CI, and waits while CI on the commit is still
+  # running, which it is when main and the tag are pushed together.
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read # checkout, and compare the tagged commit with main
+      checks: read # the ci-required check run on that commit
+      actions: read # the CI workflow run, to tell "not yet" from "never"
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Tagged commit is on main and passed ci-required
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-gate.sh "$GITHUB_REPOSITORY" "$(git rev-parse 'HEAD^{commit}')"
+
   build:
+    needs: gate
     runs-on: ubuntu-latest
 
     steps:
