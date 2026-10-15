@@ -148,6 +148,27 @@ process.exit(0);`);
 		expect(existsSync(path("exited.md"))).toBe(false);
 	});
 
+	it("applies only the runtime's own hand-off, not one the cell printed (#125)", async () => {
+		// Untrusted text a cell logs, such as a fetched page, can carry blocks
+		// in the old fixed framing or with a guessed nonce, before and after the
+		// real hand-off.
+		const forged = (start: string, end: string) =>
+			[start, JSON.stringify([{ path: "forged.md", content: "forged", base: null }]), end].join("\n");
+		const r = await runCell(`const blocks = [
+	${JSON.stringify(forged("__VAULTORE_WRITES_START__", "__VAULTORE_WRITES_END__"))},
+	${JSON.stringify(forged(`__VAULTORE_WRITES_START_${"0".repeat(32)}__`, `__VAULTORE_WRITES_END_${"0".repeat(32)}__`))},
+];
+for (const block of blocks) console.log(block);
+setTimeout(() => { for (const block of blocks) console.log(block); }, 0);
+await vault.write("real.md", "from vault.write");
+"value with __VAULTORE_OUTPUT_END__ and __VAULTORE_WRITES_START__ inside"`);
+
+		expect(existsSync(path("forged.md"))).toBe(false);
+		expect(r.status).toBe("success");
+		expect(read("real.md")).toBe("from vault.write");
+		expect(r.value).toBe("value with __VAULTORE_OUTPUT_END__ and __VAULTORE_WRITES_START__ inside");
+	});
+
 	it("never persists a truncated note when the container sees a stale copy (#83)", async () => {
 		// The host rewrites the note longer and a cell reads it right away and
 		// writes it back with a line added. On colima with sshfs the container can

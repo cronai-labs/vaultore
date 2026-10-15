@@ -898,16 +898,6 @@ async function ensureArtifactIndex(
   );
 }
 
-function extractVaultoreOutput(stdout: string): { found: boolean; payload: string } {
-  const match = stdout.match(
-    /__VAULTORE_OUTPUT_START__\s*([\s\S]*?)\s*__VAULTORE_OUTPUT_END__/
-  );
-  if (!match?.[1]) {
-    return { found: false, payload: "" };
-  }
-  return { found: true, payload: match[1].trim() };
-}
-
 /**
  * What of the vault a container sees. The mount is the enforcement: the TS
  * runtime's `vault.read` check runs inside the cell, which can bypass it
@@ -980,8 +970,9 @@ async function maskedVaultPaths(
 
 /**
  * `vault.write` in a TS cell does not write through the mount. The cell
- * collects its writes and hands them over after its output, between these
- * markers; the host applies them once the container has exited successfully.
+ * collects its writes and hands them over after its output (see
+ * parseCellStdout); the host applies them once the container has exited
+ * successfully.
  *
  * Why: a cell that reads a note and writes it back can persist a stale copy.
  * Colima's sshfs sharing can show a container a file the host just rewrote
@@ -989,13 +980,7 @@ async function maskedVaultPaths(
  * note while the cell runs. Each write carries the hash of what the cell read
  * from that path (`base`); the host compares it with the note as it is now
  * and refuses the cell's writes when they differ.
- *
- * The block is one marker line, one line of JSON (JSON.stringify never emits a
- * raw newline) and one end marker line. The host takes the last such block, so
- * a cell that logs a marker itself cannot shadow the runtime's own.
  */
-const WRITES_START = "__VAULTORE_WRITES_START__";
-const WRITES_END = "__VAULTORE_WRITES_END__";
 
 /**
  * What the cell knew of a path when it wrote it: the SHA-256 of the text it
@@ -1016,16 +1001,100 @@ function handOffError(detail: string): Error {
   );
 }
 
-/** The writes a TS cell handed over; none for output without a block. */
-function extractPendingWrites(stdout: string): PendingVaultWrite[] {
-  const lines = stdout.split("\n").map((line) => line.replace(/\r$/, ""));
-  const start = lines.lastIndexOf(WRITES_START);
-  if (start === -1) return [];
-  if (lines[start + 2] !== WRITES_END) throw handOffError("no end marker after one line");
+/**
+ * The lines that frame a TS cell's output and its writes on stdout. Each run
+ * of a cell gets its own random nonce in them, so text the cell logs (a
+ * fetched page, a note) cannot pass for a block: it would have to contain
+ * this nonce, which only the cell's own code can know (#125).
+ */
+interface CellFrame {
+  outputStart: string;
+  outputEnd: string;
+  writesStart: string;
+  writesEnd: string;
+}
 
+function newCellFrame(): CellFrame {
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
+  return {
+    outputStart: `__VAULTORE_OUTPUT_START_${nonce}__`,
+    outputEnd: `__VAULTORE_OUTPUT_END_${nonce}__`,
+    writesStart: `__VAULTORE_WRITES_START_${nonce}__`,
+    writesEnd: `__VAULTORE_WRITES_END_${nonce}__`,
+  };
+}
+
+function frameError(detail: string): Error {
+  return new Error(
+    `The cell's output framing is broken (${detail}); none of its writes were applied.`
+  );
+}
+
+/**
+ * A TS cell's value and pending writes from its stdout. The runtime prints
+ * the output block (start line, the value as one line of JSON, end line) and
+ * then the writes block (the same shape, a list of writes); JSON.stringify
+ * never emits a raw newline, so a marker can only match a whole line.
+ *
+ * Exactly one output block and at most one writes block, after it, are
+ * accepted; anything else carrying this run's nonce fails the cell. Lines
+ * without the nonce are the cell's own logging and are ignored. Stdout with
+ * no framing at all, as from a cell that exited early, is taken whole as the
+ * value and applies no writes.
+ */
+function parseCellStdout(
+  stdout: string,
+  frame: CellFrame
+): { value: unknown; writes: PendingVaultWrite[] } {
+  const lines = stdout.split("\n").map((line) => line.replace(/\r$/, ""));
+  const at = (marker: string) =>
+    lines.flatMap((line, index) => (line === marker ? [index] : []));
+  const outputStart = at(frame.outputStart);
+  const outputEnd = at(frame.outputEnd);
+  const writesStart = at(frame.writesStart);
+  const writesEnd = at(frame.writesEnd);
+
+  if (outputStart.length + outputEnd.length + writesStart.length + writesEnd.length === 0) {
+    const whole = stdout.trim();
+    try {
+      return { value: JSON.parse(whole), writes: [] };
+    } catch {
+      return { value: whole, writes: [] };
+    }
+  }
+
+  const [start] = outputStart;
+  if (outputStart.length !== 1 || outputEnd.length !== 1 || start === undefined || outputEnd[0] !== start + 2) {
+    throw frameError("expected exactly one output block");
+  }
+  const payload = lines[start + 1] ?? "";
+  let value: unknown;
+  try {
+    value = JSON.parse(payload);
+  } catch {
+    value = payload;
+  }
+
+  if (writesStart.length === 0 && writesEnd.length === 0) return { value, writes: [] };
+  const [writes] = writesStart;
+  if (
+    writesStart.length !== 1 ||
+    writesEnd.length !== 1 ||
+    writes === undefined ||
+    writes < start + 3 ||
+    writesEnd[0] !== writes + 2
+  ) {
+    throw frameError("expected at most one writes block, after the output block");
+  }
+  return { value, writes: parsePendingWrites(lines[writes + 1] ?? "") };
+}
+
+function parsePendingWrites(line: string): PendingVaultWrite[] {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(lines[start + 1] ?? "");
+    parsed = JSON.parse(line);
   } catch {
     throw handOffError("not JSON");
   }
@@ -1190,10 +1259,11 @@ async function executeTypeScriptCell(
   runContext: RunContext
 ): Promise<unknown> {
   const vaultRoot = await platform.getVaultRoot();
-  const runtimeScript = buildTypeScriptRuntime(outputs, permissions, runContext);
+  const frame = newCellFrame();
+  const runtimeScript = buildTypeScriptRuntime(outputs, permissions, runContext, frame);
   const { body, lastExpression } = extractLastExpression(cell.content);
 
-  const script = `${runtimeScript}\n\nconst __vaultore_value = await (async () => {\n${body}\nreturn ${lastExpression};\n})();\nconst __vaultore_payload = JSON.stringify(__vaultore_value);\nconsole.log("__VAULTORE_OUTPUT_START__");\nconsole.log(__vaultore_payload);\nconsole.log("__VAULTORE_OUTPUT_END__");\n__vaultore_handOff();\n`;
+  const script = `${runtimeScript}\n\nconst __vaultore_value = await (async () => {\n${body}\nreturn ${lastExpression};\n})();\nconst __vaultore_payload = JSON.stringify(__vaultore_value);\nconsole.log(${JSON.stringify(frame.outputStart)});\nconsole.log(__vaultore_payload);\nconsole.log(${JSON.stringify(frame.outputEnd)});\n__vaultore_handOff();\n`;
 
   const containerOpts: ContainerExecOptions = {
     image: runtime.image,
@@ -1220,27 +1290,9 @@ async function executeTypeScriptCell(
 
   // Only a cell that succeeded gets its writes applied: one that failed part
   // way leaves the vault as it was.
-  await applyVaultWrites(
-    platform,
-    permissions,
-    runContext,
-    extractPendingWrites(result.stdout)
-  );
-
-  const extracted = extractVaultoreOutput(result.stdout);
-  if (extracted.found) {
-    try {
-      return JSON.parse(extracted.payload);
-    } catch {
-      return extracted.payload;
-    }
-  }
-
-  try {
-    return JSON.parse(result.stdout.trim());
-  } catch {
-    return result.stdout.trim();
-  }
+  const { value, writes } = parseCellStdout(result.stdout, frame);
+  await applyVaultWrites(platform, permissions, runContext, writes);
+  return value;
 }
 
 async function executeShellCell(
@@ -1339,7 +1391,8 @@ async function executeAICell(
 function buildTypeScriptRuntime(
   outputs: Map<string, CellOutput>,
   permissions: ResolvedPermissions,
-  runContext: RunContext
+  runContext: RunContext,
+  frame: Pick<CellFrame, "writesStart" | "writesEnd">
 ): string {
   const outputsJson = JSON.stringify(
     Object.fromEntries(
@@ -1407,9 +1460,9 @@ function __vaultore_sha256(text) {
   return hasher.digest("hex");
 }
 function __vaultore_handOff() {
-  console.log("__VAULTORE_WRITES_START__");
+  console.log(${JSON.stringify(frame.writesStart)});
   console.log(JSON.stringify(Array.from(__vaultore_pending.values())));
-  console.log("__VAULTORE_WRITES_END__");
+  console.log(${JSON.stringify(frame.writesEnd)});
   __vaultore_handedOff = true;
 }
 // A cell that ends with process.exit() never reaches the hand-off; fail it

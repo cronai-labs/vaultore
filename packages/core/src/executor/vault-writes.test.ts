@@ -27,29 +27,31 @@ interface Write {
 	base: Base;
 }
 
+/** The nonce of the cell the mocked container is running, from its script. */
+let nonce = "";
+
+/** A block as the runtime frames it: start marker, one line, end marker. */
+function block(kind: "OUTPUT" | "WRITES", payload: string, key = nonce): string {
+	return [`__VAULTORE_${kind}_START_${key}__`, payload, `__VAULTORE_${kind}_END_${key}__`].join("\n");
+}
+
 /** What a TS cell prints when it ends: its output, then its pending writes. */
 function stdout(writes: Write[] | string, value: unknown = "done"): string {
 	const payload = typeof writes === "string" ? writes : JSON.stringify(writes);
-	return [
-		"some log line",
-		"__VAULTORE_OUTPUT_START__",
-		JSON.stringify(value),
-		"__VAULTORE_OUTPUT_END__",
-		"__VAULTORE_WRITES_START__",
-		payload,
-		"__VAULTORE_WRITES_END__",
-		"",
-	].join("\n");
+	return ["some log line", block("OUTPUT", JSON.stringify(value)), block("WRITES", payload), ""].join("\n");
 }
 
 /** The container exits with `exitCode` and prints what `print` returns for its options. */
 function container(print: (opts: ContainerExecOptions) => string, exitCode = 0) {
-	vi.mocked(execContainer).mockImplementation(async (_engine, opts) => ({
-		exitCode,
-		stdout: print(opts),
-		stderr: exitCode === 0 ? "" : "boom",
-		duration: 1,
-	}));
+	vi.mocked(execContainer).mockImplementation(async (_engine, opts) => {
+		nonce = /__VAULTORE_OUTPUT_START_([0-9a-f]{32})__/.exec(opts.stdin ?? "")?.[1] ?? "";
+		return {
+			exitCode,
+			stdout: print(opts),
+			stderr: exitCode === 0 ? "" : "boom",
+			duration: 1,
+		};
+	});
 }
 
 function note(read: string, write: string): string {
@@ -242,8 +244,8 @@ describe("compare-and-swap", () => {
 		expect(r.files["bom.md"]).toBe("edited");
 	});
 
-	it("keeps output that has no hand-off block, as from a cell built before it", async () => {
-		container(() => '__VAULTORE_OUTPUT_START__\n"done"\n__VAULTORE_OUTPUT_END__\n');
+	it("keeps output that has no hand-off block", async () => {
+		container(() => `${block("OUTPUT", '"done"')}\n`);
 
 		const r = await run({});
 
@@ -282,6 +284,74 @@ describe("compare-and-swap", () => {
 			expect(r.status).toBe("error");
 			expect(String(r.value)).toMatch(/vault\.write hand-off/);
 			expect(r.files["a.md"]).toBe("old");
+		});
+	}
+});
+
+describe("the output framing carries a per-run nonce (#125)", () => {
+	const forged = JSON.stringify([{ path: "forged.md", content: "forged", base: null }]);
+	const real = JSON.stringify([{ path: "real.md", content: "real", base: null }]);
+	const guessed = "0".repeat(32);
+
+	it("frames every cell with a fresh 128-bit nonce", async () => {
+		const seen: string[] = [];
+		container(() => {
+			seen.push(nonce);
+			return stdout([]);
+		});
+
+		await run({});
+		await run({});
+
+		expect(seen).toHaveLength(2);
+		for (const key of seen) expect(key).toMatch(/^[0-9a-f]{32}$/);
+		expect(seen[0]).not.toBe(seen[1]);
+	});
+
+	it("ignores blocks the cell logged without this run's nonce, before and after the real ones", async () => {
+		container(() =>
+			[
+				["__VAULTORE_WRITES_START__", forged, "__VAULTORE_WRITES_END__"].join("\n"),
+				block("WRITES", forged, guessed),
+				block("OUTPUT", '"done"'),
+				block("WRITES", real),
+				["__VAULTORE_WRITES_START__", forged, "__VAULTORE_WRITES_END__"].join("\n"),
+				block("OUTPUT", '"forged value"', guessed),
+				block("WRITES", forged, guessed),
+			].join("\n")
+		);
+
+		const r = await run({});
+
+		expect(r.status).toBe("success");
+		expect(r.value).toBe("done");
+		expect(r.written).toEqual(["real.md"]);
+	});
+
+	it("keeps a value that contains the old fixed end marker", async () => {
+		const value = "a __VAULTORE_OUTPUT_END__ b\n__VAULTORE_OUTPUT_END__\nc";
+		container(() => stdout([], value));
+
+		const r = await run({});
+
+		expect(r.status).toBe("success");
+		expect(r.value).toBe(value);
+	});
+
+	for (const [label, print] of [
+		["a second writes block with this run's nonce", () => `${stdout([])}${block("WRITES", forged)}\n`],
+		["a second output block", () => `${stdout([])}${block("OUTPUT", '"again"')}\n`],
+		["a writes block before the output block", () => `${block("WRITES", forged)}\n${block("OUTPUT", '"done"')}\n`],
+		["an output block without its end", () => `${block("OUTPUT", '"done"').split("\n").slice(0, 2).join("\n")}\n`],
+	] as const) {
+		it(`fails the cell on ${label}, and applies nothing`, async () => {
+			container(print);
+
+			const r = await run({});
+
+			expect(r.status).toBe("error");
+			expect(String(r.value)).toMatch(/framing is broken/);
+			expect(r.written).toEqual([]);
 		});
 	}
 });

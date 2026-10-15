@@ -255,10 +255,16 @@ keeps its base.
   `vault.read`/`vault.exists`, not on disk. A cell that only reads can still see a stale copy.
   Read-modify-write belongs in `vault.read` and `vault.write`.
 
-The writes travel on stdout after the output block, as one line of JSON between
-`__VAULTORE_WRITES_START__` and `__VAULTORE_WRITES_END__` lines: a list of
-`{ path, content, base }`, where `base` is `{ "sha256": "<hex>" }`, `{ "absent": true }` or
-`null`. Output without that block applies no writes.
+**Framing on stdout.** The host gives each cell run a random 128-bit nonce, written into its
+script. The runtime prints the value as one line of JSON between
+`__VAULTORE_OUTPUT_START_<nonce>__` and `__VAULTORE_OUTPUT_END_<nonce>__` lines, then the writes
+the same way between `__VAULTORE_WRITES_START_<nonce>__` and `__VAULTORE_WRITES_END_<nonce>__`:
+a list of `{ path, content, base }`, where `base` is `{ "sha256": "<hex>" }`,
+`{ "absent": true }` or `null`. Lines without the nonce are the cell's own logging, so text it
+prints, such as a fetched page, cannot pass for a block. Exactly one output block and at most
+one writes block after it are accepted; a second block, or a writes block before the output,
+fails the cell and applies nothing. Stdout without any framing, as from a cell that exited
+early, is the value as a whole and applies no writes.
 
 The environment has `VAULTORE_RUN_ID`, `VAULTORE_OUTPUT_ROOT`, `VAULTORE_RUN_DIR` and
 `HOME=/tmp`.
