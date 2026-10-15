@@ -7,6 +7,7 @@ import {
 	stripLeading,
 	stripTrailing,
 } from "./index";
+import type { CellAttributes } from "../types";
 
 /**
  * CodeQL flagged six polynomial-backtracking regexes (js/polynomial-redos) in
@@ -75,12 +76,12 @@ describe("CELL_ATTR_REGEX", () => {
 			"t.md"
 		);
 
-		const attrs = workflow.cells[2]?.attributes as Record<string, unknown>;
-		expect(attrs.id).toBe("a");
-		expect(attrs.depends).toEqual(["b", "c"]);
-		expect(attrs.stdin).toBe("x y"); // double-quoted value containing a space
-		expect(attrs.model).toBe("m"); // single-quoted
-		expect(attrs.timeout).toBe(30); // bare
+		const attrs: CellAttributes | undefined = workflow.cells[2]?.attributes;
+		expect(attrs?.id).toBe("a");
+		expect(attrs?.depends).toEqual(["b", "c"]);
+		expect(attrs?.stdin).toBe("x y"); // double-quoted value containing a space
+		expect(attrs?.model).toBe("m"); // single-quoted
+		expect(attrs?.timeout).toBe(30); // bare
 	});
 });
 
