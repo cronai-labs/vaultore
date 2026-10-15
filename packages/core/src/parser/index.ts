@@ -140,6 +140,20 @@ export class WorkflowParser {
   }
 
   /**
+   * The frontmatter as written, unvalidated. `parseFrontmatter` returns the
+   * schema's view, which drops keys it does not know.
+   */
+  parseRawFrontmatter(content: string): unknown {
+    const match = content.match(FRONTMATTER_REGEX);
+    if (!match) return undefined;
+    try {
+      return parseYaml(match[1]);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Check if content is a valid workflow
    */
   isWorkflow(content: string): boolean {

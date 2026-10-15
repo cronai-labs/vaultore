@@ -67,7 +67,8 @@ export class WorkflowExecutor {
       const permissions = await resolvePermissions(
         options.platform,
         workflow.path,
-        workflow.frontmatter
+        workflow.frontmatter,
+        await grantHash(this.parser, workflow)
       );
 
       const engineChoice = resolveEngine(
@@ -285,21 +286,72 @@ interface RunContext {
   outputRoot: string;
 }
 
+/** A stored decision, bound to the content it was given for (permissions-spec §5.3). */
+type StoredDecision = WorkflowPermissions & {
+  workflowHash?: string;
+  grantedAt?: string;
+};
+
+/**
+ * What a permission decision is bound to: the frontmatter as written (keys
+ * the schema drops included) and each cell's attributes and source. Line
+ * numbers and output stubs are left out — the executor rewrites outputs into
+ * the note after every cell, so they change on every run.
+ */
+async function grantHash(
+  parser: WorkflowParser,
+  workflow: Workflow
+): Promise<string> {
+  const fingerprint = canonicalJson({
+    frontmatter: parser.parseRawFrontmatter(workflow.rawContent) ?? null,
+    cells: workflow.cells.map((cell) => ({
+      attributes: cell.attributes,
+      content: cell.content,
+    })),
+  });
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(fingerprint)
+  );
+  return Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+/** JSON with object keys sorted, so key order in the note does not matter. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0
+          )
+        )
+      : v
+  );
+}
+
 async function resolvePermissions(
   platform: PlatformAdapter,
   workflowPath: string,
-  frontmatter: WorkflowFrontmatter
+  frontmatter: WorkflowFrontmatter,
+  workflowHash: string
 ): Promise<ResolvedPermissions> {
   const merged: WorkflowPermissions = {
     ...DEFAULT_PERMISSIONS,
     ...frontmatter.permissions,
   };
 
-  const stored = (platform.getSetting<Record<string, WorkflowPermissions>>(
+  const stored = (platform.getSetting<Record<string, StoredDecision>>(
     "vaultore.permissionDecisions"
-  ) ?? {}) as Record<string, WorkflowPermissions>;
+  ) ?? {}) as Record<string, StoredDecision>;
 
-  const current = stored[workflowPath];
+  // A decision applies only to the content it was given for. Without this, one
+  // grant covered every later version of the file at that path — an edit
+  // arriving through sync, or another note saved under the same name. A
+  // decision stored before hashes existed has none and is asked again.
+  const previous = stored[workflowPath];
+  const current = previous?.workflowHash === workflowHash ? previous : undefined;
   const resolved: WorkflowPermissions = { ...merged };
 
   for (const key of Object.keys(merged) as (keyof WorkflowPermissions)[]) {
@@ -321,7 +373,11 @@ async function resolvePermissions(
     resolved[key] = approved ? "allow" : "deny";
   }
 
-  stored[workflowPath] = resolved;
+  stored[workflowPath] = {
+    ...resolved,
+    workflowHash,
+    grantedAt: current?.grantedAt ?? new Date().toISOString(),
+  };
   await platform.setSetting("vaultore.permissionDecisions", stored);
 
   return {

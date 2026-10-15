@@ -212,3 +212,85 @@ describe("container mounts follow vaultRead (#68)", () => {
 		});
 	}
 });
+
+describe("grants are bound to the note's content (#69)", () => {
+	// One `ask` key, so each run that asks prompts exactly once.
+	const GRANTED = note(
+		"  network: ask\n  buildNetwork: deny\n  vaultRead: allow",
+		"```ore:ai id=summary\nSay hello.\n```"
+	);
+
+	/** One vault and settings store across runs, as in a real session. */
+	function session(confirm?: (message: string) => Promise<boolean>) {
+		const v = vault({ "Private/secret.md": SECRET });
+		const prompts: string[] = [];
+		if (confirm) {
+			(v.platform as { confirm?: unknown }).confirm = async (message: string) => {
+				prompts.push(message);
+				return confirm(message);
+			};
+		}
+		async function runNote(content: string) {
+			v.files["wf.md"] = content;
+			const workflow = await new WorkflowExecutor().runWorkflow({
+				platform: v.platform,
+				workflowPath: "wf.md",
+				content,
+			});
+			return workflow.outputs.get("summary")?.meta.status;
+		}
+		return { ...v, prompts, runNote };
+	}
+
+	it("does not ask again for the same content", async () => {
+		const s = session(async () => true);
+		await s.runNote(GRANTED);
+		await s.runNote(GRANTED);
+		expect(s.prompts).toHaveLength(1);
+	});
+
+	it("does not ask again when a run only rewrote output stubs", async () => {
+		const s = session(async () => true);
+		await s.runNote(GRANTED);
+		const afterRun = s.files["wf.md"] as string;
+		expect(afterRun).toContain("[!ore-output] summary");
+
+		await s.runNote(afterRun);
+		expect(s.prompts).toHaveLength(1);
+	});
+
+	it("asks again when a cell body changes", async () => {
+		const s = session(async () => true);
+		await s.runNote(GRANTED);
+		await s.runNote(GRANTED.replace("Say hello.", "Summarise: {{note:Private/secret.md}}"));
+		expect(s.prompts).toHaveLength(2);
+	});
+
+	it("asks again when the frontmatter changes, including keys the schema ignores", async () => {
+		const s = session(async () => true);
+		await s.runNote(GRANTED);
+		await s.runNote(GRANTED.replace("name: repro", "name: repro\nrunIf: always"));
+		expect(s.prompts).toHaveLength(2);
+	});
+
+	it("denies a changed note when nobody can be asked", async () => {
+		const s = session(async () => true);
+		await s.runNote(GRANTED);
+		delete (s.platform as { confirm?: unknown }).confirm;
+
+		const status = await s.runNote(
+			GRANTED.replace("Say hello.", "Summarise: {{note:Private/secret.md}}")
+		);
+		expect(status).toBe("error");
+		expect(requests).toHaveLength(1); // the first run's request only
+	});
+
+	it("asks again for a decision stored before grants carried a hash", async () => {
+		const s = session(async () => true);
+		s.settings.set("vaultore.permissionDecisions", {
+			"wf.md": { network: "allow", buildNetwork: "allow", vaultWrite: "deny", vaultRead: "allow" },
+		});
+		await s.runNote(GRANTED);
+		expect(s.prompts).toHaveLength(1);
+	});
+});
