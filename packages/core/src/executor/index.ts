@@ -947,6 +947,16 @@ const HIDDEN_VAULT_DIRS = [".obsidian"];
 const VAULTORE_STATE_DIR = ".vaultore";
 
 /**
+ * The directory hidden from cells that a vault-relative path lies in, if any.
+ * Case-insensitive: on a case-insensitive file system `.Obsidian` is
+ * `.obsidian`.
+ */
+function hiddenDirOf(path: string): string | undefined {
+  const top = (path.split(/[\\/]/).find((segment) => segment !== "" && segment !== ".") ?? "").toLowerCase();
+  return [...HIDDEN_VAULT_DIRS, VAULTORE_STATE_DIR].includes(top) ? top : undefined;
+}
+
+/**
  * Container paths to cover with an empty read-only tmpfs. Only under the full
  * vault mount, the only one that reaches them.
  */
@@ -1155,9 +1165,9 @@ function writablePath(
   if (segments.length === 0 || segments.includes("..")) {
     throw new Error(`Vault write outside the vault refused: ${JSON.stringify(path)}`);
   }
-  const top = (segments[0] ?? "").toLowerCase();
-  if ([...HIDDEN_VAULT_DIRS, VAULTORE_STATE_DIR].includes(top)) {
-    throw new Error(`Vault write into ${top}/ refused: ${path}`);
+  const hidden = hiddenDirOf(segments.join("/"));
+  if (hidden) {
+    throw new Error(`Vault write into ${hidden}/ refused: ${path}`);
   }
 
   const rel = segments.join("/");
@@ -1371,7 +1381,15 @@ async function executeAICell(
         throw new Error(`Vault read permission denied: {{note:${path}}}`);
       }
       try {
-        return await platform.readFile(path);
+        // .obsidian/ and .vaultore/ are hidden from cells (#28, #94): the
+        // plugin's settings and the CLI's stored decisions must not reach a
+        // provider either. Checked on the real path, after any link.
+        const real = await platform.resolveInVault(path);
+        const hidden = hiddenDirOf(real);
+        if (hidden) {
+          throw new Error(`${hidden}/ is hidden from cells`);
+        }
+        return await platform.readFile(real);
       } catch (err) {
         throw new Error(`Cannot read {{note:${path}}}: ${messageOf(err)}`);
       }

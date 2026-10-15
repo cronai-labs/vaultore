@@ -30,10 +30,15 @@ ${body}
 }
 
 /**
- * In-memory vault and settings store. `links` stands in for symbolic links:
- * resolveInVault refuses a path mapped to an Error.
+ * In-memory vault and settings store. `links` and `redirects` stand in for
+ * symbolic links: resolveInVault refuses a path mapped to an Error, and
+ * resolves one in `redirects` to the real path given.
  */
-function vault(files: Record<string, string>, links: Record<string, Error> = {}) {
+function vault(
+	files: Record<string, string>,
+	links: Record<string, Error> = {},
+	redirects: Record<string, string> = {}
+) {
 	const settings = new Map<string, unknown>();
 	const reads: string[] = [];
 	const platform = {
@@ -54,7 +59,7 @@ function vault(files: Record<string, string>, links: Record<string, Error> = {})
 		resolveInVault: async (path: string) => {
 			const refused = links[path];
 			if (refused) throw refused;
-			return path;
+			return redirects[path] ?? path;
 		},
 		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
@@ -92,9 +97,10 @@ afterEach(() => {
 async function run(
 	content: string,
 	files: Record<string, string> = {},
-	links: Record<string, Error> = {}
+	links: Record<string, Error> = {},
+	redirects: Record<string, string> = {}
 ) {
-	const v = vault({ "Private/secret.md": SECRET, "wf.md": content, ...files }, links);
+	const v = vault({ "Private/secret.md": SECRET, "wf.md": content, ...files }, links, redirects);
 	const workflow = await new WorkflowExecutor().runWorkflow({
 		platform: v.platform,
 		workflowPath: "wf.md",
@@ -178,6 +184,29 @@ describe("{{note:}} in AI cells (#67)", () => {
 		expect(reads).not.toContain("notes/x/id_rsa");
 		expect(requests).toEqual([]);
 	});
+
+	for (const [path, real] of [
+		[".obsidian/plugins/vaultore/data.json", ".obsidian/plugins/vaultore/data.json"],
+		[".vaultore/config.json", ".vaultore/config.json"],
+		[".Obsidian/plugins/vaultore/data.json", ".Obsidian/plugins/vaultore/data.json"],
+		["notes/cfg/config.json", ".vaultore/config.json"],
+	] as const) {
+		it(`refuses {{note:${path}}}, which leads into a directory hidden from cells, and sends nothing`, async () => {
+			const { workflow, reads } = await run(
+				note("  network: allow\n  vaultRead: allow", `\`\`\`ore:ai id=summary\nSummarise: {{note:${path}}}\n\`\`\``),
+				{ [real]: "stored settings" },
+				{},
+				{ [path]: real }
+			);
+
+			const output = workflow.outputs.get("summary");
+			expect(output?.meta.status).toBe("error");
+			expect(String(output?.value)).toContain(`{{note:${path}}}`);
+			expect(String(output?.value)).toMatch(/hidden from cells/);
+			expect(reads).not.toContain(real);
+			expect(requests).toEqual([]);
+		});
+	}
 
 	it("fails the cell when a referenced note does not exist", async () => {
 		const { workflow } = await run(

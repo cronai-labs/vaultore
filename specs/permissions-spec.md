@@ -101,7 +101,9 @@ output without seeing the vault or earlier runs; `vault.write()` elsewhere throw
 `vault.readRaw()` reads paths inside the container (`/proc`), not the vault, and is not
 checked.
 
-`.obsidian/` and `.vaultore/` are hidden (§4.1). Other dot-directories in the vault are visible
+`.obsidian/` and `.vaultore/` are hidden (§4.1), from AI cells too: a `{{note:path}}` whose real
+path, after any symbolic link, lies in either (in any letter case) fails the cell before
+anything is sent. Other dot-directories in the vault are visible
 under a full mount, and writable with `vaultWrite`.
 
 ### 3.4 `vaultWrite`
