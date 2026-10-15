@@ -46,7 +46,7 @@ export async function detectRuntimes(
     engines.map((engine) => detectEngine(engine, timeoutMs))
   );
   results.forEach((result, index) => {
-    const engine = engines[index] as RuntimeEngine;
+    const engine = engines[index];
     if (result.status === "fulfilled") {
       available.push(engine);
     } else {
@@ -296,10 +296,10 @@ function runCommand(
     }
     child.stdin.end();
 
-    child.stdout.on("data", (data) => {
+    child.stdout.on("data", (data: Buffer) => {
       stdout += data.toString();
     });
-    child.stderr.on("data", (data) => {
+    child.stderr.on("data", (data: Buffer) => {
       stderr += data.toString();
     });
 

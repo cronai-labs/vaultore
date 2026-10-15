@@ -49,13 +49,13 @@ export function isWorkflowFrontmatter(frontmatter: unknown): boolean {
  */
 export function stripTrailing(value: string, ...separators: string[]): string {
   let end = value.length;
-  while (end > 0 && separators.includes(value[end - 1] as string)) end -= 1;
+  while (end > 0 && separators.includes(value[end - 1])) end -= 1;
   return value.slice(0, end);
 }
 
 export function stripLeading(value: string, ...separators: string[]): string {
   let start = 0;
-  while (start < value.length && separators.includes(value[start] as string)) start += 1;
+  while (start < value.length && separators.includes(value[start])) start += 1;
   return value.slice(start);
 }
 
@@ -193,7 +193,7 @@ export class WorkflowParser {
     try {
       yaml = parseYaml(match[1]);
     } catch (e) {
-      throw new ParserError(`Invalid YAML: ${e}`, 0);
+      throw new ParserError(`Invalid YAML: ${String(e)}`, 0);
     }
 
     const result = WorkflowFrontmatterSchema.safeParse(yaml);
@@ -394,7 +394,10 @@ export class WorkflowParser {
 
     let meta: OutputMeta;
     if (metaStr) {
-      const metaYaml = parseYaml(metaStr);
+      // `yaml` returns `any`. Name the shape this code has always assumed; the
+      // block is read unchecked, as before, so a hand-edited one can still
+      // carry other types.
+      const metaYaml = parseYaml(metaStr) as RawOutputMeta;
       meta = {
         status: metaYaml.status ?? "success",
         duration: parseDuration(metaYaml.duration),
@@ -580,6 +583,11 @@ export class ParserError extends Error {
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/** The `meta:` block of a written-back output, as `parseOutputContent` reads it. */
+type RawOutputMeta = Partial<Pick<OutputMeta, "status" | "timestamp" | "error" | "cache">> & {
+  duration?: string | number;
+};
 
 function parseDuration(str: string | number | undefined): number {
   if (typeof str === "number") return str;
