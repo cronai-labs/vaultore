@@ -14,7 +14,13 @@ import { resolve } from "node:path";
 import { WorkflowExecutor, WorkflowScheduler, VERSION } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
-import { hasExplicitVault, parseArgs, toVaultRelative, vaultRootFrom } from "./args";
+import {
+	hasExplicitVault,
+	parseArgs,
+	rescanSecondsFrom,
+	toVaultRelative,
+	vaultRootFrom,
+} from "./args";
 import type { ParsedArgs } from "./args";
 
 function usage(): string {
@@ -128,6 +134,14 @@ async function cmdList(args: ParsedArgs): Promise<number> {
 }
 
 async function cmdAgent(args: ParsedArgs): Promise<number> {
+	let rescanSeconds: number;
+	try {
+		rescanSeconds = rescanSecondsFrom(args.flags);
+	} catch (err) {
+		process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n\n` + usage());
+		return 2;
+	}
+
 	const vaultRoot = vaultRootFrom(args.flags);
 	const adapter = new NodeAdapter({
 		vaultRoot,
@@ -135,7 +149,6 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		quiet: args.flags["quiet"] === true,
 	});
 	const executor = new WorkflowExecutor();
-	const rescanSeconds = Number(args.flags["rescan"] ?? 300) || 300;
 
 	const runByPath = async (path: string): Promise<void> => {
 		try {
