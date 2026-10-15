@@ -22,10 +22,13 @@ See the [Plugin Development Quickstart](docs/quickstart-plugin-dev.md) for loadi
 |------|---------|
 | `packages/core` | `@vaultore/core` — editor-agnostic engine (parser, executor, runtime, scheduler, providers) |
 | `packages/obsidian` | The Obsidian plugin, a thin wrapper over core |
+| `packages/cli` | `@vaultore/cli` — the `vaultore` command and its `NodeAdapter` |
 | `fixtures/canonical` | Canonical workflow notes that double as acceptance tests |
-| `specs/` | Format and behavior specifications (TDD anchors) |
+| `specs/` | Format and behavior specifications |
+| `docs/` | Guides, the roadmap |
+| `scripts/` | Packaging and release scripts |
 
-Core-first rule: all logic lives in `@vaultore/core`; the plugin only adapts it to Obsidian APIs via the `PlatformAdapter` interface.
+Core-first rule: all logic lives in `@vaultore/core`; the plugin and the CLI only adapt it to their platform via the `PlatformAdapter` interface. [ARCHITECTURE.md](ARCHITECTURE.md) maps the code.
 
 ## Pull Requests
 
@@ -46,12 +49,24 @@ git fetch origin && git rebase origin/main
 git push --force-with-lease          # never a bare --force
 ```
 
-**The PR title is linted, not your branch commits.** It becomes the squash commit subject and
-therefore the changelog entry, so it must be a Conventional Commit. Write branch commits for
-whoever reads the PR.
+**The PR title and every branch commit are linted.** The title becomes the squash commit
+subject and therefore the changelog entry; the `policy` job checks that it is a Conventional
+Commit. The `commitlint` job checks each commit between the base and your head against
+`commitlint.config.cjs`: an unknown type fails, an unlisted scope only warns. Write branch
+commits for whoever reads the PR.
 
 **Tick the Definition of done.** Those boxes are checked by CI once the PR leaves draft; an
 unticked box fails `policy` and blocks the merge.
+
+**The steps:**
+
+1. Branch from `main` (`<issue>-<slug>`)
+2. Make focused commits following the conventions below
+3. Run `bun run build`, `bun run test`, `bun run typecheck`, `bun run lint` and
+   `bun run test:canonical`
+4. Open the PR against `main`. CI runs the policy checks, commitlint, build, packaging, tests,
+   typecheck, lint, the container integration tests on Docker and a build-reproducibility
+   check, all aggregated into the one `ci-required` check
 
 ## Commit Conventions
 
@@ -70,7 +85,7 @@ This repo uses [Conventional Commits](https://www.conventionalcommits.org/), enf
 
 Add `BREAKING CHANGE:` in the commit body when the change warrants a major bump.
 
-**Scopes:** `core`, `obsidian`, `parser`, `executor`, `runtime`, `scheduler`, `providers`, `vault`, `deps`, `release`
+**Scopes** (from `commitlint.config.cjs`; another scope warns): `core`, `obsidian`, `cli`, `parser`, `executor`, `runtime`, `scheduler`, `providers`, `vault`, `fixtures`, `deps`, `release`
 
 Examples:
 
@@ -90,13 +105,6 @@ VAULTORE_IT_ENGINE=docker bun run --cwd packages/core test:integration   # again
 ```
 
 Please keep tests green and add coverage for new behavior. Canonical fixtures in `fixtures/canonical/` are the acceptance bar — if you change the workflow format, update the spec in `specs/` first.
-
-## Pull Requests
-
-1. Branch from `main`
-2. Make focused commits following the conventions above
-3. Ensure `bun run build`, `bun run test`, and `bun run typecheck` pass
-4. Open a PR against `main` — CI runs the policy checks, commitlint, build, packaging, tests, typecheck, lint, the container integration tests and a build-reproducibility check, all aggregated into the one `ci-required` check
 
 ## Release Process
 
@@ -167,4 +175,4 @@ if you add a type to one, add it to the other.
 
 ## Questions?
 
-Open a [discussion](https://github.com/cronai-labs/vaultore/discussions) or [issue](https://github.com/cronai-labs/vaultore/issues).
+Open an [issue](https://github.com/cronai-labs/vaultore/issues).
