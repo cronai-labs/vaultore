@@ -46,8 +46,10 @@ if (git("ls-remote", "--tags", "origin", `refs/tags/${version}`) !== "") {
 
 const sha = git("rev-parse", "origin/main^{commit}");
 const subject = git("log", "-1", "--format=%s", sha);
-const expected = new RegExp(`^chore\\(release\\): ${version.replaceAll(".", "\\.")} \\(#\\d+\\)$`);
-if (!expected.test(subject)) {
+// A fixed pattern and a string comparison, so the version is never compiled
+// into a regular expression (CodeQL js/regex-injection).
+const RELEASE_SUBJECT = /^chore\(release\): (\S+) \(#\d+\)$/;
+if (RELEASE_SUBJECT.exec(subject)?.[1] !== version) {
 	fail(
 		`origin/main's tip ${sha.slice(0, 12)} is not the merged release commit for ${version}.\n` +
 			`       Its subject is '${subject}', expected 'chore(release): ${version} (#<pr>)'.\n` +

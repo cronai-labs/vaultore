@@ -40,10 +40,12 @@ try {
 
 // cliff.toml renders a released section as "## [X.Y.Z] - YYYY-MM-DD".
 // "## [Unreleased]" and undated headings are not releases and never match.
-const heading = new RegExp(`^## \\[${version.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`);
+// A fixed pattern and a string comparison, so the version is never compiled
+// into a regular expression (CodeQL js/regex-injection).
+const HEADING = /^## \[([^\]]+)\] - \d{4}-\d{2}-\d{2}$/;
 
 const lines = text.split("\n");
-const start = lines.findIndex((line) => heading.test(line));
+const start = lines.findIndex((line) => HEADING.exec(line)?.[1] === version);
 if (start === -1) die(`CHANGELOG.md has no dated section for ${version}`);
 
 let end = lines.findIndex((line, i) => i > start && line.startsWith("## "));
