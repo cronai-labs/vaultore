@@ -649,24 +649,25 @@ describe("manifest.json", () => {
     expect(manifest.name).toBe("VaultOre");
     expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(manifest.minAppVersion).toBeDefined();
-    expect(manifest.main).toBe("main.js");
     expect(manifest.description).toBeTruthy();
     expect(manifest.author).toBeTruthy();
     expect(manifest.isDesktopOnly).toBe(true);
   });
 
-  it("has matching version in packages/obsidian/manifest.json", async () => {
+  // The community directory reads the repository root's manifest, the release
+  // ships this package's copy, and lint validates only this package's copy
+  // (#133). Identical files keep all three in agreement.
+  it("is identical to the repository root's manifest.json", async () => {
     const fs = await import("fs");
     const path = await import("path");
-    const rootManifest = JSON.parse(
+    const packageManifest = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../manifest.json"), "utf8")
     );
-    const rootRootManifest = JSON.parse(
+    const repoManifest = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../../manifest.json"), "utf8")
     );
 
-    expect(rootManifest.version).toBe(rootRootManifest.version);
-    expect(rootManifest.id).toBe(rootRootManifest.id);
+    expect(packageManifest).toEqual(repoManifest);
   });
 });
 
