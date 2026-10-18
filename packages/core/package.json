@@ -61,7 +61,7 @@
 		"@babel/parser": "^7.29.9",
 		"yaml": "^2.9.1",
 		"cron-parser": "^5.10.2",
-		"zod": "^3.22.0"
+		"zod": "^4.6.7"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
