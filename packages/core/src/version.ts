@@ -4,4 +4,4 @@
  * survives bundling; version-bump.mjs rewrites it and version.test.ts fails
  * the build when it drifts from package.json.
  */
-export const VERSION = "0.1.1";
+export const VERSION = "0.1.2";
