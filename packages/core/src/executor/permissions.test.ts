@@ -37,12 +37,14 @@ ${body}
 function vault(
 	files: Record<string, string>,
 	links: Record<string, Error> = {},
-	redirects: Record<string, string> = {}
+	redirects: Record<string, string> = {},
+	configDir = ".obsidian"
 ) {
 	const settings = new Map<string, unknown>();
 	const reads: string[] = [];
 	const platform = {
 		platform: "cli",
+		configDir,
 		readFile: async (path: string) => {
 			reads.push(path);
 			if (!(path in files)) throw new Error(`File not found: ${path}`);
@@ -98,9 +100,10 @@ async function run(
 	content: string,
 	files: Record<string, string> = {},
 	links: Record<string, Error> = {},
-	redirects: Record<string, string> = {}
+	redirects: Record<string, string> = {},
+	configDir?: string
 ) {
-	const v = vault({ "Private/secret.md": SECRET, "wf.md": content, ...files }, links, redirects);
+	const v = vault({ "Private/secret.md": SECRET, "wf.md": content, ...files }, links, redirects, configDir);
 	const workflow = await new WorkflowExecutor().runWorkflow({
 		platform: v.platform,
 		workflowPath: "wf.md",
@@ -451,4 +454,63 @@ describe(".obsidian and .vaultore are hidden from cells (#28, #94)", () => {
 			expect(await maskedFor(type, "allow", "allow", {})).toEqual(["/workspace/.vaultore"]);
 		});
 	}
+});
+
+describe("a custom config folder is hidden from cells too (Vault#configDir)", () => {
+	async function shellRun(configDir: string, files: Record<string, string>) {
+		vi.mocked(execContainer).mockResolvedValue({
+			exitCode: 0,
+			stdout: "1",
+			stderr: "",
+		} as never);
+		const { workflow } = await run(
+			note("  network: deny\n  vaultRead: allow\n  vaultWrite: allow", "```ore:shell id=c\n1\n```"),
+			files,
+			{},
+			{},
+			configDir
+		);
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as { maskedPaths?: string[] } | undefined;
+		return { output: workflow.outputs.get("c"), masked: opts?.maskedPaths ?? [] };
+	}
+
+	it("masks the configured folder and the default one when both exist", async () => {
+		const { output, masked } = await shellRun(".config-desk", {
+			".config-desk/plugins/vaultore/data.json": "{}",
+			".obsidian/plugins/other/main.js": "",
+		});
+		expect(output?.meta.status).toBe("success");
+		expect(masked).toEqual(["/workspace/.config-desk", "/workspace/.obsidian", "/workspace/.vaultore"]);
+	});
+
+	it("masks the configured folder when there is no default one", async () => {
+		const { masked } = await shellRun("./.config-desk/", { ".config-desk/plugins/vaultore/data.json": "{}" });
+		expect(masked).toEqual(["/workspace/.config-desk", "/workspace/.vaultore"]);
+	});
+
+	for (const configDir of ["", ".", "..", "a/b"]) {
+		it(`fails the cell, rather than mask nothing, for configDir ${JSON.stringify(configDir)}`, async () => {
+			const { output } = await shellRun(configDir, {});
+			expect(output?.meta.status).toBe("error");
+			expect(String(output?.value)).toMatch(/config folder must be one vault-relative folder/);
+			expect(vi.mocked(execContainer)).not.toHaveBeenCalled();
+		});
+	}
+
+	it("refuses {{note:}} into the configured folder and sends nothing", async () => {
+		const path = ".config-desk/plugins/vaultore/data.json";
+		const { workflow, reads } = await run(
+			note("  network: allow\n  vaultRead: allow", `\`\`\`ore:ai id=summary\nSummarise: {{note:${path}}}\n\`\`\``),
+			{ [path]: "stored settings" },
+			{},
+			{},
+			".config-desk"
+		);
+
+		const output = workflow.outputs.get("summary");
+		expect(output?.meta.status).toBe("error");
+		expect(String(output?.value)).toMatch(/hidden from cells/);
+		expect(reads).not.toContain(path);
+		expect(requests).toEqual([]);
+	});
 });

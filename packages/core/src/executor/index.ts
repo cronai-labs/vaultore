@@ -933,27 +933,46 @@ function vaultMounts(
 /**
  * Vault directories no cell may see, even under a full vault mount.
  *
- * `.obsidian` holds this plugin's code and settings: a cell granted vaultWrite
- * could otherwise rewrite the plugin that runs it (#28). It is masked only when
- * it exists, since masking a missing directory makes the engine create it, and
- * an empty `.obsidian` turns any folder into an Obsidian vault.
+ * The vault's config folder holds this plugin's code and settings: a cell
+ * granted vaultWrite could otherwise rewrite the plugin that runs it (#28).
+ * That is the folder the platform reports (`Vault#configDir` in Obsidian), and
+ * `.obsidian` as well: Obsidian's config folder override is per device, so a
+ * vault can carry another device's config, and its plugins, in the default
+ * folder. A config folder is masked only when it exists, since masking a
+ * missing directory makes the engine create it, and an empty one turns any
+ * folder into an Obsidian vault.
  *
  * `.vaultore` holds the CLI's settings and stored permission decisions: a cell
  * could otherwise forge a grant for another workflow (#94). VaultOre owns this
  * directory, so it is created before the run and always masked; otherwise a
  * cell could create the config itself in a vault that has none yet.
  */
-const HIDDEN_VAULT_DIRS = [".obsidian"];
+export const DEFAULT_CONFIG_DIR = ".obsidian";
 const VAULTORE_STATE_DIR = ".vaultore";
+
+/**
+ * The config folders to hide: the platform's and the default. Refuses a
+ * `configDir` that is not one vault-relative folder, rather than masking
+ * nothing.
+ */
+function configDirsOf(platform: PlatformAdapter): string[] {
+  const configured = platform.configDir.replace(/^\.[\\/]/, "").replace(/[\\/]+$/, "");
+  if (configured === "" || configured === "." || configured === ".." || /[\\/]/.test(configured)) {
+    throw new Error(
+      `The platform's config folder must be one vault-relative folder, got ${JSON.stringify(platform.configDir)}`
+    );
+  }
+  return configured.toLowerCase() === DEFAULT_CONFIG_DIR ? [DEFAULT_CONFIG_DIR] : [configured, DEFAULT_CONFIG_DIR];
+}
 
 /**
  * The directory hidden from cells that a vault-relative path lies in, if any.
  * Case-insensitive: on a case-insensitive file system `.Obsidian` is
  * `.obsidian`.
  */
-function hiddenDirOf(path: string): string | undefined {
+function hiddenDirOf(path: string, configDirs: readonly string[]): string | undefined {
   const top = (path.split(/[\\/]/).find((segment) => segment !== "" && segment !== ".") ?? "").toLowerCase();
-  return [...HIDDEN_VAULT_DIRS, VAULTORE_STATE_DIR].includes(top) ? top : undefined;
+  return [...configDirs, VAULTORE_STATE_DIR].find((dir) => dir.toLowerCase() === top);
 }
 
 /**
@@ -966,7 +985,7 @@ async function maskedVaultPaths(
 ): Promise<string[]> {
   if (!permissions.vaultRead) return [];
   const masked: string[] = [];
-  for (const dir of HIDDEN_VAULT_DIRS) {
+  for (const dir of configDirsOf(platform)) {
     if (await platform.exists(dir)) masked.push(`/workspace/${dir}`);
   }
   await platform.mkdirp(VAULTORE_STATE_DIR);
@@ -1153,7 +1172,8 @@ async function textSha256(text: string): Promise<string> {
 function writablePath(
   path: string,
   permissions: Pick<ResolvedPermissions, "vaultRead" | "vaultWrite">,
-  runDir: string
+  runDir: string,
+  configDirs: readonly string[]
 ): string {
   if (!permissions.vaultWrite) {
     throw new Error(`Vault write permission denied: ${path}`);
@@ -1165,7 +1185,7 @@ function writablePath(
   if (segments.length === 0 || segments.includes("..")) {
     throw new Error(`Vault write outside the vault refused: ${JSON.stringify(path)}`);
   }
-  const hidden = hiddenDirOf(segments.join("/"));
+  const hidden = hiddenDirOf(segments.join("/"), configDirs);
   if (hidden) {
     throw new Error(`Vault write into ${hidden}/ refused: ${path}`);
   }
@@ -1195,14 +1215,15 @@ async function applyVaultWrites(
 ): Promise<void> {
   if (writes.length === 0) return;
 
+  const configDirs = configDirsOf(platform);
   const checked = writes.map((write) => ({
     ...write,
-    path: writablePath(write.path, permissions, runContext.runDir),
+    path: writablePath(write.path, permissions, runContext.runDir, configDirs),
   }));
 
   // Where each path really leads, before anything is read or written: a cell
   // can plant a symbolic link through the mount. The rules above apply again
-  // to the real path, so an in-vault link cannot reach .obsidian/ either.
+  // to the real path, so an in-vault link cannot reach a config folder either.
   const resolved: PendingVaultWrite[] = [];
   for (const write of checked) {
     let real: string;
@@ -1213,7 +1234,7 @@ async function applyVaultWrites(
         `Vault write refused: ${messageOf(err)}. None of this cell's writes were applied.`
       );
     }
-    const path = writablePath(real, permissions, runContext.runDir);
+    const path = writablePath(real, permissions, runContext.runDir, configDirs);
     if (resolved.some((other) => other.path === path)) {
       throw new Error(
         `Vault write refused: ${write.path} is ${path}, which this cell also writes under another path. ` +
@@ -1381,11 +1402,11 @@ async function executeAICell(
         throw new Error(`Vault read permission denied: {{note:${path}}}`);
       }
       try {
-        // .obsidian/ and .vaultore/ are hidden from cells (#28, #94): the
-        // plugin's settings and the CLI's stored decisions must not reach a
-        // provider either. Checked on the real path, after any link.
+        // The config folders and .vaultore/ are hidden from cells (#28, #94):
+        // the plugin's settings and the CLI's stored decisions must not reach
+        // a provider either. Checked on the real path, after any link.
         const real = await platform.resolveInVault(path);
-        const hidden = hiddenDirOf(real);
+        const hidden = hiddenDirOf(real, configDirsOf(platform));
         if (hidden) {
           throw new Error(`${hidden}/ is hidden from cells`);
         }

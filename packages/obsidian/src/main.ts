@@ -93,6 +93,10 @@ class ObsidianAdapter implements PlatformAdapter {
     this.plugin = plugin;
   }
 
+  get configDir(): string {
+    return this.plugin.app.vault.configDir;
+  }
+
   async readFile(path: string): Promise<string> {
     if (this.isInternalPath(path)) {
       const normalized = this.normalizePath(path);

@@ -93,7 +93,7 @@ export {
 // EXECUTOR
 // =============================================================================
 
-export { WorkflowExecutor } from "./executor";
+export { WorkflowExecutor, DEFAULT_CONFIG_DIR } from "./executor";
 
 // =============================================================================
 // RUNTIME

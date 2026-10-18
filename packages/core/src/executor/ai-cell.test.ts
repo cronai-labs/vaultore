@@ -33,6 +33,7 @@ function vault(settings: Record<string, unknown> = {}) {
 	const sent: Sent[] = [];
 	const platform = {
 		platform: "cli",
+		configDir: ".obsidian",
 		readFile: async (path: string) => {
 			if (!(path in files)) throw new Error(`File not found: ${path}`);
 			return files[path] as string;

@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { DEFAULT_CONFIG_DIR } from "../executor";
 import { execContainer } from "../runtime";
 import { resolveInVaultRoot } from "../vault/confine";
 import type { PlatformAdapter, RuntimeEngine } from "../types";
@@ -45,6 +46,7 @@ export function filesystemPlatform(
 	const abs = (path: string) => join(root, path);
 	return {
 		platform: "cli",
+		configDir: DEFAULT_CONFIG_DIR,
 		readFile: async (path: string) => readFileSync(abs(path), "utf8"),
 		writeFile: async (path: string, content: string) => {
 			mkdirSync(dirname(abs(path)), { recursive: true });

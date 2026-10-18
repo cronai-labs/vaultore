@@ -93,6 +93,12 @@ export function vaultRootFrom(flags: Record<string, string | boolean>): string {
 	return resolve(typeof flag === "string" ? flag : process.cwd());
 }
 
+/** The vault's config folder from --config-dir, when given. */
+export function configDirFrom(flags: Record<string, string | boolean>): string | undefined {
+	const flag = flags["config-dir"];
+	return typeof flag === "string" ? flag : undefined;
+}
+
 /**
  * Resolve a workflow argument to a vault-relative path.
  *
