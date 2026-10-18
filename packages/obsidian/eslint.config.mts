@@ -62,8 +62,8 @@ export default defineConfig(
 		},
 	},
 	// The recommended config applies validate-manifest to JS and TS files only,
-	// so the manifest needs its own block. The community directory rejects keys
-	// the rule does not allow (#133).
+	// so the manifest needs its own block. The community directory's review
+	// warns on keys the rule does not allow (#133, #135).
 	{
 		files: ["manifest.json"],
 		extends: [tseslint.configs.disableTypeChecked],
