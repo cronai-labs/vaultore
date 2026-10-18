@@ -53,8 +53,13 @@ topo_order = false
 sort_commits = "oldest"
 
 commit_preprocessors = [
-  # Strip the trailing Claude Code session/co-author trailers from subjects.
-  { pattern = '\\s+\\(#([0-9]+)\\)$', replace = " ([#${1}](https://github.com/cronai-labs/vaultore/issues/${1}))" },
+  # Link the "(#N)" GitHub appends to a squash subject. (?m) because the subject
+  # is the first line of a longer message; a TOML literal string, so single
+  # backslashes (#142).
+  { pattern = '(?m)\s+\(#([0-9]+)\)$', replace = " ([#${1}](https://github.com/cronai-labs/vaultore/issues/${1}))" },
+  # #134's subject says the community directory rejects an unknown manifest key;
+  # it only warns (#135). The release notes carry accurate wording (#142).
+  { pattern = "^fix\\(obsidian\\): drop the manifest's main key the community directory rejects", replace = "fix(obsidian): drop the `main` key, which is not an Obsidian manifest key" },
 ]
 
 commit_parsers = [
@@ -64,6 +69,9 @@ commit_parsers = [
   { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
   { message = "^perf", group = "<!-- 2 -->Performance" },
   { message = "^revert", group = "<!-- 3 -->Reverts" },
+  # Dependency updates (Dependabot's chore(deps…), our build(deps)) before the
+  # skips below, so users see what a release ships (#142).
+  { message = "^(build|chore)\\(deps(-dev)?\\)", group = "<!-- 4 -->Dependencies" },
   # Everything below is real work but not release-note material.
   { message = "^docs", skip = true },
   { message = "^style", skip = true },
