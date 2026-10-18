@@ -3,7 +3,7 @@
 	"name": "VaultOre",
 	"version": "0.1.2",
 	"minAppVersion": "1.11.4",
-	"description": "Run AI, TypeScript, and shell workflow cells inside Markdown notes, sandboxed in containers, with cron scheduling.",
+	"description": "Run AI, TypeScript, and shell workflow cells inside Markdown notes, with per-note permissions, code cells in containers, and cron scheduling.",
 	"author": "CronAI UG",
 	"authorUrl": "https://cronai.de",
 	"isDesktopOnly": true
