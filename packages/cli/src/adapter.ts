@@ -20,10 +20,11 @@
 import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fetchRequest, resolveInVaultRoot } from "@vaultore/core";
+import { DEFAULT_CONFIG_DIR, fetchRequest, resolveInVaultRoot } from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
 
-const SKIP_DIRS = new Set([".git", ".obsidian", ".trash", "node_modules"]);
+// The vault's config folders are skipped as well, see NodeAdapter.skipDirs.
+const SKIP_DIRS = new Set([".git", ".trash", "node_modules"]);
 
 const SECRET_ENV_FALLBACKS: Record<string, string[]> = {
 	"openai.apiKey": ["VAULTORE_OPENAI_APIKEY", "OPENAI_API_KEY"],
@@ -38,18 +39,29 @@ export interface NodeAdapterOptions {
 	settingsOverride?: Record<string, unknown>;
 	/** Quiet mode suppresses info/debug logging. */
 	quiet?: boolean;
+	/**
+	 * The vault's Obsidian config folder, for a vault whose config folder is
+	 * overridden. Outside Obsidian there is no `Vault#configDir` to ask, so the
+	 * default is Obsidian's (`.obsidian`).
+	 */
+	configDir?: string;
 }
 
 export class NodeAdapter implements PlatformAdapter {
 	readonly platform = "cli" as const;
+	readonly configDir: string;
 	private readonly vaultRoot: string;
 	private readonly assumeYes: boolean;
 	private readonly overrides: Record<string, unknown>;
 	private readonly quiet: boolean;
+	/** SKIP_DIRS plus the configured and the default config folder. */
+	private readonly skipDirs: ReadonlySet<string>;
 	private config: Record<string, unknown>;
 
 	constructor(options: NodeAdapterOptions) {
 		this.vaultRoot = resolve(options.vaultRoot);
+		this.configDir = options.configDir ?? DEFAULT_CONFIG_DIR;
+		this.skipDirs = new Set([...SKIP_DIRS, this.configDir, DEFAULT_CONFIG_DIR]);
 		this.assumeYes = options.assumeYes ?? false;
 		this.overrides = options.settingsOverride ?? {};
 		this.quiet = options.quiet ?? false;
@@ -192,7 +204,7 @@ export class NodeAdapter implements PlatformAdapter {
 		}
 		for (const entry of entries) {
 			if (entry.isDirectory()) {
-				if (SKIP_DIRS.has(entry.name)) continue;
+				if (this.skipDirs.has(entry.name)) continue;
 				await this.walk(join(dir, entry.name), found);
 			} else if (entry.isFile()) {
 				found.push(join(dir, entry.name));

@@ -452,6 +452,12 @@ export interface PlatformAdapter {
    * `resolveInVaultRoot` implements it for a vault on a file system.
    */
   resolveInVault(path: string): Promise<string>;
+  /**
+   * The vault's configuration folder, one vault-relative folder name: what
+   * Obsidian's `Vault#configDir` returns, `.obsidian` unless the user chose
+   * another. The executor hides it from cells.
+   */
+  readonly configDir: string;
 
   // Settings
   getSetting<T>(key: string): T | undefined;

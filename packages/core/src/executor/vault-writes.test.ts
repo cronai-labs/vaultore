@@ -75,11 +75,16 @@ permissions:
  * every path read. `links` stands in for symbolic links: resolveInVault maps a
  * path to where it really leads, or refuses it with the Error given.
  */
-function vault(files: Record<string, string>, links: Record<string, string | Error> = {}) {
+function vault(
+	files: Record<string, string>,
+	links: Record<string, string | Error> = {},
+	configDir = ".obsidian"
+) {
 	const written: string[] = [];
 	const reads: string[] = [];
 	const platform = {
 		platform: "cli",
+		configDir,
 		readFile: async (path: string) => {
 			reads.push(path);
 			if (!(path in files)) throw new Error(`File not found: ${path}`);
@@ -113,10 +118,11 @@ async function run(
 	files: Record<string, string>,
 	read = "allow",
 	write = "allow",
-	links: Record<string, string | Error> = {}
+	links: Record<string, string | Error> = {},
+	configDir?: string
 ) {
 	const content = note(read, write);
-	const v = vault({ "wf.md": content, ...files }, links);
+	const v = vault({ "wf.md": content, ...files }, links, configDir);
 	const workflow = await new WorkflowExecutor().runWorkflow({
 		platform: v.platform,
 		workflowPath: "wf.md",
@@ -395,6 +401,21 @@ describe("the host enforces what vault.write may touch", () => {
 
 			expect(r.status).toBe("error");
 			expect(String(r.value)).toMatch(/\.obsidian|\.vaultore/i);
+			expect(r.written).toEqual([]);
+		});
+	}
+
+	// Obsidian's config folder can be overridden (Vault#configDir). The
+	// configured folder is refused, and so is the default one, which can hold
+	// another device's config.
+	for (const path of [".config-desk/plugins/vaultore/main.js", ".Config-Desk/x", ".obsidian/plugins/other/main.js"]) {
+		it(`refuses ${path} when the config folder is .config-desk`, async () => {
+			container(() => stdout([{ path, content: "x", base: null }]));
+
+			const r = await run({}, "allow", "allow", {}, ".config-desk");
+
+			expect(r.status).toBe("error");
+			expect(String(r.value)).toMatch(/\.config-desk|\.obsidian/i);
 			expect(r.written).toEqual([]);
 		});
 	}

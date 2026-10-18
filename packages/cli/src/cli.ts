@@ -16,6 +16,7 @@ import { NodeAdapter } from "./adapter";
 import { createSingleFlightRunner } from "./agent";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 import {
+	configDirFrom,
 	hasExplicitVault,
 	parseArgs,
 	rescanSecondsFrom,
@@ -28,15 +29,17 @@ function usage(): string {
 	return `vaultore ${VERSION} — Markdown-native AI workflow engine (headless CLI)
 
 Usage:
-  vaultore run <workflow.md> [--vault <dir>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
-  vaultore list [--vault <dir>]
-  vaultore agent [--vault <dir>] [--yes] [--rescan <seconds>] [--quiet]
-  vaultore schedules export [--vault <dir>] [--out <file>]
+  vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
+  vaultore list [--vault <dir>] [--config-dir <name>]
+  vaultore agent [--vault <dir>] [--config-dir <name>] [--yes] [--rescan <seconds>] [--quiet]
+  vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
   vaultore --version | --help
 
 Options:
   --vault <dir>       Vault root (default: current directory). When given, a
                       relative <workflow.md> resolves against it.
+  --config-dir <name> The vault's Obsidian config folder, if overridden
+                      (default: .obsidian). Hidden from cells.
   --cell <id>         Run a single cell (with its dependencies)
   --skip-deps         With --cell: skip dependency cells
   --yes               Auto-grant "ask" permissions (non-interactive default: deny)
@@ -60,6 +63,7 @@ async function cmdRun(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
 	const adapter = new NodeAdapter({
 		vaultRoot,
+		configDir: configDirFrom(args.flags),
 		assumeYes: args.flags["yes"] === true,
 		quiet: args.flags["quiet"] === true,
 	});
@@ -114,7 +118,7 @@ async function cmdRun(args: ParsedArgs): Promise<number> {
 
 async function cmdList(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
-	const adapter = new NodeAdapter({ vaultRoot, quiet: true });
+	const adapter = new NodeAdapter({ vaultRoot, configDir: configDirFrom(args.flags), quiet: true });
 	const outputRoot = adapter.getSetting<string>("vaultore.outputRoot");
 	const discovered = await discoverWorkflows(adapter, { outputRoot });
 
@@ -146,6 +150,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
 	const adapter = new NodeAdapter({
 		vaultRoot,
+		configDir: configDirFrom(args.flags),
 		assumeYes: args.flags["yes"] === true,
 		quiet: args.flags["quiet"] === true,
 	});
@@ -226,7 +231,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 
 async function cmdSchedulesExport(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
-	const adapter = new NodeAdapter({ vaultRoot, quiet: true });
+	const adapter = new NodeAdapter({ vaultRoot, configDir: configDirFrom(args.flags), quiet: true });
 	const outputRoot = adapter.getSetting<string>("vaultore.outputRoot");
 	const discovered = await discoverWorkflows(adapter, { outputRoot });
 	const manifest = buildScheduleManifest(discovered, vaultRoot);
