@@ -81,13 +81,14 @@ reads, such as its own configuration and image store, is the engine's business.
 
 ## Installation
 
-- **From the community plugin directory**, once VaultOre is listed there: **Settings →
-  Community plugins → Browse**, search for "VaultOre", install and enable.
+- **From the community plugin directory:** **Settings → Community plugins → Browse**,
+  search for "VaultOre", install and enable
+  ([listing](https://community.obsidian.md/plugins/vaultore)).
 - **From a release:** download `main.js`, `manifest.json` and `styles.css` from a
   [release](https://github.com/cronai-labs/vaultore/releases) into
   `<your vault>/.obsidian/plugins/vaultore/`, then enable VaultOre under **Settings →
   Community plugins**.
-- **From source**, if no release is listed yet:
+- **From source:**
 
   ```bash
   git clone https://github.com/cronai-labs/vaultore.git

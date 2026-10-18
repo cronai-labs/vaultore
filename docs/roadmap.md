@@ -62,16 +62,21 @@ Everything in this section is in the code on `main`. The specs describe each par
   tests and a reproducible-build check; tag-driven, immutable, attested GitHub releases
   ([CONTRIBUTING](../CONTRIBUTING.md#release-process)).
 
-## Next: the first release, 0.1.0
+## Released: 0.1.0 to 0.1.2, and the listing
 
+- [0.1.0](https://github.com/cronai-labs/vaultore/releases/tag/0.1.0) on 2026-10-15,
+  [0.1.1](https://github.com/cronai-labs/vaultore/releases/tag/0.1.1) and
+  [0.1.2](https://github.com/cronai-labs/vaultore/releases/tag/0.1.2) on 2026-10-18, each
+  immutable and attested. Listed in Obsidian's
+  [community plugins](https://community.obsidian.md/plugins/vaultore) since 2026-10-18; the
+  directory's reviews of all three releases found no errors.
+- A live test in a real vault before 0.1.0 (AI providers through Obsidian's `requestUrl`,
+  the secret selection, the settings screens), with OpenAI; Anthropic is not tested live yet.
 - [#83](https://github.com/cronai-labs/vaultore/issues/83): Colima with sshfs file sharing
-  can serve a container a stale copy of a note. `vault.write` is now applied by the host and
+  can serve a container a stale copy of a note. `vault.write` is applied by the host and
   refused when the note changed since the cell read it, so a stale copy is never saved; reads,
   shell cells and raw writes through the mount stay exposed
   ([#124](https://github.com/cronai-labs/vaultore/issues/124)).
-- A live test in a real vault (AI providers through Obsidian's `requestUrl`, the secret
-  selection, the settings screens), then the release and the submission to the Obsidian
-  community directory.
 
 ## After 0.1.0
 
