@@ -214,9 +214,20 @@ jobs:
             release/manifest.json \
             release/styles.css
 
-          draft="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
-            | jq -s --arg tag "$TAG" '[.[][] | select(.tag_name == $tag and .draft)] | first // empty')"
-          [ -n "$draft" ] || { echo "::error::The draft release for $TAG was not found after creating it."; exit 1; }
+          # The release list can lag behind the create call: the 0.1.2 run
+          # missed its own draft half a second after creating it (#150). Wait
+          # until the draft is listed with all three assets and their digests.
+          draft=""
+          for attempt in $(seq 1 20); do
+            draft="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+              | jq -s --arg tag "$TAG" '[.[][] | select(.tag_name == $tag and .draft)] | first // empty')"
+            if [ -n "$draft" ] && [ "$(jq '[.assets[] | select(.digest != null)] | length' <<<"$draft")" -eq 3 ]; then
+              break
+            fi
+            echo "The draft for $TAG is not fully listed yet (attempt $attempt of 20); retrying in 3 s."
+            sleep 3
+          done
+          [ -n "$draft" ] || { echo "::error::The draft release for $TAG was not listed within a minute of creating it."; exit 1; }
           id="$(jq -r '.id' <<<"$draft")"
 
           # GitHub computes each asset's sha256 on upload; compare it with the
