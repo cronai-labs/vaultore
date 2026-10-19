@@ -1,7 +1,7 @@
 {
 	"id": "vaultore",
 	"name": "VaultOre",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"minAppVersion": "1.11.4",
 	"description": "Run AI, TypeScript, and shell workflow cells inside Markdown notes, with per-note permissions, code cells in containers, and cron scheduling.",
 	"author": "CronAI UG",
