@@ -5,22 +5,26 @@
  */
 
 import { CronExpressionParser } from "cron-parser";
-import { ScheduledWorkflow } from "../types";
+import { ScheduledWorkflow, TimerHandle, Timers } from "../types";
 
 export interface SchedulerOptions {
+  /** Where the tick interval comes from: the platform's timers. */
+  timers: Timers;
   tickIntervalMs?: number;
   onTick?: (workflows: ScheduledWorkflow[]) => void;
 }
 
 export class WorkflowScheduler {
   private workflows = new Map<string, ScheduledWorkflow>();
-  private interval: NodeJS.Timeout | null = null;
+  private interval: TimerHandle | null = null;
+  private timers: Timers;
   private onTick?: (workflows: ScheduledWorkflow[]) => void;
   private tickIntervalMs: number;
 
-  constructor(options?: SchedulerOptions) {
-    this.tickIntervalMs = options?.tickIntervalMs ?? 60 * 1000;
-    this.onTick = options?.onTick;
+  constructor(options: SchedulerOptions) {
+    this.timers = options.timers;
+    this.tickIntervalMs = options.tickIntervalMs ?? 60 * 1000;
+    this.onTick = options.onTick;
   }
 
   /**
@@ -53,13 +57,13 @@ export class WorkflowScheduler {
   }
 
   start(): void {
-    if (this.interval) return;
-    this.interval = setInterval(() => this.tick(), this.tickIntervalMs);
+    if (this.interval !== null) return;
+    this.interval = this.timers.setInterval(() => this.tick(), this.tickIntervalMs);
   }
 
   stop(): void {
-    if (!this.interval) return;
-    clearInterval(this.interval);
+    if (this.interval === null) return;
+    this.timers.clearInterval(this.interval);
     this.interval = null;
   }
 

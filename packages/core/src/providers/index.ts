@@ -11,6 +11,7 @@ import {
   PlatformAdapter,
   PlatformRequest,
   PlatformResponse,
+  TimerHandle,
 } from "../types";
 
 // =============================================================================
@@ -69,9 +70,9 @@ async function send(
   model: string
 ): Promise<PlatformResponse> {
   const startedAt = Date.now();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: TimerHandle | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
+    timer = platform.timers.setTimeout(() => {
       const err = new Error(`Request exceeded ${request.timeoutMs}ms`);
       err.name = "TimeoutError";
       reject(err);
@@ -82,7 +83,7 @@ async function send(
   } catch (err) {
     throw describeRequestFailure(err, provider, model, startedAt, request.timeoutMs);
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) platform.timers.clearTimeout(timer);
   }
 }
 

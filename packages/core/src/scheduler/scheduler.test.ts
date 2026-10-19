@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { nodeTimers } from "../testing/timers";
+import type { Timers } from "../types";
 import { WorkflowScheduler, computeNextRun } from "./index";
 
 describe("WorkflowScheduler", () => {
   it("registers workflows and ticks when due", () => {
-    const scheduler = new WorkflowScheduler();
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     const entry = scheduler.register("Workflows/test.md", "* * * * *");
 
     entry.nextRun = new Date(Date.now() - 1000);
@@ -19,7 +21,7 @@ describe("WorkflowScheduler", () => {
   // pushed a due run to the following occurrence, so a busy vault could keep
   // an hourly schedule from ever firing (#46).
   it("keeps nextRun and lastRun when re-registered with the same cron", () => {
-    const scheduler = new WorkflowScheduler();
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     const entry = scheduler.register("Workflows/test.md", "0 * * * *");
     const due = new Date(Date.now() - 1000);
     entry.nextRun = due;
@@ -34,7 +36,7 @@ describe("WorkflowScheduler", () => {
   });
 
   it("recomputes nextRun when the cron changes", () => {
-    const scheduler = new WorkflowScheduler();
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     const entry = scheduler.register("Workflows/test.md", "0 * * * *");
     entry.nextRun = new Date(Date.now() - 1000);
 
@@ -44,8 +46,43 @@ describe("WorkflowScheduler", () => {
     expect(changed.nextRun.getTime()).toBeGreaterThan(Date.now());
   });
 
+  // The plugin ties the interval to its lifecycle through the timers it
+  // passes; the scheduler must use those, never a global timer.
+  it("starts and stops its tick through the timers it was given", () => {
+    const calls: string[] = [];
+    let tick: (() => void) | undefined;
+    const timers: Timers = {
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
+      setInterval: (callback, ms) => {
+        calls.push(`setInterval ${ms}`);
+        tick = callback;
+        return 42;
+      },
+      clearInterval: (handle) => {
+        calls.push(`clearInterval ${String(handle)}`);
+      },
+    };
+    const ticked: string[][] = [];
+    const scheduler = new WorkflowScheduler({
+      timers,
+      tickIntervalMs: 5_000,
+      onTick: (workflows) => ticked.push(workflows.map((w) => w.path)),
+    });
+    scheduler.register("Workflows/test.md", "* * * * *").nextRun = new Date(Date.now() - 1000);
+
+    scheduler.start();
+    scheduler.start();
+    tick?.();
+    scheduler.stop();
+    scheduler.stop();
+
+    expect(calls).toEqual(["setInterval 5000", "clearInterval 42"]);
+    expect(ticked).toEqual([["Workflows/test.md"]]);
+  });
+
   it("rejects an invalid cron without touching the existing entry", () => {
-    const scheduler = new WorkflowScheduler();
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     scheduler.register("Workflows/test.md", "0 * * * *");
 
     expect(() => scheduler.register("Workflows/test.md", "not a cron")).toThrow();

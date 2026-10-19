@@ -270,6 +270,26 @@ export interface Cell {
 /**
  * An HTTP request sent through {@link PlatformAdapter.request}.
  */
+/**
+ * A handle returned by a {@link Timers} function: a number in a browser
+ * window, an object in Node. Opaque to core: only the matching clear function
+ * of the same `Timers` reads it.
+ */
+export type TimerHandle = number | object;
+
+/**
+ * The timer functions core uses, supplied by the platform. Core runs in an
+ * Obsidian window and in Node, so it calls no global timer itself: the plugin
+ * passes its window's timers (and ties intervals to its lifecycle), the CLI
+ * passes Node's.
+ */
+export interface Timers {
+  setTimeout(callback: () => void, ms: number): TimerHandle;
+  clearTimeout(handle: TimerHandle): void;
+  setInterval(callback: () => void, ms: number): TimerHandle;
+  clearInterval(handle: TimerHandle): void;
+}
+
 export interface PlatformRequest {
   url: string;
   method: string;
@@ -472,6 +492,9 @@ export interface PlatformAdapter {
   // Obsidian plugin passes `requestUrl`: `fetch` from the renderer carries a
   // browser Origin and is subject to CORS. The CLI uses `fetch`.
   request(request: PlatformRequest): Promise<PlatformResponse>;
+
+  // Timers for request deadlines, engine probes and container runs.
+  readonly timers: Timers;
 
   // UI (optional)
   showNotification?(

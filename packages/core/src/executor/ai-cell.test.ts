@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowExecutor } from "./index";
 import { DEFAULT_MODELS } from "../providers";
+import { nodeTimers } from "../testing/timers";
 import type { PlatformAdapter } from "../types";
 
 /**
@@ -54,6 +55,7 @@ function vault(settings: Record<string, unknown> = {}) {
 		setSecret: async () => undefined,
 		deleteSecret: async () => undefined,
 		log: () => undefined,
+		timers: nodeTimers,
 		request: async (req: Sent) => {
 			sent.push(req);
 			const text = req.url.includes("anthropic")

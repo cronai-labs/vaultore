@@ -65,6 +65,10 @@ export type {
   // Go cache types
   GoCacheEntry,
   GoBuildResult,
+
+  // Timer types
+  TimerHandle,
+  Timers,
 } from "./types";
 
 export {

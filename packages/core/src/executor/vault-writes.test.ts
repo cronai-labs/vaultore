@@ -43,7 +43,7 @@ function stdout(writes: Write[] | string, value: unknown = "done"): string {
 
 /** The container exits with `exitCode` and prints what `print` returns for its options. */
 function container(print: (opts: ContainerExecOptions) => string, exitCode = 0) {
-	vi.mocked(execContainer).mockImplementation(async (_engine, opts) => {
+	vi.mocked(execContainer).mockImplementation(async (_timers, _engine, opts) => {
 		nonce = /__VAULTORE_OUTPUT_START_([0-9a-f]{32})__/.exec(opts.stdin ?? "")?.[1] ?? "";
 		return {
 			exitCode,

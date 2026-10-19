@@ -12,6 +12,7 @@ import {
   OutputMeta,
   PlatformAdapter,
   RuntimeEngine,
+  Timers,
   Workflow,
   WorkflowFrontmatter,
   WorkflowPermissions,
@@ -91,7 +92,7 @@ export class WorkflowExecutor {
         engine: engineChoice.engine,
       };
 
-      await ensureRuntimeAvailable(engineChoice);
+      await ensureRuntimeAvailable(engineChoice, platform.timers);
 
       const orderedCells = orderCells(workflow.cells);
       const cellsToRun = options.targetCellId
@@ -493,8 +494,8 @@ export function describeEngineFailure(
   return lines.join("\n");
 }
 
-async function ensureRuntimeAvailable(choice: EngineChoice): Promise<void> {
-  const detection = await detectRuntimes();
+async function ensureRuntimeAvailable(choice: EngineChoice, timers: Timers): Promise<void> {
+  const detection = await detectRuntimes(timers);
   if (detection.available.includes(choice.engine)) return;
 
   const detail = detection.errors.get(choice.engine) ?? "runtime not available";
@@ -1314,7 +1315,7 @@ async function executeTypeScriptCell(
     maskedPaths: await maskedVaultPaths(platform, permissions),
   };
 
-  const result = await execContainer(runtime.engine, containerOpts);
+  const result = await execContainer(platform.timers, runtime.engine, containerOpts);
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `ts cell failed: exit ${result.exitCode}`);
   }
@@ -1355,7 +1356,7 @@ async function executeShellCell(
     maskedPaths: await maskedVaultPaths(platform, permissions),
   };
 
-  const result = await execContainer(runtime.engine, containerOpts);
+  const result = await execContainer(platform.timers, runtime.engine, containerOpts);
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `shell cell failed: exit ${result.exitCode}`);
   }
