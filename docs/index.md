@@ -9,7 +9,8 @@ documents link to it.
 
 | Document | Covers |
 |----------|--------|
-| [Workflow note spec](../specs/workflow-note-spec.md) | The workflow format: frontmatter, cells, templates, outputs, execution order |
+| [Ore specification](https://github.com/cronai-labs/ore-spec) | The Ore format itself, independent of VaultOre (separate repository) |
+| [Workflow note spec](../specs/workflow-note-spec.md) | How VaultOre implements the format: frontmatter, cells, templates, outputs, execution order |
 | [Permissions spec](../specs/permissions-spec.md) | Permissions, their defaults, the vault mounts, stored decisions |
 | [Sandbox spec](../specs/sandbox-spec.md) | Container engines and hardening today; a container-free tier proposed |
 | [CronAI handover spec](../specs/cronai-handover-spec.md) | The schedule manifest `vaultore schedules export` writes |
