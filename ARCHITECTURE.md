@@ -104,7 +104,7 @@ vaultore/
 | `parser` | Frontmatter and cells from note text; reading and writing output callouts; `{{…}}` templates | `WorkflowParser`, `OutputSerializer`, `TemplateInterpolator`, `isWorkflowFrontmatter` |
 | `executor` | A whole run: permissions, engine check, order, each cell, outputs, run records | `WorkflowExecutor`, `renderOutputMarkdown` |
 | `runtime` | Which engines answer; the `run` command line with its hardening; spawning it | `detectRuntimes`, `buildRunCommand`, `execContainer` |
-| `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` when it has one; model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
+| `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` (core has no transport of its own); model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
 | `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback | `WorkflowScheduler`, `computeNextRun` |
 | `vault` | `createVaultAPI`, `generateRuntimeScript`: exported, but the executor injects its own copy (`buildTypeScriptRuntime`), and the two have diverged ([#45](https://github.com/cronai-labs/vaultore/issues/45)) | |
 

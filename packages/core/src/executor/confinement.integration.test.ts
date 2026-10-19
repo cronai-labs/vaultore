@@ -16,6 +16,9 @@ import { filesystemPlatform, makeIntegrationVaultRoot } from "../testing/integra
 
 let root: string;
 let outside: string;
+const request = vi.fn(async () => {
+	throw new Error("no request may be sent");
+});
 
 beforeEach(() => {
 	root = makeIntegrationVaultRoot();
@@ -27,7 +30,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	vi.unstubAllGlobals();
+	request.mockClear();
 	rmSync(root, { recursive: true, force: true });
 	rmSync(outside, { recursive: true, force: true });
 });
@@ -54,6 +57,7 @@ ${then}
 		platform: filesystemPlatform(root, {
 			settings: { "vaultore.defaultProvider": "openai" },
 			secrets: { "openai.apiKey": "test-key" },
+			request,
 		}),
 		workflowPath: "wf.md",
 		content,
@@ -111,11 +115,6 @@ describe("the host does not follow a planted symlink out of the vault", { timeou
 	});
 
 	it("refuses {{note:}} through a planted symlink and sends nothing", async () => {
-		const fetch = vi.fn(async () => {
-			throw new Error("no request may be sent");
-		});
-		vi.stubGlobal("fetch", fetch);
-
 		const r = await run(
 			`ln -s '${outside}' /workspace/notes/x && echo planted`,
 			"```ore:ai id=c depends=[plant]\nSummarise: {{note:notes/x/secret.md}}\n```",
@@ -125,7 +124,7 @@ describe("the host does not follow a planted symlink out of the vault", { timeou
 		expect(r.status("plant")).toBe("success");
 		expect(r.status("c")).toBe("error");
 		expect(r.value("c")).toContain("notes/x/secret.md");
-		expect(fetch).not.toHaveBeenCalled();
+		expect(request).not.toHaveBeenCalled();
 		expect(existsSync(join(outside, "secret.md"))).toBe(true);
 	});
 });

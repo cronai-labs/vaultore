@@ -58,23 +58,7 @@ function timeoutMsFor(platform: PlatformAdapter): number {
 }
 
 /**
- * The transport for adapters without a `request` capability (the CLI passes
- * this as its own). The abort signal releases the connection on timeout.
- */
-export async function fetchRequest(request: PlatformRequest): Promise<PlatformResponse> {
-  const response = await fetch(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: request.body,
-    signal: AbortSignal.timeout(request.timeoutMs),
-  });
-  // Read the body here too: the abort signal stays attached to the body
-  // stream, so a body that stalls after the headers arrive is bounded as well.
-  return { status: response.status, text: await response.text() };
-}
-
-/**
- * Send through the adapter when it can, and bound the call in core: Obsidian's
+ * Send through the adapter, and bound the call in core: Obsidian's
  * `requestUrl` takes no abort signal, and an adapter that ignored `timeoutMs`
  * would otherwise stall the workflow again.
  */
@@ -85,9 +69,6 @@ async function send(
   model: string
 ): Promise<PlatformResponse> {
   const startedAt = Date.now();
-  const transport = platform.request
-    ? (req: PlatformRequest) => platform.request!(req)
-    : fetchRequest;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -97,7 +78,7 @@ async function send(
     }, request.timeoutMs);
   });
   try {
-    return await Promise.race([transport(request), deadline]);
+    return await Promise.race([platform.request(request), deadline]);
   } catch (err) {
     throw describeRequestFailure(err, provider, model, startedAt, request.timeoutMs);
   } finally {

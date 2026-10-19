@@ -48,6 +48,16 @@ export default defineConfig(
 			"obsidianmd/prefer-window-timers": "off",
 		},
 	},
+	// The CLI's HTTP transport. Node has no `requestUrl`, and the recommended
+	// config refuses an inline disable for this rule, so the exception is
+	// scoped here to the one file that sends (#117).
+	{
+		basePath,
+		files: ["src/fetch-request.ts"],
+		rules: {
+			"no-restricted-globals": "off",
+		},
+	},
 	// Tests do not ship and tsconfig.json leaves them out, so the type-checked
 	// review rules cannot run on them. They keep the untyped rules they had.
 	{

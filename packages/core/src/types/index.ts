@@ -468,11 +468,10 @@ export interface PlatformAdapter {
   setSecret(key: string, value: string): Promise<void>;
   deleteSecret(key: string): Promise<void>;
 
-  // HTTP (optional). AI providers send through this when present and through
-  // global `fetch` otherwise. The Obsidian plugin needs it: `fetch` from the
-  // renderer carries a browser Origin and is subject to CORS, `requestUrl`
-  // is not.
-  request?(request: PlatformRequest): Promise<PlatformResponse>;
+  // HTTP. AI providers send only through this; core never calls `fetch`. The
+  // Obsidian plugin passes `requestUrl`: `fetch` from the renderer carries a
+  // browser Origin and is subject to CORS. The CLI uses `fetch`.
+  request(request: PlatformRequest): Promise<PlatformResponse>;
 
   // UI (optional)
   showNotification?(

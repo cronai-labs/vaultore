@@ -107,7 +107,6 @@ export { detectRuntimes, execContainer } from "./runtime";
 
 export {
   createProviderFromSettings,
-  fetchRequest,
   assertModelMatchesProvider,
   resolveProviderName,
   AI_PROVIDERS,
