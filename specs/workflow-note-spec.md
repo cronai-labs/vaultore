@@ -1,12 +1,15 @@
 # Workflow Note Specification
 
-> **Status:** Canonical for the format. Sections 1–8 describe what the code does at
-> version 0.1.0; [Planned](#planned) lists what is specified but not built.
-> **Last Updated:** 2026-10-15
+> **Status:** How VaultOre implements the Ore format. Sections 1–8 describe what the code
+> does at version 0.1.0; [Planned](#planned) lists what is specified but not built.
+> **Last Updated:** 2026-10-19
 
-A VaultOre workflow is a Markdown note in the vault that contains executable cells. This
-specification defines its format and how it runs. Where a behaviour comes from a specific
-place in the code, the section names the symbol (`packages/core/src/…`).
+A VaultOre workflow is a Markdown note in the vault that contains executable cells. The
+format itself is defined by the [Ore specification](https://github.com/cronai-labs/ore-spec)
+(version 0.1.0). This document specifies how VaultOre implements and runs it; the Ore
+specification's Appendix B lists where VaultOre currently deviates from it. Where a
+behaviour comes from a specific place in the code, the section names the symbol
+(`packages/core/src/…`).
 
 Permissions and their defaults are specified in [permissions-spec.md](permissions-spec.md),
 the container sandbox in [sandbox-spec.md](sandbox-spec.md). This document links to them

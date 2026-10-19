@@ -6,7 +6,8 @@
 VaultOre runs workflows written as Markdown notes: a note holds TypeScript, shell and AI cells,
 and VaultOre runs them in order, each code cell in its own container, and writes every result
 back under the cell. Workflows can read and write your notes, call OpenAI or Anthropic with
-your own key, and run on a cron schedule while Obsidian is open.
+your own key, and run on a cron schedule while Obsidian is open. The note format is Ore, an
+open format with its own [specification](https://github.com/cronai-labs/ore-spec).
 
 > [!WARNING]
 > **VaultOre runs code from your notes.** A workflow note is executable content: it starts
@@ -126,8 +127,10 @@ Offered only on workflow notes (frontmatter `ore: true`). No hotkeys are set; as
 | ` ```ore:ai ` | One request to your AI provider | `{{cellId}}` inserts an output, `{{note:Path/To/Note.md}}` a note. Needs `network: allow` |
 
 Both container cells use the workflow's `runtime.image` (default `oven/bun:1-alpine`). The
-[workflow note spec](specs/workflow-note-spec.md) has the full format, including cell
-attributes (`depends`, `timeout`, `model`, `temperature`, `maxTokens`) and the output files.
+[Ore specification](https://github.com/cronai-labs/ore-spec) defines the format; the
+[workflow note spec](specs/workflow-note-spec.md) describes how VaultOre implements it,
+including cell attributes (`depends`, `timeout`, `model`, `temperature`, `maxTokens`) and the
+output files.
 
 ### Settings
 
@@ -245,7 +248,8 @@ More in [docs/interoperability.md](docs/interoperability.md).
 
 ## Documentation
 
-- [Workflow note spec](specs/workflow-note-spec.md): the format, and what is planned
+- [Ore specification](https://github.com/cronai-labs/ore-spec): the format itself
+- [Workflow note spec](specs/workflow-note-spec.md): how VaultOre implements it, and what is planned
 - [Permissions spec](specs/permissions-spec.md): permissions, mounts, stored decisions
 - [Sandbox spec](specs/sandbox-spec.md): container engines and hardening
 - [Roadmap](docs/roadmap.md): what exists, what is next
