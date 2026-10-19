@@ -8,7 +8,7 @@ an item moves when its issue moves.
 
 Everything in this section is in the code on `main`. The specs describe each part in detail.
 
-**Workflow notes** ([workflow note spec](../specs/workflow-note-spec.md))
+**Workflow notes** ([Ore specification](https://github.com/cronai-labs/ore-spec), [Ore implementation](../specs/ore-implementation.md))
 
 - A note with `ore: true` in its frontmatter is a workflow. Cells are fenced blocks:
   `ore:ts` (TypeScript on Bun), `ore:shell` (`sh`) and `ore:ai` (one completion).
@@ -88,7 +88,7 @@ in principle; the order is not fixed. Grouped:
 
 - Conditions and structured outputs (`runIf`, `when=`, `{{cell.field}}`, JSON-mode AI cells),
   which the full smart-inbox needs ([#80](https://github.com/cronai-labs/vaultore/issues/80);
-  [workflow note spec](../specs/workflow-note-spec.md#planned), "Planned").
+  reserved in Ore §12, see [Ore implementation](../specs/ore-implementation.md#reserved-features-ore-12)).
 - `ore:py` cells ([#106](https://github.com/cronai-labs/vaultore/issues/106)); CSV helpers
   ([#107](https://github.com/cronai-labs/vaultore/issues/107)); dynamic note references
   behind an opt-in ([#71](https://github.com/cronai-labs/vaultore/issues/71)).

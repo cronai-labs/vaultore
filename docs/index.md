@@ -10,7 +10,7 @@ documents link to it.
 | Document | Covers |
 |----------|--------|
 | [Ore specification](https://github.com/cronai-labs/ore-spec) | The Ore format itself, independent of VaultOre (separate repository) |
-| [Workflow note spec](../specs/workflow-note-spec.md) | How VaultOre implements the format: frontmatter, cells, templates, outputs, execution order |
+| [Ore implementation](../specs/ore-implementation.md) | What VaultOre decides and adds on top of the format: code symbols, error texts, settings, providers, output files, artifacts |
 | [Permissions spec](../specs/permissions-spec.md) | Permissions, their defaults, the vault mounts, stored decisions |
 | [Sandbox spec](../specs/sandbox-spec.md) | Container engines and hardening today; a container-free tier proposed |
 | [CronAI handover spec](../specs/cronai-handover-spec.md) | The schedule manifest `vaultore schedules export` writes |
@@ -47,9 +47,9 @@ docs/
 specs/
 ├── cronai-handover-spec.md
 ├── go-cell-spec.md
+├── ore-implementation.md
 ├── permissions-spec.md
-├── sandbox-spec.md
-└── workflow-note-spec.md
+└── sandbox-spec.md
 
 fixtures/canonical/           # workflow notes that double as acceptance tests
 ├── daily-summary.md
