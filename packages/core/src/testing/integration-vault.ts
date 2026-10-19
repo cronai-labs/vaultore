@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { DEFAULT_CONFIG_DIR } from "../executor";
 import { execContainer } from "../runtime";
 import { resolveInVaultRoot } from "../vault/confine";
-import type { PlatformAdapter, RuntimeEngine } from "../types";
+import type { PlatformAdapter, PlatformRequest, PlatformResponse, RuntimeEngine } from "../types";
 
 /** The engine the integration tests run on. colima unless overridden. */
 export const IT_ENGINE = process.env.VAULTORE_IT_ENGINE ?? "colima";
@@ -31,6 +31,8 @@ export interface FilesystemPlatformOptions {
 	/** Settings beyond the engine, which is always IT_ENGINE. */
 	settings?: Record<string, unknown>;
 	secrets?: Record<string, string>;
+	/** The HTTP transport. By default every request fails: no test reaches a provider. */
+	request?: (request: PlatformRequest) => Promise<PlatformResponse>;
 }
 
 /** A PlatformAdapter over a plain directory, as the CLI would provide. */
@@ -70,6 +72,11 @@ export function filesystemPlatform(
 		deleteSecret: async (key: string) => {
 			secrets.delete(key);
 		},
+		request:
+			options.request ??
+			(async (request: PlatformRequest) => {
+				throw new Error(`The integration platform sends no requests (${request.url})`);
+			}),
 		log: () => undefined,
 	};
 }

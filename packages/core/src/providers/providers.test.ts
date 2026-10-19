@@ -11,7 +11,7 @@ import {
 	resolveProviderName,
 } from "./index";
 
-/** Minimal adapter: these tests only exercise secrets, settings and fetch. */
+/** Minimal adapter: these tests only exercise secrets and settings. */
 function adapter(settings: Record<string, unknown> = {}): PlatformAdapter {
 	return {
 		getSecret: async () => "test-key",
@@ -19,124 +19,9 @@ function adapter(settings: Record<string, unknown> = {}): PlatformAdapter {
 	} as unknown as PlatformAdapter;
 }
 
-afterEach(() => {
-	vi.unstubAllGlobals();
-});
+type Sent = Parameters<PlatformAdapter["request"]>[0];
 
-describe("provider request timeouts", () => {
-	it("passes an abort signal so a hung request cannot stall a workflow", async () => {
-		let seenSignal: AbortSignal | undefined;
-		vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
-			seenSignal = init.signal as AbortSignal;
-			return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
-				status: 200,
-			});
-		});
-
-		const result = await createOpenAIProvider(adapter()).complete({
-			model: "gpt-5-mini",
-			prompt: "hi",
-		});
-
-		expect(result.content).toBe("ok");
-		expect(seenSignal).toBeInstanceOf(AbortSignal);
-	});
-
-	it("reports the provider, model and configured timeout when the request times out", async () => {
-		vi.stubGlobal("fetch", async () => {
-			const err = new Error("The operation was aborted");
-			err.name = "TimeoutError";
-			throw err;
-		});
-
-		await expect(
-			createOpenAIProvider(adapter({ "vaultore.aiTimeoutSeconds": 30 })).complete({
-				model: "gpt-5-mini",
-				prompt: "hi",
-			})
-		).rejects.toThrow(/OpenAI request for model "gpt-5-mini" timed out after 30s/);
-	});
-
-	// The reported failure was a bare "Failed to fetch" after 15.5 minutes, which
-	// says nothing about what to do next.
-	it("adds context to a bare transport failure", async () => {
-		vi.stubGlobal("fetch", async () => {
-			throw new TypeError("Failed to fetch");
-		});
-
-		await expect(
-			createOpenAIProvider(adapter()).complete({ model: "gpt-5-mini", prompt: "hi" })
-		).rejects.toThrow(/OpenAI request for model "gpt-5-mini" failed after .*Failed to fetch.*API key/s);
-	});
-
-	it("falls back to the default timeout when the setting is absent or nonsense", async () => {
-		for (const setting of [undefined, 0, -5, Number.NaN, "soon"]) {
-			vi.stubGlobal("fetch", async () => {
-				const err = new Error("aborted");
-				err.name = "TimeoutError";
-				throw err;
-			});
-
-			await expect(
-				createOpenAIProvider(adapter({ "vaultore.aiTimeoutSeconds": setting })).complete({
-					model: "m",
-					prompt: "hi",
-				})
-			).rejects.toThrow(new RegExp(`timed out after ${DEFAULT_AI_TIMEOUT_SECONDS}s`));
-		}
-	});
-});
-
-describe("response body handling", () => {
-	// The abort signal stays attached to the body stream, so a stalled body must
-	// still produce the actionable message rather than a bare TimeoutError.
-	it("describes a failure that happens while reading the body", async () => {
-		vi.stubGlobal("fetch", async () => ({
-			ok: true,
-			status: 200,
-			text: async () => {
-				const err = new Error("The operation was aborted");
-				err.name = "TimeoutError";
-				throw err;
-			},
-		}));
-
-		await expect(
-			createOpenAIProvider(adapter({ "vaultore.aiTimeoutSeconds": 45 })).complete({
-				model: "gpt-5-mini",
-				prompt: "hi",
-			})
-		).rejects.toThrow(/OpenAI request for model "gpt-5-mini" timed out after 45s/);
-	});
-
-	it("keeps the HTTP status when the response is not ok", async () => {
-		vi.stubGlobal("fetch", async () => ({
-			ok: false,
-			status: 429,
-			text: async () => "rate limited",
-		}));
-
-		await expect(
-			createOpenAIProvider(adapter()).complete({ model: "gpt-5-mini", prompt: "hi" })
-		).rejects.toThrow(/OpenAI error: 429 rate limited/);
-	});
-
-	it("does not rewrite an HTTP error as a transport failure", async () => {
-		vi.stubGlobal("fetch", async () => ({ ok: false, status: 500, text: async () => "" }));
-
-		await expect(
-			createOpenAIProvider(adapter()).complete({ model: "m", prompt: "hi" })
-		).rejects.toThrow(/OpenAI error: 500 <empty body>/);
-	});
-});
-
-// =============================================================================
-// PLATFORM REQUEST (#78)
-// =============================================================================
-
-type Sent = Parameters<NonNullable<PlatformAdapter["request"]>>[0];
-
-/** Adapter with a `request` capability that records what it was asked to send. */
+/** Adapter whose `request` records what it was asked to send. */
 function requestingAdapter(
 	respond: (req: Sent) => Promise<{ status: number; text: string }>,
 	settings: Record<string, unknown> = {}
@@ -152,6 +37,75 @@ function requestingAdapter(
 	return { platform, sent };
 }
 
+/** What `fetch` rejects with when its abort signal fires. */
+function timeoutError(): Error {
+	const err = new Error("The operation was aborted");
+	err.name = "TimeoutError";
+	return err;
+}
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
+describe("provider request timeouts", () => {
+	it("reports the provider, model and configured timeout when the request times out", async () => {
+		const { platform } = requestingAdapter(async () => {
+			throw timeoutError();
+		}, { "vaultore.aiTimeoutSeconds": 30 });
+
+		await expect(
+			createOpenAIProvider(platform).complete({ model: "gpt-5-mini", prompt: "hi" })
+		).rejects.toThrow(/OpenAI request for model "gpt-5-mini" timed out after 30s/);
+	});
+
+	// The reported failure was a bare "Failed to fetch" after 15.5 minutes, which
+	// says nothing about what to do next.
+	it("adds context to a bare transport failure", async () => {
+		const { platform } = requestingAdapter(async () => {
+			throw new TypeError("Failed to fetch");
+		});
+
+		await expect(
+			createOpenAIProvider(platform).complete({ model: "gpt-5-mini", prompt: "hi" })
+		).rejects.toThrow(/OpenAI request for model "gpt-5-mini" failed after .*Failed to fetch.*API key/s);
+	});
+
+	it("falls back to the default timeout when the setting is absent or nonsense", async () => {
+		for (const setting of [undefined, 0, -5, Number.NaN, "soon"]) {
+			const { platform } = requestingAdapter(async () => {
+				throw timeoutError();
+			}, { "vaultore.aiTimeoutSeconds": setting });
+
+			await expect(
+				createOpenAIProvider(platform).complete({ model: "m", prompt: "hi" })
+			).rejects.toThrow(new RegExp(`timed out after ${DEFAULT_AI_TIMEOUT_SECONDS}s`));
+		}
+	});
+});
+
+describe("response handling", () => {
+	it("keeps the HTTP status when the response is not ok", async () => {
+		const { platform } = requestingAdapter(async () => ({ status: 429, text: "rate limited" }));
+
+		await expect(
+			createOpenAIProvider(platform).complete({ model: "gpt-5-mini", prompt: "hi" })
+		).rejects.toThrow(/OpenAI error: 429 rate limited/);
+	});
+
+	it("does not rewrite an HTTP error as a transport failure", async () => {
+		const { platform } = requestingAdapter(async () => ({ status: 500, text: "" }));
+
+		await expect(
+			createOpenAIProvider(platform).complete({ model: "m", prompt: "hi" })
+		).rejects.toThrow(/OpenAI error: 500 <empty body>/);
+	});
+});
+
+// =============================================================================
+// PLATFORM REQUEST (#78)
+// =============================================================================
+
 describe("requests through the platform adapter", () => {
 	// Global fetch from Obsidian's renderer carries a browser Origin, which
 	// Anthropic rejects; the plugin supplies requestUrl instead. Stubbed for
@@ -159,7 +113,7 @@ describe("requests through the platform adapter", () => {
 	let fetchSpy: ReturnType<typeof vi.fn>;
 	beforeEach(() => {
 		fetchSpy = vi.fn(async () => {
-			throw new Error("global fetch must not be used when the adapter can send");
+			throw new Error("core must not call global fetch");
 		});
 		vi.stubGlobal("fetch", fetchSpy);
 	});

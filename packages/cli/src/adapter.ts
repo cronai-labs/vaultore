@@ -12,7 +12,7 @@
  * - Secrets come from environment variables, never from files:
  *   `openai.apiKey`    → VAULTORE_OPENAI_APIKEY (fallback OPENAI_API_KEY)
  *   `anthropic.apiKey` → VAULTORE_ANTHROPIC_APIKEY (fallback ANTHROPIC_API_KEY)
- * - HTTP for AI providers goes through global fetch (core's fetchRequest).
+ * - HTTP for AI providers goes through global fetch (`fetchRequest`).
  * - Permission prompts are non-interactive: grants require an explicit
  *   `--yes` (fail closed otherwise), and decisions persist to config.
  */
@@ -20,8 +20,9 @@
 import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { DEFAULT_CONFIG_DIR, fetchRequest, resolveInVaultRoot } from "@vaultore/core";
+import { DEFAULT_CONFIG_DIR, resolveInVaultRoot } from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
+import { fetchRequest } from "./fetch-request";
 
 // The vault's config folders are skipped as well, see NodeAdapter.skipDirs.
 const SKIP_DIRS = new Set([".git", ".trash", "node_modules"]);

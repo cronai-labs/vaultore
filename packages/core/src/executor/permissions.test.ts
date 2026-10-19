@@ -4,8 +4,9 @@ import type { PlatformAdapter } from "../types";
 
 /**
  * Permission enforcement through the same path `vaultore run` uses: the real
- * executor and provider, with the container runtime mocked and `fetch` stubbed
- * so a test can see exactly what would have left the machine.
+ * executor and provider, with the container runtime mocked and the adapter's
+ * `request` recording, so a test can see exactly what would have left the
+ * machine.
  */
 
 vi.mock("../runtime", () => ({
@@ -70,6 +71,13 @@ function vault(
 		getSecret: async () => "sk-test",
 		setSecret: async () => undefined,
 		deleteSecret: async () => undefined,
+		request: async (request: { body?: string }) => {
+			requests.push(request.body ?? "");
+			return {
+				status: 200,
+				text: JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
+			};
+		},
 		log: () => undefined,
 	} as unknown as PlatformAdapter;
 	return { platform, files, reads, settings };
@@ -79,16 +87,6 @@ let requests: string[];
 
 beforeEach(() => {
 	requests = [];
-	vi.stubGlobal(
-		"fetch",
-		vi.fn(async (_url: string, init: { body: string }) => {
-			requests.push(init.body);
-			return new Response(
-				JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
-				{ status: 200 }
-			);
-		})
-	);
 	vi.mocked(execContainer).mockReset();
 });
 

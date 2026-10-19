@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { WorkflowExecutor } from "../executor";
-import type { Workflow } from "../types";
+import type { PlatformRequest, PlatformResponse, Workflow } from "../types";
 import {
 	filesystemPlatform,
 	makeIntegrationVaultRoot,
@@ -12,8 +12,8 @@ import {
 
 /**
  * fixtures/canonical/smart-inbox.md end to end (#79): the TS cells run in a
- * real container, the AI cell's provider request is answered by a stubbed
- * fetch in this process. Needs a running engine (VAULTORE_IT_ENGINE, default
+ * real container, the AI cell's provider request is answered by the
+ * platform's `request` in this process. Needs a running engine (VAULTORE_IT_ENGINE, default
  * colima).
  *
  *   bun run --cwd packages/core test:integration
@@ -53,16 +53,19 @@ function ticked(lines: readonly string[], indexes: readonly number[]): string {
 
 let root: string;
 let prompts: string[];
+let provider: (request: PlatformRequest) => Promise<PlatformResponse>;
 
 beforeEach(() => {
 	root = makeIntegrationVaultRoot();
 	prompts = [];
+	provider = async () => {
+		throw new Error("unexpected provider request");
+	};
 	writeFileSync(join(root, "smart-inbox.md"), FIXTURE);
 	writeFileSync(join(root, "Inbox.md"), INBOX);
 });
 
 afterEach(() => {
-	vi.unstubAllGlobals();
 	rmSync(root, { recursive: true, force: true });
 });
 
@@ -74,21 +77,16 @@ const read = (path: string) => readFileSync(join(root, path), "utf8");
  * inbox was read and before anything is written.
  */
 function stubProvider(answers: string[], during?: () => Promise<void>) {
-	vi.stubGlobal(
-		"fetch",
-		vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
-			const body = JSON.parse(String(init?.body)) as {
-				messages: Array<{ content: string }>;
-			};
-			prompts.push(body.messages[0]?.content ?? "");
-			await during?.();
-			const content = answers.shift();
-			if (content === undefined) throw new Error("unexpected provider request");
-			return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
-				status: 200,
-			});
-		})
-	);
+	provider = async (request) => {
+		const body = JSON.parse(String(request.body)) as {
+			messages: Array<{ content: string }>;
+		};
+		prompts.push(body.messages[0]?.content ?? "");
+		await during?.();
+		const content = answers.shift();
+		if (content === undefined) throw new Error("unexpected provider request");
+		return { status: 200, text: JSON.stringify({ choices: [{ message: { content } }] }) };
+	};
 }
 
 async function run(): Promise<Workflow> {
@@ -96,6 +94,7 @@ async function run(): Promise<Workflow> {
 		platform: filesystemPlatform(root, {
 			settings: { "vaultore.defaultProvider": "openai" },
 			secrets: { "openai.apiKey": "test-key" },
+			request: (request) => provider(request),
 		}),
 		workflowPath: "smart-inbox.md",
 		content: read("smart-inbox.md"),
