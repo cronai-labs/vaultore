@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { nodeTimers } from "../testing/timers";
 import type { PlatformAdapter } from "../types";
 import {
 	AI_PROVIDERS,
@@ -16,6 +17,7 @@ function adapter(settings: Record<string, unknown> = {}): PlatformAdapter {
 	return {
 		getSecret: async () => "test-key",
 		getSetting: <T>(key: string) => settings[key] as T,
+		timers: nodeTimers,
 	} as unknown as PlatformAdapter;
 }
 

@@ -20,7 +20,7 @@ import {
   isWorkflowFrontmatter,
   resolveInVaultRoot,
 } from "@vaultore/core";
-import type { PlatformAdapter, PlatformRequest, PlatformResponse } from "@vaultore/core";
+import type { PlatformAdapter, PlatformRequest, PlatformResponse, Timers } from "@vaultore/core";
 
 interface VaultOreSettings {
   defaultProvider: "openai" | "anthropic";
@@ -95,6 +95,10 @@ class ObsidianAdapter implements PlatformAdapter {
 
   get configDir(): string {
     return this.plugin.app.vault.configDir;
+  }
+
+  get timers(): Timers {
+    return this.plugin.timers;
   }
 
   async readFile(path: string): Promise<string> {
@@ -425,7 +429,18 @@ export default class VaultOrePlugin extends Plugin {
   private adapter!: ObsidianAdapter;
   private executor = new WorkflowExecutor();
   private parser = new WorkflowParser();
+  /**
+   * Core's timers, from this window. An interval is registered with the
+   * plugin, so unloading the plugin clears it even if nothing stops it.
+   */
+  readonly timers: Timers = {
+    setTimeout: (callback, ms) => window.setTimeout(callback, ms),
+    clearTimeout: (handle) => window.clearTimeout(handle as number),
+    setInterval: (callback, ms) => this.registerInterval(window.setInterval(callback, ms)),
+    clearInterval: (handle) => window.clearInterval(handle as number),
+  };
   private scheduler = new WorkflowScheduler({
+    timers: this.timers,
     tickIntervalMs: 60 * 1000,
     onTick: (workflows) => {
       for (const workflow of workflows) {

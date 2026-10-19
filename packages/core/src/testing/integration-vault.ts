@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { DEFAULT_CONFIG_DIR } from "../executor";
 import { execContainer } from "../runtime";
 import { resolveInVaultRoot } from "../vault/confine";
+import { nodeTimers } from "./timers";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse, RuntimeEngine } from "../types";
 
 /** The engine the integration tests run on. colima unless overridden. */
@@ -72,6 +73,7 @@ export function filesystemPlatform(
 		deleteSecret: async (key: string) => {
 			secrets.delete(key);
 		},
+		timers: nodeTimers,
 		request:
 			options.request ??
 			(async (request: PlatformRequest) => {
@@ -103,7 +105,7 @@ export async function waitForContainerView(
 	const deadline = Date.now() + timeoutMs;
 	let seen = "";
 	while (Date.now() < deadline) {
-		const result = await execContainer(IT_ENGINE as RuntimeEngine, {
+		const result = await execContainer(nodeTimers, IT_ENGINE as RuntimeEngine, {
 			image: "alpine:3.19",
 			command: ["cat", `/workspace/${path}`],
 			mounts: [{ source: root, target: "/workspace", readonly: true }],

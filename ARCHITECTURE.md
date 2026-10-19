@@ -93,6 +93,7 @@ vaultore/
 | Settings | Plugin data (`.obsidian/plugins/vaultore/data.json`) | `<vault>/.vaultore/config.json` |
 | Secrets | Obsidian secret storage, by the name the user selected | Environment variables |
 | HTTP | `requestUrl` | `fetch` |
+| Timers (core calls none of its own) | The window's; the scheduler's interval is registered with the plugin | Node's |
 | `ask` permissions | Modal | Deny, or allow with `--yes` |
 | Scheduling | Approved notes only, while Obsidian is open | `vaultore agent`, every scheduled note |
 

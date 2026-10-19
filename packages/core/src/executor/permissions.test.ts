@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowExecutor } from "./index";
+import { nodeTimers } from "../testing/timers";
 import type { PlatformAdapter } from "../types";
 
 /**
@@ -71,6 +72,7 @@ function vault(
 		getSecret: async () => "sk-test",
 		setSecret: async () => undefined,
 		deleteSecret: async () => undefined,
+		timers: nodeTimers,
 		request: async (request: { body?: string }) => {
 			requests.push(request.body ?? "");
 			return {
@@ -240,7 +242,7 @@ describe("container mounts follow vaultRead (#68)", () => {
 			)
 		);
 		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
-		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as {
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as {
 			mounts?: Mount[];
 		};
 		return opts.mounts ?? [];
@@ -384,7 +386,7 @@ ${runtime}permissions:
 `;
 		const { workflow } = await run(content);
 		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
-		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as { image: string };
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as { image: string };
 		return opts.image;
 	}
 
@@ -423,7 +425,7 @@ describe(".obsidian and .vaultore are hidden from cells (#28, #94)", () => {
 			files
 		);
 		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
-		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as { maskedPaths?: string[] };
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as { maskedPaths?: string[] };
 		return opts.maskedPaths ?? [];
 	}
 
@@ -468,7 +470,7 @@ describe("a custom config folder is hidden from cells too (Vault#configDir)", ()
 			{},
 			configDir
 		);
-		const opts = vi.mocked(execContainer).mock.calls[0]?.[1] as { maskedPaths?: string[] } | undefined;
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as { maskedPaths?: string[] } | undefined;
 		return { output: workflow.outputs.get("c"), masked: opts?.maskedPaths ?? [] };
 	}
 

@@ -42,11 +42,14 @@ describe("VaultOrePlugin", () => {
 
   beforeEach(async () => {
     vi.useFakeTimers();
+    // Core's timers come from window; tests run without a DOM.
+    vi.stubGlobal("window", globalThis);
     plugin = new VaultOrePlugin(undefined as any, undefined as any);
     // Spy on mock methods from the base class
     vi.spyOn(plugin, "addCommand");
     vi.spyOn(plugin, "addSettingTab");
     vi.spyOn(plugin, "registerEvent");
+    vi.spyOn(plugin, "registerInterval");
     vi.spyOn(plugin, "saveData");
     vi.spyOn(plugin, "loadData").mockResolvedValue(null);
 
@@ -55,6 +58,7 @@ describe("VaultOrePlugin", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   // Renders the settings tab the plugin registered and returns what it showed.
@@ -327,6 +331,18 @@ describe("VaultOrePlugin", () => {
       plugin.app.vault.adapter = {} as never;
 
       await expect(resolveInVault("notes/new.md")).rejects.toThrow(/file system access/);
+    });
+  });
+
+  describe("scheduler", () => {
+    // Registered, the interval is cleared on unload even if stop() never runs.
+    it("registers its tick interval with the plugin", () => {
+      expect(plugin.registerInterval).toHaveBeenCalledTimes(1);
+    });
+
+    it("hands core the same timers through the adapter", () => {
+      const adapter = (plugin as unknown as { adapter: { timers: unknown } }).adapter;
+      expect(adapter.timers).toBe(plugin.timers);
     });
   });
 

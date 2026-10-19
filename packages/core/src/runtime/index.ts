@@ -13,6 +13,8 @@ import {
   RuntimeEngine,
   ContainerExecOptions,
   ContainerExecResult,
+  TimerHandle,
+  Timers,
 } from "../types";
 
 // =============================================================================
@@ -33,6 +35,7 @@ export interface DetectRuntimesOptions {
 }
 
 export async function detectRuntimes(
+  timers: Timers,
   options: DetectRuntimesOptions = {}
 ): Promise<RuntimeDetection> {
   const engines: RuntimeEngine[] = ["docker", "podman", "colima", "apple"];
@@ -43,7 +46,7 @@ export async function detectRuntimes(
   // Probed in parallel so a slow engine does not delay the others; results are
   // collected in the fixed order above, which decides `preferred`.
   const results = await Promise.allSettled(
-    engines.map((engine) => detectEngine(engine, timeoutMs))
+    engines.map((engine) => detectEngine(timers, engine, timeoutMs))
   );
   results.forEach((result, index) => {
     const engine = engines[index];
@@ -62,9 +65,13 @@ export async function detectRuntimes(
   };
 }
 
-async function detectEngine(engine: RuntimeEngine, timeoutMs: number): Promise<void> {
+async function detectEngine(
+  timers: Timers,
+  engine: RuntimeEngine,
+  timeoutMs: number
+): Promise<void> {
   if (engine === "colima") {
-    await probe("colima", ["status"], timeoutMs);
+    await probe(timers, "colima", ["status"], timeoutMs);
     return;
   }
 
@@ -75,11 +82,11 @@ async function detectEngine(engine: RuntimeEngine, timeoutMs: number): Promise<v
       throw new Error("Apple container is available only on macOS");
     }
     // Apple's `container` CLI requires its background service to be running
-    await probe("container", ["system", "status"], timeoutMs);
+    await probe(timers, "container", ["system", "status"], timeoutMs);
     return;
   }
 
-  await probe(engine, ["version"], timeoutMs);
+  await probe(timers, engine, ["version"], timeoutMs);
 }
 
 /**
@@ -87,9 +94,14 @@ async function detectEngine(engine: RuntimeEngine, timeoutMs: number): Promise<v
  * against a stopped daemon still prints the client version, so output alone
  * proves nothing.
  */
-async function probe(command: string, args: string[], timeoutMs: number): Promise<void> {
+async function probe(
+  timers: Timers,
+  command: string,
+  args: string[],
+  timeoutMs: number
+): Promise<void> {
   const invocation = [command, ...args].join(" ");
-  const result = await runCommand(command, args, undefined, timeoutMs);
+  const result = await runCommand(timers, command, args, undefined, timeoutMs);
   if (result.timedOut) {
     throw new Error(`\`${invocation}\` did not answer within ${timeoutMs} ms`);
   }
@@ -106,13 +118,14 @@ async function probe(command: string, args: string[], timeoutMs: number): Promis
 // =============================================================================
 
 export async function execContainer(
+  timers: Timers,
   engine: RuntimeEngine,
   options: ContainerExecOptions
 ): Promise<ContainerExecResult> {
   const start = Date.now();
   const { command, args } = buildRunCommand(engine, options);
 
-  const result = await runCommand(command, args, options.stdin, options.timeout);
+  const result = await runCommand(timers, command, args, options.stdin, options.timeout);
 
   return {
     exitCode: result.exitCode,
@@ -271,6 +284,7 @@ interface CommandResult {
 }
 
 function runCommand(
+  timers: Timers,
   command: string,
   args: string[],
   stdin?: string,
@@ -284,13 +298,13 @@ function runCommand(
     });
     let stdout = "";
     let stderr = "";
-    let timeout: NodeJS.Timeout | undefined;
+    let timeout: TimerHandle | undefined;
     let settled = false;
 
     const settle = (result: Omit<CommandResult, "stdout" | "stderr">) => {
       if (settled) return;
       settled = true;
-      if (timeout) clearTimeout(timeout);
+      if (timeout !== undefined) timers.clearTimeout(timeout);
       resolve({ ...result, stdout, stderr });
     };
 
@@ -312,7 +326,7 @@ function runCommand(
     });
 
     if (timeoutMs > 0) {
-      timeout = setTimeout(() => {
+      timeout = timers.setTimeout(() => {
         child.kill("SIGKILL");
         // Settle now rather than on "close": a killed CLI's helper processes
         // can hold its stdout open long after it is gone.
@@ -325,7 +339,7 @@ function runCommand(
     child.on("error", (err) => {
       if (settled) return;
       settled = true;
-      if (timeout) clearTimeout(timeout);
+      if (timeout !== undefined) timers.clearTimeout(timeout);
       reject(err);
     });
     child.on("close", (code) => {

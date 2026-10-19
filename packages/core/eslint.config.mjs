@@ -41,6 +41,15 @@ export default defineConfig(
 			},
 		},
 	},
+	// Test support runs in Node only and never ships (tsup builds only the
+	// entries in tsup.config.ts), so there is no window to take timers from.
+	{
+		basePath,
+		files: ["src/testing/**/*.ts"],
+		rules: {
+			"obsidianmd/prefer-window-timers": "off",
+		},
+	},
 	// Tests do not ship and tsconfig.json leaves them out, so the type-checked
 	// review rules cannot run on them. They keep the untyped rules they had.
 	{

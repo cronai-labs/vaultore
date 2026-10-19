@@ -177,6 +177,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	);
 
 	const scheduler = new WorkflowScheduler({
+		timers: adapter.timers,
 		tickIntervalMs: 60 * 1000,
 		onTick: (workflows) => {
 			workflows.forEach((workflow) => {

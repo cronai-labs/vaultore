@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
+import { nodeTimers } from "../testing/timers";
 import {
   buildRunCommand,
   containerUser,
@@ -121,7 +122,7 @@ describe("detectRuntimes", () => {
   it("reports an engine whose probe exits non-zero as unavailable", async () => {
     fakeEngines('echo "Cannot connect to the Docker daemon" >&2\nexit 1');
 
-    const detection = await detectRuntimes();
+    const detection = await detectRuntimes(nodeTimers);
 
     expect(detection.available).toEqual([]);
     expect(detection.preferred).toBeNull();
@@ -132,7 +133,7 @@ describe("detectRuntimes", () => {
   it("reports an engine whose probe exits zero as available", async () => {
     fakeEngines("exit 0");
 
-    const detection = await detectRuntimes();
+    const detection = await detectRuntimes(nodeTimers);
 
     expect(detection.available).toContain("docker");
     expect(detection.preferred).toBe("docker");
@@ -145,7 +146,7 @@ describe("detectRuntimes", () => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     Object.defineProperty(process, "platform", { value: "linux" });
     try {
-      const detection = await detectRuntimes();
+      const detection = await detectRuntimes(nodeTimers);
       expect(detection.available).not.toContain("apple");
       expect(detection.errors.get("apple")).toMatch(/only on macOS/);
     } finally {
@@ -159,7 +160,7 @@ describe("detectRuntimes", () => {
     fakeEngines("/bin/sleep 30");
 
     const started = Date.now();
-    const detection = await detectRuntimes({ timeoutMs: 200 });
+    const detection = await detectRuntimes(nodeTimers, { timeoutMs: 200 });
 
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(detection.available).toEqual([]);
@@ -314,7 +315,7 @@ describe("execContainer output", () => {
     );
     chmodSync(file, 0o755);
 
-    const result = await execContainer("docker", baseOptions);
+    const result = await execContainer(nodeTimers, "docker", baseOptions);
 
     expect(result.stdout).toBe("ä");
     expect(result.stderr).toBe("ä");

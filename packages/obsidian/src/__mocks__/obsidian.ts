@@ -53,6 +53,10 @@ export class Plugin {
   addCommand(_cmd: any) {}
   addSettingTab(_tab: any) {}
   registerEvent(_event: any) {}
+  // Obsidian clears registered intervals on unload and returns the id.
+  registerInterval(id: number): number {
+    return id;
+  }
 }
 
 // Obsidian's global createFragment, reduced to the text it would show.
