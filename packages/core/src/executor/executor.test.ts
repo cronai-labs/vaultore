@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeEngineFailure, finalizeRunContext, resolveEngine } from "./index";
+import { describeEngineFailure, extractLastExpression, finalizeRunContext, resolveEngine } from "./index";
 
 describe("resolveEngine", () => {
 	it("lets the workflow's frontmatter win over the configured default", () => {
@@ -189,5 +189,30 @@ describe("finalizeRunContext", () => {
 		await expect(
 			finalizeRunContext(platform, runContext, ["a"], new Map([["a", output("success", 1)]]))
 		).resolves.toBeUndefined();
+	});
+});
+
+describe("extractLastExpression", () => {
+	it("returns a cell that is only a string literal as its output", () => {
+		// Babel files a leading string literal under program.directives, not body.
+		const { body, lastExpression } = extractLastExpression('"text";');
+		expect(lastExpression).toBe('"text"');
+		expect(body).toBe("");
+	});
+
+	it("takes the last of several leading string literals", () => {
+		const { body, lastExpression } = extractLastExpression("'a';\n'b';\n");
+		expect(lastExpression).toBe("'b'");
+		expect(body).toBe("'a';");
+	});
+
+	it("still returns the last statement after a directive", () => {
+		const { body, lastExpression } = extractLastExpression('"use strict"; 1;');
+		expect(lastExpression).toBe("1");
+		expect(body).toBe('"use strict";');
+	});
+
+	it("returns undefined when the last statement is not an expression", () => {
+		expect(extractLastExpression('"use strict"; const x = 1;').lastExpression).toBe("undefined");
 	});
 });

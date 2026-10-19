@@ -1567,7 +1567,7 @@ const vault = {
 `;
 }
 
-function extractLastExpression(code: string): { body: string; lastExpression: string } {
+export function extractLastExpression(code: string): { body: string; lastExpression: string } {
   try {
     const ast = parse(code, {
       sourceType: "module",
@@ -1588,28 +1588,48 @@ function extractLastExpression(code: string): { body: string; lastExpression: st
     }
 
     if (idx < 0) {
+      // Babel files string literals that precede every other statement under
+      // program.directives, not body. They are still expression statements
+      // with a value, so a cell that is only `"text";` outputs the string.
+      const directives = ast.program.directives;
+      const lastDirective = directives[directives.length - 1];
+      if (lastDirective) {
+        return splitOffStatement(code, lastDirective, lastDirective.value);
+      }
       return { body: code, lastExpression: "undefined" };
     }
 
     const lastNode = bodyNodes[idx];
     if (lastNode?.type === "ExpressionStatement") {
-      const statementStart = lastNode.start ?? 0;
-      const statementEnd = lastNode.end ?? code.length;
-      const exprStart = lastNode.expression.start ?? statementStart;
-      const exprEnd = lastNode.expression.end ?? statementEnd;
-
-      const body = `${code.slice(0, statementStart)}${code.slice(statementEnd)}`.trimEnd();
-      const lastExpression = code.slice(exprStart, exprEnd).trim();
-      return {
-        body,
-        lastExpression: lastExpression || "undefined",
-      };
+      return splitOffStatement(code, lastNode, lastNode.expression);
     }
 
     return { body: code, lastExpression: "undefined" };
   } catch {
     return { body: code, lastExpression: "undefined" };
   }
+}
+
+interface SourceRange {
+  start?: number | null;
+  end?: number | null;
+}
+
+// Removes `statement` from `code` and returns the source of `value` as the
+// expression whose result the cell outputs.
+function splitOffStatement(
+  code: string,
+  statement: SourceRange,
+  value: SourceRange
+): { body: string; lastExpression: string } {
+  const statementStart = statement.start ?? 0;
+  const statementEnd = statement.end ?? code.length;
+  const exprStart = value.start ?? statementStart;
+  const exprEnd = value.end ?? statementEnd;
+
+  const body = `${code.slice(0, statementStart)}${code.slice(statementEnd)}`.trimEnd();
+  const lastExpression = code.slice(exprStart, exprEnd).trim();
+  return { body, lastExpression: lastExpression || "undefined" };
 }
 
 // No temp file helpers needed with stdin execution.
