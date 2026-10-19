@@ -129,7 +129,7 @@ After a few seconds each cell has a callout under it:
 
 `transform`'s output is `HELLO FROM VAULTORE!`. Outputs are stored under
 `_vaultore/runs/Hello-World/<runId>/`; the format is in the
-[workflow note spec](../specs/workflow-note-spec.md#7-outputs).
+[Ore implementation](../specs/ore-implementation.md#outputs-ore-9).
 
 ---
 
@@ -165,7 +165,8 @@ check that your user may use the engine (for Docker, the `docker` group).
 
 **A cell fails with `status: error`**
 The callout's `error:` line has the message, usually the cell's stderr. Check the cell against
-the [workflow note spec](../specs/workflow-note-spec.md). Plugin messages appear in the
+the [Ore specification](https://github.com/cronai-labs/ore-spec/blob/main/SPEC.md) and
+[VaultOre's implementation of it](../specs/ore-implementation.md). Plugin messages appear in the
 developer console, prefixed `[VaultOre]`.
 
 ---

@@ -127,10 +127,10 @@ Offered only on workflow notes (frontmatter `ore: true`). No hotkeys are set; as
 | ` ```ore:ai ` | One request to your AI provider | `{{cellId}}` inserts an output, `{{note:Path/To/Note.md}}` a note. Needs `network: allow` |
 
 Both container cells use the workflow's `runtime.image` (default `oven/bun:1-alpine`). The
-[Ore specification](https://github.com/cronai-labs/ore-spec) defines the format; the
-[workflow note spec](specs/workflow-note-spec.md) describes how VaultOre implements it,
-including cell attributes (`depends`, `timeout`, `model`, `temperature`, `maxTokens`) and the
-output files.
+[Ore specification](https://github.com/cronai-labs/ore-spec) defines the format, including
+cell attributes (`depends`, `timeout`, `model`, `temperature`, `maxTokens`) and the output
+files; [VaultOre's implementation](specs/ore-implementation.md) adds what VaultOre decides on
+top of it.
 
 ### Settings
 
@@ -249,7 +249,7 @@ More in [docs/interoperability.md](docs/interoperability.md).
 ## Documentation
 
 - [Ore specification](https://github.com/cronai-labs/ore-spec): the format itself
-- [Workflow note spec](specs/workflow-note-spec.md): how VaultOre implements it, and what is planned
+- [Ore implementation](specs/ore-implementation.md): what VaultOre decides and adds on top of the format
 - [Permissions spec](specs/permissions-spec.md): permissions, mounts, stored decisions
 - [Sandbox spec](specs/sandbox-spec.md): container engines and hardening
 - [Roadmap](docs/roadmap.md): what exists, what is next

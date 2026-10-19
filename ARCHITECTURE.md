@@ -4,7 +4,8 @@
 > **Repository:** [github.com/cronai-labs/vaultore](https://github.com/cronai-labs/vaultore)
 
 How the code is organised and how a run moves through it. Behaviour is specified elsewhere,
-once: the workflow format in [specs/workflow-note-spec.md](specs/workflow-note-spec.md),
+once: the workflow format in the [Ore specification](https://github.com/cronai-labs/ore-spec)
+and VaultOre's implementation of it in [specs/ore-implementation.md](specs/ore-implementation.md),
 permissions and their defaults in [specs/permissions-spec.md](specs/permissions-spec.md),
 container flags in [specs/sandbox-spec.md](specs/sandbox-spec.md) (exact flags in
 permissions-spec §4.1), plans in [docs/roadmap.md](docs/roadmap.md).

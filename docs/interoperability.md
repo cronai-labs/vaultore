@@ -87,7 +87,7 @@ What VaultOre does with it today:
   `tags` and `generated: { by: vaultore/<version>, at }`. The cell's run
   state is `cellStatus`, leaving `status` to OKF's lifecycle, and artifact
   indexes link their files with relative Markdown links
-  ([workflow note spec](../specs/workflow-note-spec.md#7-outputs)).
+  ([Ore implementation](../specs/ore-implementation.md#outputs-ore-9)).
 - **Not yet a bundle.** The output folder has no bundle `index.md`, the JSON
   records are not OKF concepts, and the callouts in workflow notes still use
   wikilinks.

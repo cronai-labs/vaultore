@@ -119,7 +119,7 @@ exited successfully, through the platform (Obsidian's vault API in the plugin, t
 in the CLI), and the host is where its rules are enforced: it refuses paths outside the vault
 (absolute, or with a `..` segment), under `.obsidian/` or `.vaultore/` (any letter case), every
 write under `vaultWrite: deny`, and without `vaultRead` any path outside the run directory. It
-also refuses a write to a note that is no longer what the cell read (workflow-note-spec §5.1).
+also refuses a write to a note that is no longer what the cell read ([ore-implementation.md](ore-implementation.md), `ore:ts`).
 One refused write fails the cell and none of its writes are applied.
 
 **Symbolic links.** A cell with `vaultWrite` can create links through its mount, which the host
