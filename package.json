@@ -22,6 +22,7 @@
 		"typecheck": "turbo run typecheck --filter=./packages/*",
 		"clean": "turbo run clean --filter=./packages/* && rm -rf node_modules",
 		"format": "prettier --write .",
+		"audit": "bun audit --audit-level=high",
 		"obsidian:dev": "turbo run dev --filter=@vaultore/obsidian",
 		"obsidian:build": "turbo run build --filter=@vaultore/obsidian",
 		"obsidian:package": "node ./scripts/package-obsidian.mjs",
