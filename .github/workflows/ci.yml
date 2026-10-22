@@ -10,6 +10,7 @@ on:
     # re-run when either changes. `ready_for_review` re-runs the checklist step,
     # which is skipped while the PR is a draft.
     types: [opened, synchronize, reopened, edited, ready_for_review]
+  workflow_dispatch:
 
 # CI only reads the repository: it checks out, installs and runs the gate.
 # Nothing here publishes, comments, or writes back (CodeQL
@@ -41,6 +42,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      # Runs on every event, not only on pull requests. Covers job-level
+      # `uses:` of reusable workflows too; local `./` references are exempt.
+      - name: Actions are pinned to a full commit SHA
+        run: |
+          unpinned="$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github/workflows \
+            | grep -vE 'uses:[[:space:]]*\./' \
+            | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)"
+          if [ -n "$unpinned" ]; then
+            echo "::error::Actions must be pinned to a 40-character commit SHA:"
+            echo "$unpinned"
+            exit 1
+          fi
+          echo "ok: every uses: is SHA-pinned"
 
       - name: PR title is a Conventional Commit
         if: github.event_name == 'pull_request'
@@ -108,7 +123,8 @@ jobs:
   # whole check on non-PR events, and a skipped required check blocks a PR
   # forever — see the policy job above.
   commitlint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,7 +151,8 @@ jobs:
             --verbose
 
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -241,6 +258,41 @@ jobs:
           VAULTORE_IT_ENGINE: docker
         run: bun run --cwd packages/core test:integration
 
+  # Secret scan over the full history and a dependency audit. The audit's
+  # threshold is a decision: docs/decisions/dependency-audit-scope.md.
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install gitleaks (checksum-verified)
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+
+      - name: Secret scan (full history)
+        run: '"$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose .'
+
+      # Reads bun.lock only; no install needed.
+      - name: Dependency audit
+        run: bun run audit
+
   # The one check the main ruleset should require. Every gate above feeds it,
   # so adding or renaming a job never means editing the ruleset.
   #
@@ -251,7 +303,7 @@ jobs:
   # and skipped all fail it.
   ci-required:
     if: always()
-    needs: [policy, commitlint, build-and-test, integration, reproducible-build]
+    needs: [policy, commitlint, build-and-test, integration, reproducible-build, security]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 

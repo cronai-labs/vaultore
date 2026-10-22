@@ -33,10 +33,17 @@ documents link to it.
 | [Roadmap](roadmap.md) | What exists, what is next, what is under consideration |
 | [Local intelligence](local-intelligence.md) | An exploration of local retrieval for AI cells; nothing of it is built |
 
+## Decisions
+
+| Document | Covers |
+|----------|--------|
+| [Dependency audit scope](decisions/dependency-audit-scope.md) | Why the CI audit fails on high and critical advisories only |
+
 ## Layout
 
 ```
 docs/
+├── decisions/                # decision records, each with a re-check date
 ├── index.md                  # this file
 ├── interoperability.md
 ├── local-intelligence.md
