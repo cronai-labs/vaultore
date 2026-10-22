@@ -6,7 +6,7 @@ tags: [ci, security, bun-audit, dependencies]
 sources:
   - { name: "bun audit and bun audit --json on bun.lock at 4ea8240, bun 1.3.14 and 1.4.3, 2026-10-22", credibility: verified-firsthand }
   - { name: "bun audit --help, bun 1.3.14", credibility: verified-firsthand }
-  - { name: "cronai-labs/web-cronai-app docs/decisions/dependency-audit-scope.md", credibility: verified-firsthand }
+  - { name: "cronai-labs/web-cronai-app docs/decisions/dependency-audit-scope.md", credibility: documented }
 verified: true
 verified_on: 2026-10-22
 stale_after: 2027-04-22
