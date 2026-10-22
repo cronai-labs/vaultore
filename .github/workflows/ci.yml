@@ -35,8 +35,10 @@ jobs:
     name: policy
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # pull-requests: read lets the attribution check list the PR's commits.
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,6 +105,42 @@ jobs:
             exit 1
           fi
           echo "ok: no unticked checkboxes"
+
+      - name: No tool or model attribution
+        # Owner rule: no AI co-author trailer and no "Generated with" line.
+        # A branch commit's trailer or the PR body can reach main through the
+        # squash. Commits come from the API, so checkout depth does not matter.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          tools='claude|anthropic|copilot|openai|chatgpt|codex|gemini|cursor|aider|windsurf|devin'
+          pattern="^[[:space:]]*(co-authored-by:.*($tools)|.*generated (with|by) \\[?($tools))"
+          # Captured first, so a failed API call fails the step instead of
+          # leaving nothing to check.
+          commits="$(gh api --paginate "repos/$REPO/pulls/$PR/commits" \
+            --jq '.[] | "\(.sha[0:7])\t\(.commit.message | @base64)"')"
+          hits=""
+          while IFS=$'\t' read -r sha msg; do
+            [ -n "$sha" ] || continue
+            m="$(printf '%s' "$msg" | base64 -d | grep -inE "$pattern" || true)"
+            if [ -n "$m" ]; then hits="${hits}commit ${sha}: ${m}"$'\n'; fi
+          done <<< "$commits"
+          # Fenced code blocks are blanked so a quoted example does not count.
+          b="$(printf '%s' "$BODY" \
+            | awk '/^[[:space:]]*```/ { f = !f; print ""; next } f { print ""; next } { print }' \
+            | grep -inE "$pattern" || true)"
+          if [ -n "$b" ]; then hits="${hits}PR body: ${b}"$'\n'; fi
+          if [ -n "$hits" ]; then
+            echo "::error::Tool or model attribution found:"
+            printf '%s' "$hits"
+            echo "Reword the commits (git rebase -i, then git push --force-with-lease) and edit the PR body."
+            exit 1
+          fi
+          echo "ok: no tool or model attribution"
 
   # The condition sits on the steps, not on the job. A job-level `if` skips the
   # whole check on non-PR events, and a skipped required check blocks a PR
