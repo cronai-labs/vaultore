@@ -137,7 +137,7 @@ top of it.
 | Setting | Default | |
 |---------|---------|---|
 | Default provider | OpenAI | OpenAI or Anthropic, for every `ore:ai` cell |
-| Default model | `gpt-5-mini` | Used when a cell sets no `model=`. Clearing the field sets the current provider's default (`claude-haiku-5-5` for Anthropic) |
+| Default model | `gpt-5-mini` | Used when a cell sets no `model=`. Clearing the field sets the current provider's default (`claude-haiku-5-5` for Anthropic); switching the provider does the same while the field holds the old provider's default |
 | Temperature | provider default | |
 | Max tokens | 800 | |
 | AI request timeout | 120 seconds | |
