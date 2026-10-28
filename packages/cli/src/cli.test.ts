@@ -143,6 +143,29 @@ describe("discoverWorkflows / buildScheduleManifest", () => {
 		expect(discovered[0]?.contentSha256).toMatch(/^[0-9a-f]{64}$/);
 	});
 
+	// A note meant as a workflow that cannot be read used to vanish from list,
+	// agent and export without a word (#121).
+	it("reports workflow notes it skips, with the reason", async () => {
+		const adapter = new NodeAdapter({ vaultRoot: vault, quiet: true });
+		await adapter.writeFile("Workflows/sched.md", WORKFLOW);
+		await adapter.writeFile("Workflows/bad-yaml.md", "---\nore: true\nname: [unclosed\n---\n# x\n");
+		await adapter.writeFile("Workflows/bad-schema.md", "---\nore: true\nruntime:\n  engine: kubernetes\n---\n# x\n");
+		await adapter.writeFile("Broken.md", "---\ntitle: [unclosed\n---\n# not a workflow\n");
+
+		const skipped: Array<[string, string]> = [];
+		const discovered = await discoverWorkflows(adapter, {
+			onSkip: (path, reason) => skipped.push([path, reason]),
+		});
+
+		expect(discovered.map((d) => d.path)).toEqual(["Workflows/sched.md"]);
+		expect(skipped.map(([path]) => path).sort()).toEqual([
+			"Workflows/bad-schema.md",
+			"Workflows/bad-yaml.md",
+		]);
+		expect(Object.fromEntries(skipped)["Workflows/bad-yaml.md"]).toMatch(/YAML/);
+		expect(Object.fromEntries(skipped)["Workflows/bad-schema.md"]).toMatch(/engine/);
+	});
+
 	it("builds a manifest containing only scheduled workflows", async () => {
 		const adapter = new NodeAdapter({ vaultRoot: vault, quiet: true });
 		await adapter.writeFile("Workflows/sched.md", WORKFLOW);

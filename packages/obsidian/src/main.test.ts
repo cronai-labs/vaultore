@@ -25,6 +25,7 @@ vi.mock("@vaultore/core", async () => {
     },
     WorkflowScheduler: actual.WorkflowScheduler,
     computeNextRun: actual.computeNextRun,
+    errorMessage: actual.errorMessage,
     isWorkflowFrontmatter: actual.isWorkflowFrontmatter,
     resolveInVaultRoot: actual.resolveInVaultRoot,
   };
@@ -600,6 +601,20 @@ describe("scheduled workflows", () => {
     scheduler().tick();
 
     expect(run).toHaveBeenCalledWith("Workflows/daily.md");
+  });
+
+  // The note can go between the tick and the run, before the vault's delete
+  // or rename event has refreshed the schedules (#121).
+  it("says so when a due note is gone, instead of doing nothing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runWorkflow = vi.spyOn(plugin as any, "runWorkflow");
+
+    await (plugin as any).runWorkflowByPath("Workflows/gone.md");
+
+    expect(runWorkflow).not.toHaveBeenCalled();
+    expect(Notice.shown.filter((m) => m.includes("Workflows/gone.md"))).toHaveLength(1);
+    expect(String(warn.mock.calls[0])).toContain("Workflows/gone.md");
+    warn.mockRestore();
   });
 
   it("does not run a note whose schedule changed before the refresh caught up", async () => {

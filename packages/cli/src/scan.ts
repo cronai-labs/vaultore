@@ -7,7 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { WorkflowParser } from "@vaultore/core";
+import { WorkflowParser, errorMessage } from "@vaultore/core";
 import type { Workflow } from "@vaultore/core";
 import type { NodeAdapter } from "./adapter";
 
@@ -54,11 +54,13 @@ export function stripTrailing(value: string, ...separators: string[]): string {
 
 /**
  * Find every workflow note in the vault. Output folders (default
- * `_vaultore`) are skipped so generated notes are never picked up.
+ * `_vaultore`) are skipped so generated notes are never picked up. A note
+ * meant as a workflow that cannot be read is skipped and passed to `onSkip`
+ * with the reason.
  */
 export async function discoverWorkflows(
 	adapter: NodeAdapter,
-	options: { outputRoot?: string } = {}
+	options: { outputRoot?: string; onSkip?: (path: string, reason: string) => void } = {}
 ): Promise<DiscoveredWorkflow[]> {
 	const outputRoot = stripTrailing(options.outputRoot ?? "_vaultore", "/");
 	const files = await adapter.listFiles("");
@@ -74,7 +76,11 @@ export async function discoverWorkflows(
 		} catch {
 			continue;
 		}
-		if (!parser.isWorkflow(content)) continue;
+		if (!parser.isWorkflow(content)) {
+			const yamlError = parser.workflowFrontmatterError(content);
+			if (yamlError) options.onSkip?.(path, yamlError);
+			continue;
+		}
 
 		try {
 			const workflow = parser.parse(content, path);
@@ -83,8 +89,8 @@ export async function discoverWorkflows(
 				workflow,
 				contentSha256: createHash("sha256").update(content).digest("hex"),
 			});
-		} catch {
-			// Malformed workflow notes are skipped, mirroring plugin behavior
+		} catch (err) {
+			options.onSkip?.(path, errorMessage(err));
 		}
 	}
 

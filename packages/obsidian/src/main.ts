@@ -17,6 +17,7 @@ import {
   WorkflowParser,
   WorkflowScheduler,
   computeNextRun,
+  errorMessage,
   isWorkflowFrontmatter,
   resolveInVaultRoot,
 } from "@vaultore/core";
@@ -164,7 +165,7 @@ class ObsidianAdapter implements PlatformAdapter {
       try {
         await this.plugin.app.vault.createFolder(current);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         if (!message.toLowerCase().includes("already exists")) {
           throw err;
         }
@@ -371,7 +372,7 @@ class ObsidianAdapter implements PlatformAdapter {
       try {
         await this.plugin.app.vault.adapter.mkdir(current);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         if (!message.toLowerCase().includes("already exists")) {
           throw err;
         }
@@ -612,7 +613,7 @@ export default class VaultOrePlugin extends Plugin {
       });
       new Notice("VaultOre: Workflow completed");
     } catch (err) {
-      new Notice(`VaultOre error: ${err instanceof Error ? err.message : String(err)}`);
+      new Notice(`VaultOre error: ${errorMessage(err)}`);
     } finally {
       // The notice is only created once the read succeeds, so it may not exist.
       startNotice?.hide();
@@ -622,9 +623,15 @@ export default class VaultOrePlugin extends Plugin {
 
   private async runWorkflowByPath(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) {
-      await this.runWorkflow(file);
+    if (!(file instanceof TFile)) {
+      // Moved or deleted since the schedule was armed; the vault event that
+      // drops it may not have arrived yet.
+      const message = `VaultOre: Scheduled workflow ${path} was not run: the note no longer exists`;
+      this.adapter.log("warn", message);
+      new Notice(message);
+      return;
     }
+    await this.runWorkflow(file);
   }
 
   private debouncedRefreshScheduledWorkflows(): void {
@@ -651,7 +658,7 @@ export default class VaultOrePlugin extends Plugin {
       try {
         computeNextRun(schedule);
       } catch (err) {
-        error = err instanceof Error ? err.message : String(err);
+        error = errorMessage(err);
       }
       const entry = registered.get(file.path);
       notes.push({
@@ -771,7 +778,7 @@ export default class VaultOrePlugin extends Plugin {
       cell = workflow.cells.find((c) => line >= c.startLine && line <= c.endLine);
     } catch (err) {
       this.runningWorkflows.delete(file.path);
-      new Notice(`VaultOre: Parse error: ${err instanceof Error ? err.message : String(err)}`);
+      new Notice(`VaultOre: Parse error: ${errorMessage(err)}`);
       return;
     }
 
@@ -802,7 +809,7 @@ export default class VaultOrePlugin extends Plugin {
       new Notice(`VaultOre: Cell ${cell.attributes.id} completed`);
     } catch (err) {
       startNotice.hide();
-      new Notice(`VaultOre error: ${err instanceof Error ? err.message : String(err)}`);
+      new Notice(`VaultOre error: ${errorMessage(err)}`);
     } finally {
       this.runningWorkflows.delete(file.path);
     }

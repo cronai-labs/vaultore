@@ -193,6 +193,16 @@ describe("requests through the platform adapter", () => {
 		);
 	});
 
+	it("reports a transport failure that is not an Error by its message", async () => {
+		const { platform } = requestingAdapter(async () => {
+			throw { status: 0, message: "socket hang up" };
+		});
+
+		await expect(
+			createOpenAIProvider(platform).complete({ model: "gpt-5-mini", prompt: "hi" })
+		).rejects.toThrow(/failed after \d+(\.\d)?s: socket hang up\./);
+	});
+
 	// requestUrl cannot be aborted, so the bound has to come from core.
 	it("times out an adapter request that never settles", async () => {
 		const { platform } = requestingAdapter(
