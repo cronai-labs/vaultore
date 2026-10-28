@@ -36,6 +36,10 @@ updates:
       # Revisit after the first release.
       - dependency-name: "@babel/parser"
         update-types: ["version-update:semver-major"]
+      # Remove once tsup's type build and typescript-eslint run on TypeScript 7
+      # (#195).
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
     groups:
       dev-dependencies:
         dependency-type: "development"
