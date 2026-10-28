@@ -74,6 +74,15 @@ jobs:
           fi
           echo "ok: $TITLE"
 
+      - name: A breaking change says what breaks
+        # The description becomes the squash commit's body, and its
+        # BREAKING CHANGE: footer is what the release notes show (#193).
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/breaking-footer.mjs
+
       - name: Branch was rebased, not merged into
         if: github.event_name == 'pull_request'
         env:
@@ -213,6 +222,9 @@ jobs:
 
       - name: Test
         run: bun run test
+
+      - name: Release scripts
+        run: bun run test:scripts
 
       - name: Typecheck
         run: bun run typecheck
