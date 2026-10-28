@@ -206,9 +206,10 @@ Cells run as the host's `uid:gid` (`containerUser()`), never as root:
 | Timeout | 60s | Per workflow (`runtime.timeout`) or per cell (`timeout`) |
 | PIDs | 256 | No; `DEFAULT_PIDS_LIMIT`, overridable only through the `pidsLimit` option of `execContainer` |
 
-At the timeout VaultOre kills the engine's CLI process. The cell's error then reads `exit 1`
-rather than naming the timeout, and the container itself may keep running until it exits
-(a known follow-up of [#86](https://github.com/cronai-labs/vaultore/pull/86)).
+At the timeout VaultOre kills the engine's CLI process, then the container by the name it gave
+it (`<engine> kill <name>`), and `--rm` removes it. The cell's output gets the status `timeout`
+and the error `<type> cell timed out after <n>s`, and the run counts as failed
+([#113](https://github.com/cronai-labs/vaultore/issues/113)).
 
 ### 4.4 No Unsafe Fallback
 

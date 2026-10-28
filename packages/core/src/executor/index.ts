@@ -272,7 +272,8 @@ export class WorkflowExecutor {
         "error"
       );
     } catch (err) {
-      return buildOutput(cell.attributes.id, errorMessage(err), start, "error");
+      const status = err instanceof CellTimeoutError ? "timeout" : "error";
+      return buildOutput(cell.attributes.id, errorMessage(err), start, status);
     }
   }
 }
@@ -573,6 +574,14 @@ function filterCellsForTarget(
   return cells.filter((cell) => orderedIds.has(cell.attributes.id));
 }
 
+/** A container cell ran past its timeout; its output gets status "timeout". */
+class CellTimeoutError extends Error {
+  constructor(type: "ts" | "shell", timeoutMs: number | undefined) {
+    super(`${type} cell timed out after ${(timeoutMs ?? 0) / 1000}s`);
+    this.name = "CellTimeoutError";
+  }
+}
+
 function buildOutput(
   cellId: string,
   value: unknown,
@@ -586,7 +595,7 @@ function buildOutput(
       status,
       duration: Date.now() - start,
       timestamp: new Date().toISOString(),
-      error: status === "error" ? String(value) : undefined,
+      error: status === "success" ? undefined : String(value),
     },
   };
 }
@@ -812,7 +821,8 @@ async function updateRunIndex(
     ...(output.meta.artifacts ? { artifacts: output.meta.artifacts } : {}),
   };
 
-  if (output.meta.status === "error") {
+  // A timed-out cell fails its run like an erroring one.
+  if (output.meta.status !== "success") {
     runEntry.status = "error";
   } else if (runEntry.status !== "error") {
     runEntry.status = "success";
@@ -1308,6 +1318,9 @@ async function executeTypeScriptCell(
   };
 
   const result = await execContainer(platform.timers, runtime.engine, containerOpts);
+  if (result.timedOut) {
+    throw new CellTimeoutError("ts", containerOpts.timeout);
+  }
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `ts cell failed: exit ${result.exitCode}`);
   }
@@ -1349,6 +1362,9 @@ async function executeShellCell(
   };
 
   const result = await execContainer(platform.timers, runtime.engine, containerOpts);
+  if (result.timedOut) {
+    throw new CellTimeoutError("shell", containerOpts.timeout);
+  }
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || `shell cell failed: exit ${result.exitCode}`);
   }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
@@ -319,6 +319,63 @@ describe("execContainer output", () => {
 
     expect(result.stdout).toBe("ä");
     expect(result.stderr).toBe("ä");
+    expect(result.timedOut).toBe(false);
+  });
+});
+
+// Killing the `docker run` client leaves the container running (#113).
+describe("execContainer timeout", () => {
+  let bin: string;
+  let log: string;
+  let savedPath: string | undefined;
+
+  beforeEach(() => {
+    bin = mkdtempSync(join(tmpdir(), "vaultore-timeout-"));
+    log = join(bin, "calls.log");
+    savedPath = process.env.PATH;
+    process.env.PATH = bin;
+    // `run` hangs like a long cell; every call's arguments are logged.
+    for (const name of ["docker", "container"]) {
+      const file = join(bin, name);
+      writeFileSync(
+        file,
+        `#!/bin/sh\necho "$@" >> '${log}'\n[ "$1" = run ] && exec /bin/sleep 5\nexit 0\n`
+      );
+      chmodSync(file, 0o755);
+    }
+  });
+
+  afterEach(() => {
+    process.env.PATH = savedPath;
+    rmSync(bin, { recursive: true, force: true });
+  });
+
+  const calls = () => readFileSync(log, "utf8").trim().split("\n");
+
+  // The timeouts leave the fake time to start: a new script's first run can
+  // take a few hundred milliseconds on macOS.
+  it.each(["docker", "apple"] as const)(
+    "kills the %s container by its name and reports the timeout",
+    async (engine) => {
+      const result = await execContainer(nodeTimers, engine, { ...baseOptions, timeout: 1000 });
+
+      expect(result.timedOut).toBe(true);
+      const [run, kill] = calls();
+      const name = /--name (vaultore-[0-9a-f]+)/.exec(run)?.[1];
+      expect(name).toBeDefined();
+      expect(kill).toBe(`kill ${name}`);
+    }
+  );
+
+  it("names every container differently", async () => {
+    await execContainer(nodeTimers, "docker", { ...baseOptions, timeout: 1000 });
+    await execContainer(nodeTimers, "docker", { ...baseOptions, timeout: 1000 });
+
+    const names = calls()
+      .filter((line) => line.startsWith("run "))
+      .map((line) => /--name (\S+)/.exec(line)?.[1]);
+    expect(names).toHaveLength(2);
+    expect(names[0]).not.toBe(names[1]);
   });
 });
 

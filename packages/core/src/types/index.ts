@@ -106,6 +106,11 @@ export interface ContainerExecOptions {
    * under a mount, or the engine has to create the mount point.
    */
   maskedPaths?: string[];
+  /**
+   * The container's name, which a timeout uses to kill it. `execContainer`
+   * picks a unique one when it is not given.
+   */
+  name?: string;
 }
 
 /**
@@ -125,6 +130,8 @@ export interface ContainerExecResult {
   stdout: string;
   stderr: string;
   duration: number;
+  /** The run hit `timeout`; the container was then killed and `exitCode` is 1. */
+  timedOut: boolean;
 }
 
 // =============================================================================

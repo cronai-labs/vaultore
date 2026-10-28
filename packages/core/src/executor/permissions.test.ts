@@ -514,3 +514,31 @@ describe("a custom config folder is hidden from cells too (Vault#configDir)", ()
 		expect(requests).toEqual([]);
 	});
 });
+
+// A timed-out cell used to read "exit 1", like any failed command (#113).
+describe("cell timeouts (#113)", () => {
+	for (const type of ["ts", "shell"] as const) {
+		it(`${type}: names the timeout and its length`, async () => {
+			vi.mocked(execContainer).mockResolvedValue({
+				exitCode: 1,
+				stdout: "",
+				stderr: "",
+				duration: 2000,
+				timedOut: true,
+			});
+			const { workflow, files } = await run(
+				note("  network: deny", `\`\`\`ore:${type} id=slow timeout=2\nsleep 60\n\`\`\``)
+			);
+
+			const output = workflow.outputs.get("slow");
+			expect(output?.meta.status).toBe("timeout");
+			expect(String(output?.value)).toBe(`${type} cell timed out after 2s`);
+			// What `vaultore run` prints after the cell's status.
+			expect(output?.meta.error).toBe(`${type} cell timed out after 2s`);
+			// The run that held it failed.
+			const indexPath = Object.keys(files).find((path) => path.endsWith("/index.json"));
+			const index = JSON.parse(files[indexPath!] as string) as { runs: Array<{ status: string }> };
+			expect(index.runs.at(-1)?.status).toBe("error");
+		});
+	}
+});

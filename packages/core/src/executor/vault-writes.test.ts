@@ -50,6 +50,7 @@ function container(print: (opts: ContainerExecOptions) => string, exitCode = 0) 
 			stdout: print(opts),
 			stderr: exitCode === 0 ? "" : "boom",
 			duration: 1,
+			timedOut: false,
 		};
 	});
 }

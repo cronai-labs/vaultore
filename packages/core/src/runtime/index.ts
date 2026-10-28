@@ -6,6 +6,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { accessSync, constants, existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import {
@@ -118,21 +119,35 @@ async function probe(
 // CONTAINER EXECUTION
 // =============================================================================
 
+/** How long `<engine> kill` may take after a cell timed out. */
+const KILL_TIMEOUT_MS = 10_000;
+
 export async function execContainer(
   timers: Timers,
   engine: RuntimeEngine,
   options: ContainerExecOptions
 ): Promise<ContainerExecResult> {
   const start = Date.now();
-  const { command, args } = buildRunCommand(engine, options);
+  const name = options.name ?? `vaultore-${randomBytes(6).toString("hex")}`;
+  const { command, args } = buildRunCommand(engine, { ...options, name });
 
   const result = await runCommand(timers, command, args, options.stdin, options.timeout);
+
+  if (result.timedOut) {
+    // Killing the `run` client leaves the container running (#113); `--rm`
+    // removes it once it is killed. A container that already exited makes
+    // `kill` fail, which is fine.
+    await runCommand(timers, command, ["kill", name], undefined, KILL_TIMEOUT_MS).catch(
+      () => undefined
+    );
+  }
 
   return {
     exitCode: result.exitCode,
     stdout: result.stdout,
     stderr: result.stderr,
     duration: Date.now() - start,
+    timedOut: result.timedOut,
   };
 }
 
@@ -194,6 +209,9 @@ export function buildRunCommand(
   const runtime = engineBinary(engine);
   const apple = engine === "apple";
   const args: string[] = ["run", "--rm"];
+  if (options.name) {
+    args.push("--name", options.name);
+  }
 
   if (!options.networkEnabled) {
     if (apple) {

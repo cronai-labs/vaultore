@@ -207,8 +207,6 @@ are used for the provider request only, not passed to containers.
   `colima start --vm-type vz --mount-type virtiofs`.
 - **Dependency cycles are not detected**: the cells run in document order
   ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
-- **A cell timeout stops the engine's CLI, not the container**, which may keep running until it
-  exits; the error reads `exit 1`.
 - **Symbolic links are not followed out of the vault** by anything VaultOre reads or writes on
   the host (`vault.write`, `{{note:}}`, output files, the workflow note), and a link as the last
   component of a path is refused wherever it points. A workflow in a folder linked from outside
