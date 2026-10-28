@@ -15,6 +15,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # The PR title becomes the squash subject and must pass the policy job:
+    # build(deps) and build(deps-dev), not the default chore(deps).
+    commit-message:
+      prefix: "build"
+      prefix-development: "build"
+      include: "scope"
     # Majors held back on purpose. Each entry names what has to change before
     # it is removed; checked with npm view on 2026-10-15.
     ignore:
@@ -47,7 +53,14 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    # Majors stay out of the group, so each arrives as its own PR.
     groups:
       actions:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
