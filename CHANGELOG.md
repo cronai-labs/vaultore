@@ -10,11 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Bug Fixes
 
 - **executor:** A TS cell that is only a string literal outputs the string ([#159](https://github.com/cronai-labs/vaultore/issues/159))
+
 ## [0.1.2] - 2026-10-18
 
 ### Bug Fixes
 
 - **core:** Hide the config folder the platform reports (Vault#configDir), not only .obsidian ([#147](https://github.com/cronai-labs/vaultore/issues/147))
+
 ## [0.1.1] - 2026-10-18
 
 ### Bug Fixes
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **deps:** Bump zod from 3.25.76 to 4.6.7 ([#93](https://github.com/cronai-labs/vaultore/issues/93))
 - **deps-dev:** Bump the dev-dependencies group across 1 directory with 10 updates ([#65](https://github.com/cronai-labs/vaultore/issues/65))
 - **deps:** Refresh the lockfile within ranges, clearing the dev-tool advisories ([#141](https://github.com/cronai-labs/vaultore/issues/141))
+
 ## [0.1.0] - 2026-10-15
 
 ### Features
