@@ -20,5 +20,19 @@ describe("Canonical fixtures", () => {
       const ids = new Set(workflow.cells.map((cell) => cell.attributes.id));
       expect(ids.size).toBe(workflow.cells.length);
     });
+
+    // A fixture runs on whatever the user configured: a pinned engine
+    // overrides the engine setting, and a pinned model fails under the other
+    // provider before any request (#120).
+    it(`pins neither an engine nor a model in ${file}`, () => {
+      const workflow = parser.parse(
+        readFileSync(join(fixtureDir, file), "utf8"),
+        `fixtures/canonical/${file}`
+      );
+      expect(workflow.frontmatter.runtime?.engine).toBeUndefined();
+      for (const cell of workflow.cells) {
+        expect(cell.attributes.model, `model of cell "${cell.attributes.id}"`).toBeUndefined();
+      }
+    });
   }
 });

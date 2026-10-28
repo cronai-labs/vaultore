@@ -9,7 +9,6 @@ description: >
   creates digest notes with backlinks.
 
 runtime:
-  engine: docker
   image: oven/bun:1-alpine
 
 permissions:
@@ -142,7 +141,7 @@ const failed = pages.filter((p) => p.error);
 
 ## Step 3: Summarize with AI
 
-```ore:ai id=summarize model=claude-sonnet-4-20250514 temperature=0 maxTokens=1200 depends=[fetch-pages]
+```ore:ai id=summarize temperature=0 maxTokens=1200 depends=[fetch-pages]
 You are a research assistant helping organize reading material.
 
 For each page below (that doesn't have an error), provide:

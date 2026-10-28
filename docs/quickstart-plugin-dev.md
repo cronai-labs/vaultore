@@ -110,8 +110,7 @@ Changes to `packages/core` reach the plugin bundle only after core is rebuilt
 cp fixtures/canonical/hello-world.md ~/vaultore-test-vault/Hello-World.md
 ```
 
-`hello-world.md` sets `runtime.engine: docker`. On another engine, delete that line so your
-setting applies.
+`hello-world.md` sets no `runtime.engine`, so it runs on the engine chosen in the settings.
 
 Open the note and run **VaultOre: Run all cells** from the command palette (`Cmd+P` /
 `Ctrl+P`). No hotkeys are set by default; assign them under **Settings → Hotkeys**.

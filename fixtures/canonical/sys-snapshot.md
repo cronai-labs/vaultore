@@ -10,7 +10,6 @@ description: >
   Tests shell execution and cross-cell data flow.
 
 runtime:
-  engine: docker
   image: oven/bun:1-alpine
 
 permissions:
