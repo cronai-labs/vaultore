@@ -129,12 +129,7 @@ in principle; the order is not fixed. Grouped:
 
 **Engineering follow-ups**
 
-- Parser and executor defects ([#45](https://github.com/cronai-labs/vaultore/issues/45)),
-  cell timeouts that leave the container running
-  ([#113](https://github.com/cronai-labs/vaultore/issues/113)), error handling
-  ([#121](https://github.com/cronai-labs/vaultore/issues/121)), the provider switch keeping
-  the old default model ([#115](https://github.com/cronai-labs/vaultore/issues/115)),
-  fixtures ([#120](https://github.com/cronai-labs/vaultore/issues/120)).
+- Parser and executor defects ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
 - Stale container reads beyond `vault.write`
   ([#124](https://github.com/cronai-labs/vaultore/issues/124)).
 - Platform coverage for Windows and rootless engines

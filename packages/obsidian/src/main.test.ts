@@ -242,6 +242,29 @@ describe("VaultOrePlugin", () => {
       await engine.changeHandler!("colima");
       expect(plugin.settings.runtimeEngine).toBe("colima");
     });
+
+    // The old provider's default under the new provider fails every AI cell
+    // with the provider/model mismatch error (#115, #78).
+    it("switches the default model with the provider when it was the old default", async () => {
+      expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS.openai);
+
+      await row("Default provider").dropdowns[0].changeHandler!("anthropic");
+
+      expect(plugin.settings.defaultProvider).toBe("anthropic");
+      expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS.anthropic);
+      expect(row("Default model").texts[0].value).toBe(DEFAULT_MODELS.anthropic);
+      expect(plugin.saveData).toHaveBeenLastCalledWith(
+        expect.objectContaining({ defaultModel: DEFAULT_MODELS.anthropic })
+      );
+    });
+
+    it("keeps a model the user chose when the provider changes", async () => {
+      await row("Default model").texts[0].changeHandler!("gpt-5");
+
+      await row("Default provider").dropdowns[0].changeHandler!("anthropic");
+
+      expect(plugin.settings.defaultModel).toBe("gpt-5");
+    });
   });
 
   describe("API keys", () => {

@@ -953,9 +953,19 @@ class VaultOreSettingsTab extends PluginSettingTab {
         // The note rows describe whether and when they run.
         this.update();
         return;
-      case "defaultProvider":
+      case "defaultProvider": {
+        const previous = settings.defaultProvider;
         settings.defaultProvider = value as VaultOreSettings["defaultProvider"];
+        // The old provider's default would fail every AI cell under the new
+        // one (#115); a model the user chose stays.
+        if (settings.defaultModel === DEFAULT_MODELS[previous]) {
+          settings.defaultModel = DEFAULT_MODELS[settings.defaultProvider];
+          await this.plugin.saveSettings();
+          this.update();
+          return;
+        }
         break;
+      }
       case "defaultModel":
         settings.defaultModel = String(value).trim() || DEFAULT_MODELS[settings.defaultProvider];
         break;
