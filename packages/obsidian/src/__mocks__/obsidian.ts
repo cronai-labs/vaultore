@@ -93,6 +93,11 @@ export class MockContainer {
   }
 }
 
+// Renders getSettingDefinitions() the way Obsidian 1.13+ does, reduced to the
+// recorded rows: a heading row per group, a row per definition, controls wired
+// through getControlValue, validate and setControlValue, and `render` items
+// called with their row. update() re-renders, so a test sees the state after a
+// change. This is the mock's reading of the API, not Obsidian's code.
 export class PluginSettingTab {
   app: any;
   plugin: any;
@@ -101,11 +106,87 @@ export class PluginSettingTab {
     this.app = app;
     this.plugin = plugin;
   }
+  getSettingDefinitions(): any[] {
+    return [];
+  }
+  getControlValue(key: string): unknown {
+    return this.plugin.settings[key];
+  }
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    this.plugin.settings[key] = value;
+    await this.plugin.saveData(this.plugin.settings);
+  }
+  update() {
+    this.display();
+  }
+  refreshDomState() {}
+  display() {
+    this.containerEl.empty();
+    renderDefinitions(this, this.getSettingDefinitions(), this.containerEl);
+  }
+}
+
+const evaluate = (value: unknown, fallback: boolean): boolean =>
+  typeof value === "function" ? value() : typeof value === "boolean" ? value : fallback;
+
+function renderDefinitions(tab: PluginSettingTab, items: any[], container: MockContainer) {
+  for (const item of items) {
+    if (!evaluate(item.visible, true)) continue;
+    if (item.type === "group" || item.type === "list") {
+      if (item.heading) new Setting(container).setName(item.heading).setHeading();
+      renderDefinitions(tab, item.items ?? [], container);
+      continue;
+    }
+    if (item.type === "page") {
+      throw new Error("The mock does not render setting pages");
+    }
+    const setting = new Setting(container).setName(item.name);
+    if (item.desc !== undefined) setting.setDesc(item.desc);
+    setting.searchable = evaluate(item.searchable, true);
+    if (item.render) {
+      item.render(setting, {});
+    } else if (item.control) {
+      addControl(tab, setting, item.control);
+    }
+  }
+}
+
+function addControl(tab: PluginSettingTab, setting: Setting, control: any) {
+  const wire = (component: MockValueComponent<any>) => {
+    component.setValue(tab.getControlValue(control.key) ?? control.defaultValue);
+    component.setDisabled(evaluate(control.disabled, false));
+    if (control.placeholder) component.setPlaceholder(control.placeholder);
+    component.onChange(async (value: unknown) => {
+      const error = await control.validate?.(value);
+      setting.error = error || "";
+      if (error) return;
+      await tab.setControlValue(control.key, value);
+    });
+  };
+  switch (control.type) {
+    case "toggle":
+      setting.addToggle(wire);
+      break;
+    case "text":
+      setting.addText(wire);
+      break;
+    case "dropdown":
+      setting.addDropdown((dropdown) => {
+        for (const [value, label] of Object.entries(control.options as Record<string, string>)) {
+          dropdown.addOption(value, label);
+        }
+        wire(dropdown);
+      });
+      break;
+    default:
+      throw new Error(`The mock does not render "${control.type}" controls`);
+  }
 }
 
 export class MockValueComponent<T = unknown> {
   value: T | undefined;
   disabled = false;
+  placeholder = "";
   options: string[] = [];
   changeHandler?: (value: T) => unknown;
   setValue(value: T) {
@@ -119,7 +200,8 @@ export class MockValueComponent<T = unknown> {
     this.changeHandler = cb;
     return this;
   }
-  setPlaceholder(_value: string) {
+  setPlaceholder(value: string) {
+    this.placeholder = value;
     return this;
   }
   addOption(value: string, _label: string) {
@@ -166,6 +248,10 @@ export class Setting {
   name = "";
   desc = "";
   heading = false;
+  /** Whether Obsidian's settings search may find the row. */
+  searchable = true;
+  /** The message a control's `validate` returned for the last change. */
+  error = "";
   toggles: MockValueComponent<boolean>[] = [];
   texts: MockValueComponent<string>[] = [];
   dropdowns: MockValueComponent<string>[] = [];

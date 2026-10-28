@@ -152,6 +152,98 @@ describe("VaultOrePlugin", () => {
     });
   });
 
+  // Obsidian 1.13 indexes a tab's settings for its settings search only when
+  // the tab declares them (#137).
+  describe("declarative settings", () => {
+    const settingsTab = () =>
+      (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const row = (name: string) => {
+      const found = renderSettings().find((setting) => setting.name === name);
+      expect(found, `setting "${name}"`).toBeDefined();
+      return found!;
+    };
+
+    it("declares every setting instead of drawing the tab itself", () => {
+      const prototype = Object.getPrototypeOf(settingsTab());
+      expect(Object.getOwnPropertyNames(prototype)).toContain("getSettingDefinitions");
+      expect(Object.getOwnPropertyNames(prototype)).not.toContain("display");
+      expect(settingsTab().getSettingDefinitions().length).toBeGreaterThan(0);
+    });
+
+    it("puts each setting under its heading and lets search find it", () => {
+      const settings = renderSettings();
+      expect(settings.filter((s) => s.heading).map((s) => s.name)).toEqual([
+        "AI",
+        "Execution",
+        "API keys",
+        "Scheduled workflows",
+      ]);
+      for (const name of [
+        "Default provider",
+        "Default model",
+        "Temperature",
+        "Max tokens",
+        "AI request timeout",
+        "Default runtime engine",
+        "Output folder",
+        "OpenAI API key",
+        "Anthropic API key",
+        "Run scheduled workflows",
+      ]) {
+        expect(row(name).searchable, name).toBe(true);
+      }
+    });
+
+    it("shows a blank numeric field as the provider default, with its placeholder", () => {
+      expect(row("Temperature").texts[0].value).toBe("");
+      expect(row("Max tokens").texts[0].value).toBe("800");
+      expect(row("AI request timeout").texts[0].placeholder).toBe("120");
+    });
+
+    it("stores a valid number, and blank as unset", async () => {
+      await row("Temperature").texts[0].changeHandler!("0.7");
+      expect(plugin.settings.aiTemperature).toBe(0.7);
+
+      await row("Temperature").texts[0].changeHandler!(" ");
+      expect(plugin.settings.aiTemperature).toBeUndefined();
+      expect(plugin.saveData).toHaveBeenCalled();
+    });
+
+    it("refuses a number out of range with a message and keeps the old value", async () => {
+      const temperature = row("Temperature");
+      await temperature.texts[0].changeHandler!("3");
+
+      expect(temperature.error).toMatch(/0 to 2/);
+      expect(plugin.settings.aiTemperature).toBeUndefined();
+
+      const tokens = row("Max tokens");
+      await tokens.texts[0].changeHandler!("lots");
+      expect(tokens.error).toMatch(/above 0/);
+      expect(plugin.settings.aiMaxTokens).toBe(800);
+    });
+
+    it("falls back to the provider's default model when the field is cleared", async () => {
+      await row("Default model").texts[0].changeHandler!("  ");
+      expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS[plugin.settings.defaultProvider]);
+    });
+
+    it("stores the output folder without leading or trailing slashes", async () => {
+      await row("Output folder").texts[0].changeHandler!(" /runs/out/ ");
+      expect(plugin.settings.outputRoot).toBe("runs/out");
+
+      await row("Output folder").texts[0].changeHandler!("/");
+      expect(plugin.settings.outputRoot).toBe("_vaultore");
+    });
+
+    it("stores the engine chosen in the dropdown", async () => {
+      const engine = row("Default runtime engine").dropdowns[0];
+      expect(engine.options).toEqual(["docker", "podman", "colima", "apple"]);
+
+      await engine.changeHandler!("colima");
+      expect(plugin.settings.runtimeEngine).toBe("colima");
+    });
+  });
+
   describe("API keys", () => {
     // Obsidian's secret storage is a shared, user-managed store: the
     // SecretComponent hands the plugin the *name* of the secret the user
@@ -510,6 +602,21 @@ describe("scheduled workflows", () => {
     expect(settings.map((s) => s.name)).not.toContain("Notes/plain.md");
   });
 
+  // Obsidian 1.14 does not redraw the description of the row whose own
+  // control the user just changed, even after update() (observed in the app,
+  // 2026-10-28), so the row updates its own text. The mock re-renders new rows
+  // on update(); the row the test holds is the one the user clicked.
+  it("updates the clicked note's description itself", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    const daily = row("Workflows/daily.md");
+
+    await daily.toggles[0].changeHandler!(true);
+    expect(daily.desc).toMatch(/Approved; runs once "Run scheduled workflows" is on/);
+
+    await daily.toggles[0].changeHandler!(false);
+    expect(daily.desc).toMatch(/Not approved/);
+  });
+
   it("runs a note only with the master switch on and the note approved", async () => {
     useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
 
@@ -717,20 +824,54 @@ describe("versions.json", () => {
     }
 
     // What this asserts: once versions.json has any entry, the manifest's
-    // version is one of them, mapped to the manifest's minAppVersion. The file
-    // is legally empty before the first release; version-bump.mjs adds the
-    // entry when `bun run release` cuts one, and at no other time.
+    // version is one of them, and the manifest's minAppVersion is at least
+    // the one that version was released with. The file is legally empty before
+    // the first release; version-bump.mjs adds the entry when `bun run
+    // release` cuts one, and at no other time.
     //
     // Why: an Obsidian app older than the manifest's minAppVersion falls back
     // to the newest plugin version this map lists for it (docs.obsidian.md,
     // Reference/Versions, read 2026-10-15), so an entry must name a version
-    // that was actually released.
+    // that was actually released. Between releases, minAppVersion may be
+    // raised ahead of the next one (#137); release-tag.mjs requires the exact
+    // match when that release is tagged.
     const manifestPath = path.resolve(__dirname, "../../../manifest.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
     if (Object.keys(versions).length > 0) {
       expect(versions[manifest.version]).toBeDefined();
-      expect(versions[manifest.version]).toBe(manifest.minAppVersion);
+      expect(
+        compareVersions(manifest.minAppVersion, versions[manifest.version])
+      ).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it("orders versions by number, not as text", () => {
+    expect(compareVersions("1.13.0", "1.11.4")).toBeGreaterThan(0);
+    expect(compareVersions("1.9.0", "1.13.0")).toBeLessThan(0);
+    expect(compareVersions("1.13.0", "1.13.0")).toBe(0);
+  });
+});
+
+/** Negative, zero or positive as semver triple `a` is below, equal to or above `b`. */
+function compareVersions(a: string, b: string): number {
+  const [x, y] = [a, b].map((v) => v.split(".").map(Number));
+  for (let i = 0; i < 3; i++) {
+    if (x[i] !== y[i]) return x[i] - y[i];
+  }
+  return 0;
+}
+
+describe("Obsidian version", () => {
+  // The settings tab is declarative only (#137): getSettingDefinitions() and
+  // SettingTab.update() first exist in 1.13.0, and the tab has no display()
+  // for older apps.
+  it("requires Obsidian 1.13.0 or later", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const manifest = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, "../manifest.json"), "utf8")
+    );
+    expect(compareVersions(manifest.minAppVersion, "1.13.0")).toBeGreaterThanOrEqual(0);
   });
 });

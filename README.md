@@ -1,7 +1,7 @@
 # VaultOre
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Obsidian](https://img.shields.io/badge/Obsidian-1.11.4%2B%20desktop-purple.svg)](https://obsidian.md)
+[![Obsidian](https://img.shields.io/badge/Obsidian-1.13.0%2B%20desktop-purple.svg)](https://obsidian.md)
 
 VaultOre runs workflows written as Markdown notes: a note holds TypeScript, shell and AI cells,
 and VaultOre runs them in order, each code cell in its own container, and writes every result
@@ -43,7 +43,7 @@ This example needs a container engine and no API key.
 
 | | |
 |---|---|
-| **Obsidian 1.11.4 or later, desktop only** | VaultOre starts programs and reads the vault from disk; it does not load on mobile |
+| **Obsidian 1.13.0 or later, desktop only** | VaultOre starts programs and reads the vault from disk; it does not load on mobile. Its settings use the settings API that 1.13.0 introduced, so Obsidian's settings search finds them. VaultOre 0.1.3 is the last release for Obsidian 1.11.4 to 1.12 |
 | **A container engine, installed and running** | [Docker](https://www.docker.com), [Podman](https://podman.io), [Colima](https://github.com/abiosoft/colima) (macOS), or [Apple `container`](https://github.com/apple/container) (macOS 26+, Apple silicon). Every run needs it, even a workflow with only AI cells |
 | **An OpenAI or Anthropic API key** *(optional)* | Only for `ore:ai` cells |
 

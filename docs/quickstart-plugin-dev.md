@@ -90,7 +90,7 @@ Changes to `packages/core` reach the plugin bundle only after core is rebuilt
 
 ## 6. Configure VaultOre
 
-**Settings → VaultOre** (Obsidian 1.11.4 or later, for secret storage):
+**Settings → VaultOre** (Obsidian 1.13.0 or later):
 
 1. **Default runtime engine:** the engine you run. A workflow whose frontmatter sets
    `runtime.engine` overrides it.
