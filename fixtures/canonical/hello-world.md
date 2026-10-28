@@ -8,7 +8,6 @@ description: >
   Minimal smoke test workflow. If this runs, VaultOre is working.
 
 runtime:
-  engine: docker
   image: oven/bun:1-alpine
 
 permissions:

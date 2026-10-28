@@ -33,8 +33,8 @@ bun run --cwd packages/core test:canonical -t hello-world
 | [daily-summary.md](../fixtures/canonical/daily-summary.md) | A scheduled run that reads a daily note and writes a summary | ts, ai, ts | `network`, `vaultWrite: allow` | No |
 | [smart-inbox.md](../fixtures/canonical/smart-inbox.md) | Inbox triage with one AI call and strictly checked output | ts ×2, ai, ts ×3 | `network`, `vaultWrite: allow` | Yes, with a stubbed provider |
 
-Four fixtures set `runtime.engine: docker` in their frontmatter, which overrides the engine
-setting; on another engine, delete that line.
+No fixture sets `runtime.engine` or a cell's `model=`, so each runs on the engine, provider
+and model chosen in the settings. The canonical tests check this.
 
 ---
 
@@ -65,9 +65,8 @@ summaries, writes artifacts, and creates a digest note.
 - Artifacts in `_vaultore/artifacts/link-digest/<timestamp>/`: `summaries.json`,
   `fetch-data.json`, `README.md`
 - A digest note under `Digests/`
-- **The `summarize` cell asks for `model=claude-sonnet-4-20250514`.** Set the default provider
-  to Anthropic, or change the model: under the default provider (OpenAI) the cell fails before
-  sending anything.
+- The `summarize` cell sets no model, so it uses the default model of the configured
+  provider, OpenAI or Anthropic.
 
 ```bash
 mkdir -p ~/vaultore-test-vault/Inbox

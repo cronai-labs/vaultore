@@ -12,7 +12,6 @@ tags: [demo, scheduling, summary]
 schedule: "0 18 * * *"  # Every day at 6pm
 
 runtime:
-  engine: docker
   image: oven/bun:1-alpine
 
 permissions:
