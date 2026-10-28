@@ -1,6 +1,6 @@
 {
 	"name": "@vaultore/cli",
-	"version": "0.1.3",
+	"version": "0.2.0",
 	"description": "Standalone CLI and headless agent for VaultOre workflows",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",

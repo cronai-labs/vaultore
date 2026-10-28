@@ -5,6 +5,23 @@ All notable changes to VaultOre will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-28
+
+### Features
+
+- **obsidian:** Settings appear in Obsidian's settings search ([#190](https://github.com/cronai-labs/vaultore/issues/190))
+
+### Bug Fixes
+
+- **fixtures:** Run on the configured engine and model ([#185](https://github.com/cronai-labs/vaultore/issues/185))
+- **core:** Report thrown values, skipped workflows and bad meta blocks ([#187](https://github.com/cronai-labs/vaultore/issues/187))
+- **runtime:** A cell timeout kills the container and says so ([#189](https://github.com/cronai-labs/vaultore/issues/189))
+- **obsidian:** Switching the provider switches its default model ([#191](https://github.com/cronai-labs/vaultore/issues/191))
+
+### Dependencies
+
+- **deps-dev:** Bump vitest from 4.1.12 to 5.0.5 ([#178](https://github.com/cronai-labs/vaultore/issues/178))
+
 ## [0.1.3] - 2026-10-19
 
 ### Bug Fixes
