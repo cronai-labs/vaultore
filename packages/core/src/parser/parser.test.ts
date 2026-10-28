@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TemplateInterpolator, WorkflowParser, isWorkflowFrontmatter } from "./index";
 import type { CellOutput } from "../types";
 
@@ -42,6 +42,45 @@ meta:
     const output = workflow.outputs.get("hello");
     expect(output?.value).toBe(2);
     expect(output?.meta.status).toBe("success");
+    expect(output?.meta.duration).toBe(10);
+    expect(output?.meta.timestamp).toBe("2026-01-01T00:00:00Z");
+  });
+});
+
+// The meta block sits in the note, where anyone can edit it (#121).
+describe("WorkflowParser.parseOutputs meta block", () => {
+  const block = (meta: string) => `<!-- ore:output:hello\n2\nmeta:\n${meta}-->\n`;
+
+  it("reads a block with only blank lines as no meta", () => {
+    const outputs = new WorkflowParser().parseOutputs(block("  \n"));
+    expect(outputs.get("hello")?.value).toBe(2);
+    expect(outputs.get("hello")?.meta.status).toBe("success");
+  });
+
+  it("skips an output whose meta has the wrong types, naming the field", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const outputs = new WorkflowParser().parseOutputs(block("  status: done\n  duration: [1]\n"));
+      expect(outputs.has("hello")).toBe(false);
+      const message = warn.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+      expect(message).toMatch(/hello/);
+      expect(message).toMatch(/status/);
+      expect(message).toMatch(/duration/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("keeps the cache and error fields of a valid block", () => {
+    const outputs = new WorkflowParser().parseOutputs(
+      block("  status: error\n  duration: 1.5s\n  error: exit 1\n  cache: hit\n")
+    );
+    expect(outputs.get("hello")?.meta).toMatchObject({
+      status: "error",
+      duration: 1500,
+      error: "exit 1",
+      cache: "hit",
+    });
   });
 });
 

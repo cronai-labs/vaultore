@@ -49,6 +49,7 @@ vaultore/
 │   │   ├── src/
 │   │   │   ├── index.ts      # public exports
 │   │   │   ├── version.ts    # VERSION, rewritten by version-bump.mjs
+│   │   │   ├── errors.ts     # errorMessage: the message of any thrown value
 │   │   │   ├── types/        # types, defaults, the frontmatter schema
 │   │   │   ├── parser/       # note → workflow; output callouts; templates
 │   │   │   ├── executor/     # runs a workflow (index.ts); output notes (output-note.ts)

@@ -20,6 +20,7 @@ import {
   DEFAULT_RUNTIME,
 } from "../types";
 import { detectRuntimes, execContainer } from "../runtime";
+import { errorMessage } from "../errors";
 import {
   OutputSerializer,
   TemplateInterpolator,
@@ -271,7 +272,7 @@ export class WorkflowExecutor {
         "error"
       );
     } catch (err) {
-      return buildOutput(cell.attributes.id, messageOf(err), start, "error");
+      return buildOutput(cell.attributes.id, errorMessage(err), start, "error");
     }
   }
 }
@@ -620,15 +621,6 @@ async function createRunContext(
 }
 
 /**
- * The message of a thrown value: an Error's message, anything else as a
- * string. Takes `unknown` on purpose: a caught value narrowed by a check such
- * as `!== undefined` is typed `{}`, which hides that it can be anything.
- */
-function messageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-/**
  * Close out run.json with a terminal status and a per-cell summary.
  *
  * Best effort: a failure to write the record must not mask whatever error is
@@ -671,7 +663,7 @@ export async function finalizeRunContext(
             : {}),
           status,
           ...(runError !== undefined
-            ? { error: messageOf(runError) }
+            ? { error: errorMessage(runError) }
             : {}),
           cells,
         },
@@ -702,7 +694,7 @@ async function hydrateOutputsFromStubs(
       if (!(await platform.exists(stub.outputPath))) continue;
       raw = await platform.readFile(stub.outputPath);
     } catch (err) {
-      platform.log("warn", `Not reading the recorded output of ${cellId}: ${messageOf(err)}`);
+      platform.log("warn", `Not reading the recorded output of ${cellId}: ${errorMessage(err)}`);
       continue;
     }
 
@@ -1232,7 +1224,7 @@ async function applyVaultWrites(
       real = await platform.resolveInVault(write.path);
     } catch (err) {
       throw new Error(
-        `Vault write refused: ${messageOf(err)}. None of this cell's writes were applied.`
+        `Vault write refused: ${errorMessage(err)}. None of this cell's writes were applied.`
       );
     }
     const path = writablePath(real, permissions, runContext.runDir, configDirs);
@@ -1276,7 +1268,7 @@ async function applyVaultWrites(
       await platform.writeFile(write.path, write.content);
     } catch (err) {
       const done = applied.length > 0 ? `already written: ${applied.join(", ")}` : "nothing was written before it";
-      throw new Error(`Vault write to ${write.path} failed: ${messageOf(err)} (${done}).`);
+      throw new Error(`Vault write to ${write.path} failed: ${errorMessage(err)} (${done}).`);
     }
     applied.push(write.path);
   }
@@ -1413,7 +1405,7 @@ async function executeAICell(
         }
         return await platform.readFile(real);
       } catch (err) {
-        throw new Error(`Cannot read {{note:${path}}}: ${messageOf(err)}`);
+        throw new Error(`Cannot read {{note:${path}}}: ${errorMessage(err)}`);
       }
     }
   );

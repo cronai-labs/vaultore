@@ -13,6 +13,7 @@ import {
   PlatformResponse,
   TimerHandle,
 } from "../types";
+import { errorMessage } from "../errors";
 
 // =============================================================================
 // WIRE FORMATS
@@ -113,7 +114,7 @@ function describeRequestFailure(
     );
   }
 
-  const detail = err instanceof Error ? err.message : String(err);
+  const detail = errorMessage(err);
   return new Error(
     `${provider} request for model "${model}" failed after ${seconds}s: ${detail}. ` +
       `Check network access and that the stored API key is valid.`

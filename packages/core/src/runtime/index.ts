@@ -16,6 +16,7 @@ import {
   TimerHandle,
   Timers,
 } from "../types";
+import { errorMessage } from "../errors";
 
 // =============================================================================
 // RUNTIME DETECTION
@@ -54,7 +55,7 @@ export async function detectRuntimes(
       available.push(engine);
     } else {
       const err: unknown = result.reason;
-      errors.set(engine, err instanceof Error ? err.message : String(err));
+      errors.set(engine, errorMessage(err));
     }
   });
 

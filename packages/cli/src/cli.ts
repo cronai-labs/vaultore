@@ -11,7 +11,7 @@
 
 import { promises as fs } from "node:fs";
 import { resolve } from "node:path";
-import { WorkflowExecutor, WorkflowScheduler, VERSION } from "@vaultore/core";
+import { WorkflowExecutor, WorkflowScheduler, VERSION, errorMessage } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import { createSingleFlightRunner } from "./agent";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
@@ -116,11 +116,21 @@ async function cmdRun(args: ParsedArgs): Promise<number> {
 	return failed > 0 ? 1 : 0;
 }
 
+/** Reports a note meant as a workflow that the scan could not read. */
+function reportSkipped(prefix: string): (path: string, reason: string) => void {
+	return (path, reason) => {
+		process.stderr.write(`${prefix} skipped ${path}: ${reason}\n`);
+	};
+}
+
 async function cmdList(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
 	const adapter = new NodeAdapter({ vaultRoot, configDir: configDirFrom(args.flags), quiet: true });
 	const outputRoot = adapter.getSetting<string>("vaultore.outputRoot");
-	const discovered = await discoverWorkflows(adapter, { outputRoot });
+	const discovered = await discoverWorkflows(adapter, {
+		outputRoot,
+		onSkip: reportSkipped("[vaultore]"),
+	});
 
 	if (discovered.length === 0) {
 		process.stdout.write("No workflow notes found.\n");
@@ -143,7 +153,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	try {
 		rescanSeconds = rescanSecondsFrom(args.flags);
 	} catch (err) {
-		process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n\n` + usage());
+		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
 		return 2;
 	}
 
@@ -165,7 +175,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 				process.stdout.write(`[vaultore:agent] completed ${path}\n`);
 			} catch (err) {
 				process.stderr.write(
-					`[vaultore:agent] failed ${path}: ${err instanceof Error ? err.message : String(err)}\n`
+					`[vaultore:agent] failed ${path}: ${errorMessage(err)}\n`
 				);
 			}
 		},
@@ -191,7 +201,10 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 			scheduler.unregister(entry.path);
 		}
 		const outputRoot = adapter.getSetting<string>("vaultore.outputRoot");
-		const discovered = await discoverWorkflows(adapter, { outputRoot });
+		const discovered = await discoverWorkflows(adapter, {
+			outputRoot,
+			onSkip: reportSkipped("[vaultore:agent]"),
+		});
 		let registered = 0;
 		for (const item of discovered) {
 			const schedule = item.workflow.frontmatter.schedule;
@@ -234,7 +247,10 @@ async function cmdSchedulesExport(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
 	const adapter = new NodeAdapter({ vaultRoot, configDir: configDirFrom(args.flags), quiet: true });
 	const outputRoot = adapter.getSetting<string>("vaultore.outputRoot");
-	const discovered = await discoverWorkflows(adapter, { outputRoot });
+	const discovered = await discoverWorkflows(adapter, {
+		outputRoot,
+		onSkip: reportSkipped("[vaultore]"),
+	});
 	const manifest = buildScheduleManifest(discovered, vaultRoot);
 	const json = JSON.stringify(manifest, null, 2) + "\n";
 
@@ -257,7 +273,7 @@ async function main(): Promise<number> {
 	try {
 		args = parseArgs(argv);
 	} catch (err) {
-		process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n\n` + usage());
+		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
 		return 2;
 	}
 
@@ -296,6 +312,6 @@ main()
 		process.exitCode = code;
 	})
 	.catch((err) => {
-		process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+		process.stderr.write(`error: ${errorMessage(err)}\n`);
 		process.exitCode = 1;
 	});

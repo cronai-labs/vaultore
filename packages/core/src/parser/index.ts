@@ -11,6 +11,8 @@
  */
 
 import { parse as parseYaml } from "yaml";
+import { z } from "zod";
+import { errorMessage } from "../errors";
 import {
   Workflow,
   WorkflowFrontmatter,
@@ -177,6 +179,22 @@ export class WorkflowParser {
       return isWorkflowFrontmatter(parseYaml(match[1]));
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Why a note that says `ore: true` is still not a workflow: its frontmatter
+   * is not valid YAML, which isWorkflow() can only answer with false. Undefined
+   * for every other note.
+   */
+  workflowFrontmatterError(content: string): string | undefined {
+    const match = content.match(FRONTMATTER_REGEX);
+    if (!match || !/^ore:\s*true\s*(#.*)?$/m.test(match[1])) return undefined;
+    try {
+      parseYaml(match[1]);
+      return undefined;
+    } catch (e) {
+      return `Invalid YAML: ${errorMessage(e)}`;
     }
   }
 
@@ -394,10 +412,7 @@ export class WorkflowParser {
 
     let meta: OutputMeta;
     if (metaStr) {
-      // `yaml` returns `any`. Name the shape this code has always assumed; the
-      // block is read unchecked, as before, so a hand-edited one can still
-      // carry other types.
-      const metaYaml = parseYaml(metaStr) as RawOutputMeta;
+      const metaYaml = parseOutputMeta(metaStr);
       meta = {
         status: metaYaml.status ?? "success",
         duration: parseDuration(metaYaml.duration),
@@ -584,10 +599,30 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** The `meta:` block of a written-back output, as `parseOutputContent` reads it. */
-type RawOutputMeta = Partial<Pick<OutputMeta, "status" | "timestamp" | "error" | "cache">> & {
-  duration?: string | number;
-};
+/**
+ * The `meta:` block of a written-back output. It sits in the note, so a
+ * hand-edited block is checked before its values are used; keys it does not
+ * name are ignored.
+ */
+const RawOutputMetaSchema = z.object({
+  status: z.enum(["success", "error", "timeout", "cancelled"]).optional(),
+  duration: z.union([z.string(), z.number()]).optional(),
+  timestamp: z.string().optional(),
+  error: z.string().optional(),
+  cache: z.enum(["hit", "miss"]).optional(),
+});
+
+function parseOutputMeta(metaStr: string): z.infer<typeof RawOutputMetaSchema> {
+  // A block of blank lines parses to null: no meta, rather than a crash.
+  const result = RawOutputMetaSchema.safeParse(parseYaml(metaStr) ?? {});
+  if (!result.success) {
+    const issues = result.error.issues.map(
+      (issue) => `${issue.path.join(".") || "meta"}: ${issue.message}`
+    );
+    throw new Error(`Invalid meta block (${issues.join("; ")})`);
+  }
+  return result.data;
+}
 
 function parseDuration(str: string | number | undefined): number {
   if (typeof str === "number") return str;
