@@ -10,6 +10,7 @@ import {
   SecretComponent,
   requestUrl,
 } from "obsidian";
+import type { SettingDefinition, SettingDefinitionItem, SettingGroupItem } from "obsidian";
 import {
   DEFAULT_MODELS,
   DEFAULT_PROVIDER,
@@ -816,48 +817,245 @@ export default class VaultOrePlugin extends Plugin {
   }
 }
 
+type NumericSetting = "aiTemperature" | "aiMaxTokens" | "aiTimeoutSeconds";
+
+// Blank means "the default", which a number control cannot hold, so these are
+// text controls that take a number in range or nothing.
+const NUMERIC_SETTINGS: Record<NumericSetting, { valid: (n: number) => boolean; hint: string }> = {
+  aiTemperature: { valid: (n) => n >= 0 && n <= 2, hint: "a number from 0 to 2" },
+  aiMaxTokens: { valid: (n) => n > 0, hint: "a number above 0" },
+  aiTimeoutSeconds: { valid: (n) => n > 0, hint: "a number of seconds above 0" },
+};
+
+function isNumericSetting(key: string): key is NumericSetting {
+  return Object.prototype.hasOwnProperty.call(NUMERIC_SETTINGS, key);
+}
+
+/** The number a numeric field holds: undefined when blank, null when invalid. */
+function parseNumericSetting(key: NumericSetting, raw: string): number | undefined | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && NUMERIC_SETTINGS[key].valid(parsed) ? parsed : null;
+}
+
+// A scheduled note's approval toggle reads and writes this key plus the path.
+const SCHEDULE_APPROVAL_KEY = "scheduleApproval:";
+
+function isApproved(note: ScheduledNote): boolean {
+  return note.error === undefined && note.approvedSchedule === note.schedule;
+}
+
 class VaultOreSettingsTab extends PluginSettingTab {
   plugin: VaultOrePlugin;
+  // The notes the current definitions list, so a toggle finds its schedule.
+  private scheduledNotes = new Map<string, ScheduledNote>();
 
   constructor(app: App, plugin: VaultOrePlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
 
+  // Obsidian renders the tab from these and indexes them for its settings
+  // search. It calls this on every display and once when the tab is added.
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        type: "group",
+        heading: "AI",
+        items: [
+          {
+            name: "Default provider",
+            desc: createFragment((f) => {
+              f.appendText("Provider used for ");
+              f.createEl("code", { text: "ore:ai" });
+              f.appendText(" cells.");
+            }),
+            control: {
+              type: "dropdown",
+              key: "defaultProvider",
+              options: { openai: "OpenAI", anthropic: "Anthropic" },
+            },
+          },
+          {
+            name: "Default model",
+            desc: "Model used for AI cells when none is specified.",
+            control: { type: "text", key: "defaultModel" },
+          },
+          this.numericSetting(
+            "aiTemperature",
+            "Temperature",
+            "Leave blank to use provider defaults. Some models ignore temperature.",
+            "Provider default"
+          ),
+          this.numericSetting(
+            "aiMaxTokens",
+            "Max tokens",
+            "Controls response length. Leave blank to use provider defaults.",
+            "800"
+          ),
+          this.numericSetting(
+            "aiTimeoutSeconds",
+            "AI request timeout",
+            "Seconds before an AI request is abandoned. Blank uses 120.",
+            "120"
+          ),
+        ],
+      },
+      {
+        type: "group",
+        heading: "Execution",
+        items: [
+          {
+            name: "Default runtime engine",
+            desc:
+              "Container runtime used for cell execution. A workflow that sets " +
+              "'engine:' in its frontmatter overrides this.",
+            control: {
+              type: "dropdown",
+              key: "runtimeEngine",
+              options: {
+                docker: "Docker",
+                podman: "Podman",
+                colima: "Colima",
+                apple: "Apple container (macOS 26+)",
+              },
+            },
+          },
+          {
+            name: "Output folder",
+            desc: "Where run outputs are stored. Use a visible folder (e.g. _vaultore) to make links clickable.",
+            control: { type: "text", key: "outputRoot", placeholder: "_vaultore" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "API keys",
+        items: [this.secretSetting("openaiSecretName"), this.secretSetting("anthropicSecretName")],
+      },
+      {
+        type: "group",
+        heading: "Scheduled workflows",
+        items: this.scheduleSettings(),
+      },
+    ];
+  }
+
+  getControlValue(key: string): unknown {
+    if (key.startsWith(SCHEDULE_APPROVAL_KEY)) {
+      const note = this.scheduledNotes.get(key.slice(SCHEDULE_APPROVAL_KEY.length));
+      return note !== undefined && isApproved(note);
+    }
+    if (isNumericSetting(key)) {
+      const value = this.plugin.settings[key];
+      return value === undefined ? "" : String(value);
+    }
+    return (this.plugin.settings as unknown as Record<string, unknown>)[key];
+  }
+
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    const { settings } = this.plugin;
+    if (key.startsWith(SCHEDULE_APPROVAL_KEY)) {
+      const note = this.scheduledNotes.get(key.slice(SCHEDULE_APPROVAL_KEY.length));
+      if (note) {
+        await this.plugin.setScheduleApproval(note.path, value === true ? note.schedule : null);
+      }
+      // Statuses and next runs change with the approval.
+      this.update();
+      return;
+    }
+    switch (key) {
+      case "runScheduledWorkflows":
+        await this.plugin.setRunScheduledWorkflows(value === true);
+        this.update();
+        return;
+      case "defaultProvider":
+        settings.defaultProvider = value as VaultOreSettings["defaultProvider"];
+        break;
+      case "defaultModel":
+        settings.defaultModel = String(value).trim() || DEFAULT_MODELS[settings.defaultProvider];
+        break;
+      case "runtimeEngine":
+        settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
+        break;
+      case "outputRoot": {
+        const trimmed = String(value).trim().replace(/^\/+/, "").replace(/\/+$/, "");
+        settings.outputRoot = trimmed || "_vaultore";
+        break;
+      }
+      default:
+        if (!isNumericSetting(key)) {
+          throw new Error(`VaultOre has no setting "${key}"`);
+        }
+        // validate() has refused an invalid value before it gets here.
+        settings[key] = parseNumericSetting(key, String(value)) ?? undefined;
+    }
+    await this.plugin.saveSettings();
+  }
+
+  private numericSetting(
+    key: NumericSetting,
+    name: string,
+    desc: string,
+    placeholder: string
+  ): SettingDefinition {
+    return {
+      name,
+      desc,
+      control: {
+        type: "text",
+        key,
+        placeholder,
+        validate: (value: string) =>
+          parseNumericSetting(key, value) === null
+            ? `Enter ${NUMERIC_SETTINGS[key].hint}, or leave it blank.`
+            : undefined,
+      },
+    };
+  }
+
   // A secret setting holds the name of an entry in Obsidian's secret storage,
   // as the "Store secrets" guide prescribes; the value is read at run time.
-  private addSecretSetting(containerEl: HTMLElement, key: SecretNameSetting): void {
+  // Rendered by hand: the row also says whether the secret exists and offers
+  // Clear, which a control cannot.
+  private secretSetting(key: SecretNameSetting): SettingDefinition {
     const label = Object.values(SECRET_SETTINGS).find((spec) => spec.setting === key)?.label;
     if (!label) {
       throw new Error(`No API key setting is defined for "${key}"`);
     }
-    let secret: SecretComponent | undefined;
-    const setting = new Setting(containerEl).setName(label);
-    const describe = () => setting.setDesc(this.describeSecret(this.plugin.settings[key]));
-    describe();
-    setting
-      .addComponent((el) => {
-        secret = new SecretComponent(this.app, el)
-          .setValue(this.plugin.settings[key])
-          // Typed `string` up to obsidian 1.13 and `string | null` from 1.14,
-          // where null means the selection was cleared.
-          .onChange(async (value: string | null) => {
-            this.plugin.settings[key] = value ?? "";
-            await this.plugin.saveSettings();
-            describe();
+    return {
+      name: label,
+      desc: "The name of a secret in Obsidian's secret storage.",
+      render: (setting: Setting) => {
+        let secret: SecretComponent | undefined;
+        const describe = () => setting.setDesc(this.describeSecret(this.plugin.settings[key]));
+        describe();
+        setting
+          .addComponent((el) => {
+            secret = new SecretComponent(this.app, el)
+              .setValue(this.plugin.settings[key])
+              // Typed `string` up to obsidian 1.13 and `string | null` from 1.14,
+              // where null means the selection was cleared.
+              .onChange(async (value: string | null) => {
+                this.plugin.settings[key] = value ?? "";
+                await this.plugin.saveSettings();
+                describe();
+              });
+            return secret;
+          })
+          .addButton((button) => {
+            button.setButtonText("Clear");
+            button.setTooltip("Clear the selection. The secret stays in Obsidian's secret storage.");
+            button.onClick(async () => {
+              this.plugin.settings[key] = "";
+              await this.plugin.saveSettings();
+              secret?.setValue("");
+              describe();
+            });
           });
-        return secret;
-      })
-      .addButton((button) => {
-        button.setButtonText("Clear");
-        button.setTooltip("Clear the selection. The secret stays in Obsidian's secret storage.");
-        button.onClick(async () => {
-          this.plugin.settings[key] = "";
-          await this.plugin.saveSettings();
-          secret?.setValue("");
-          describe();
-        });
-      });
+      },
+    };
   }
 
   private describeSecret(name: string): string {
@@ -871,196 +1069,48 @@ class VaultOreSettingsTab extends PluginSettingTab {
     return `Uses the secret "${name}" from Obsidian's secret storage.`;
   }
 
-  display(): void {
-    this.render();
-  }
-
-  // Re-rendered after a scheduling change so statuses and next runs update.
-  private render(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    new Setting(containerEl).setName("AI").setHeading();
-
-    new Setting(containerEl)
-      .setName("Default provider")
-      .setDesc(
-        createFragment((f) => {
-          f.appendText("Provider used for ");
-          f.createEl("code", { text: "ore:ai" });
-          f.appendText(" cells.");
-        })
-      )
-      .addDropdown((dropdown) => {
-        dropdown.addOption("openai", "OpenAI");
-        dropdown.addOption("anthropic", "Anthropic");
-        dropdown.setValue(this.plugin.settings.defaultProvider);
-        dropdown.onChange(async (value) => {
-          this.plugin.settings.defaultProvider = value as VaultOreSettings["defaultProvider"];
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("Default model")
-      .setDesc("Model used for AI cells when none is specified.")
-      .addText((text) => {
-        text.setValue(this.plugin.settings.defaultModel);
-        text.onChange(async (value) => {
-          this.plugin.settings.defaultModel =
-            value.trim() || DEFAULT_MODELS[this.plugin.settings.defaultProvider];
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("Temperature")
-      .setDesc("Leave blank to use provider defaults. Some models ignore temperature.")
-      .addText((text) => {
-        text.setPlaceholder("Provider default");
-        text.setValue(
-          this.plugin.settings.aiTemperature !== undefined
-            ? String(this.plugin.settings.aiTemperature)
-            : ""
-        );
-        text.onChange(async (value) => {
-          const trimmed = value.trim();
-          const parsed = trimmed ? Number(trimmed) : undefined;
-          this.plugin.settings.aiTemperature =
-            parsed !== undefined && Number.isFinite(parsed) && parsed >= 0 && parsed <= 2
-              ? parsed
-              : undefined;
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("Max tokens")
-      .setDesc("Controls response length. Leave blank to use provider defaults.")
-      .addText((text) => {
-        text.setPlaceholder("800");
-        text.setValue(
-          this.plugin.settings.aiMaxTokens !== undefined
-            ? String(this.plugin.settings.aiMaxTokens)
-            : ""
-        );
-        text.onChange(async (value) => {
-          const trimmed = value.trim();
-          const parsed = trimmed ? Number(trimmed) : undefined;
-          this.plugin.settings.aiMaxTokens =
-            parsed !== undefined && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("AI request timeout")
-      .setDesc("Seconds before an AI request is abandoned. Blank uses 120.")
-      .addText((text) => {
-        text.setPlaceholder("120");
-        text.setValue(
-          this.plugin.settings.aiTimeoutSeconds !== undefined
-            ? String(this.plugin.settings.aiTimeoutSeconds)
-            : ""
-        );
-        text.onChange(async (value) => {
-          const trimmed = value.trim();
-          const parsed = trimmed ? Number(trimmed) : undefined;
-          this.plugin.settings.aiTimeoutSeconds =
-            parsed !== undefined && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(containerEl).setName("Execution").setHeading();
-
-    new Setting(containerEl)
-      .setName("Default runtime engine")
-      .setDesc(
-        "Container runtime used for cell execution. A workflow that sets " +
-          "'engine:' in its frontmatter overrides this."
-      )
-      .addDropdown((dropdown) => {
-        dropdown.addOption("docker", "Docker");
-        dropdown.addOption("podman", "Podman");
-        dropdown.addOption("colima", "Colima");
-        dropdown.addOption("apple", "Apple container (macOS 26+)");
-        dropdown.setValue(this.plugin.settings.runtimeEngine);
-        dropdown.onChange(async (value) => {
-          this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("Output folder")
-      .setDesc(
-        "Where run outputs are stored. Use a visible folder (e.g. _vaultore) to make links clickable."
-      )
-      .addText((text) => {
-        text.setPlaceholder("_vaultore");
-        text.setValue(this.plugin.settings.outputRoot);
-        text.onChange(async (value) => {
-          const trimmed = value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-          this.plugin.settings.outputRoot = trimmed || "_vaultore";
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(containerEl).setName("API keys").setHeading();
-
-    this.addSecretSetting(containerEl, "openaiSecretName");
-    this.addSecretSetting(containerEl, "anthropicSecretName");
-
-    this.displayScheduledWorkflows(containerEl);
-  }
-
-  private displayScheduledWorkflows(containerEl: HTMLElement): void {
-    new Setting(containerEl).setName("Scheduled workflows").setHeading();
-
-    new Setting(containerEl)
-      .setName("Run scheduled workflows")
-      .setDesc(
-        "Off by default. When on, a workflow note runs on its schedule while Obsidian " +
-          "is open, but only if you approved it below."
-      )
-      .addToggle((toggle) => {
-        toggle.setValue(this.plugin.settings.runScheduledWorkflows);
-        toggle.onChange(async (value) => {
-          await this.plugin.setRunScheduledWorkflows(value);
-          this.render();
-        });
-      });
+  private scheduleSettings(): SettingGroupItem[] {
+    const items: SettingGroupItem[] = [
+      {
+        name: "Run scheduled workflows",
+        desc:
+          "Off by default. When on, a workflow note runs on its schedule while Obsidian " +
+          "is open, but only if you approved it below.",
+        control: { type: "toggle", key: "runScheduledWorkflows" },
+      },
+    ];
 
     const notes = this.plugin.getScheduledNotes();
+    this.scheduledNotes = new Map(notes.map((note) => [note.path, note]));
     if (notes.length === 0) {
-      new Setting(containerEl).setDesc(
-        createFragment((f) => {
-          f.appendText("No scheduled workflows found. Notes with ");
+      items.push({
+        name: "No scheduled workflows found",
+        desc: createFragment((f) => {
+          f.appendText("Notes with ");
           f.createEl("code", { text: "ore: true" });
           f.appendText(" and a ");
           f.createEl("code", { text: "schedule" });
           f.appendText(" in their frontmatter are listed here.");
-        })
-      );
-      return;
+        }),
+        searchable: false,
+      });
+      return items;
     }
 
     for (const note of notes) {
-      const approved = note.error === undefined && note.approvedSchedule === note.schedule;
-      new Setting(containerEl)
-        .setName(note.path)
-        .setDesc(this.describeSchedule(note, approved))
-        .addToggle((toggle) => {
-          toggle.setValue(approved);
-          toggle.setDisabled(note.error !== undefined);
-          toggle.setTooltip(approved ? "Approved to run on schedule" : "Approve to run on schedule");
-          toggle.onChange(async (value) => {
-            await this.plugin.setScheduleApproval(note.path, value ? note.schedule : null);
-            this.render();
-          });
-        });
+      items.push({
+        name: note.path,
+        desc: this.describeSchedule(note, isApproved(note)),
+        // Note paths come and go with the vault; search indexes the settings.
+        searchable: false,
+        control: {
+          type: "toggle",
+          key: `${SCHEDULE_APPROVAL_KEY}${note.path}`,
+          disabled: note.error !== undefined,
+        },
+      });
     }
+    return items;
   }
 
   private describeSchedule(note: ScheduledNote, approved: boolean): string {
