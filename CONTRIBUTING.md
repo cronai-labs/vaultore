@@ -83,7 +83,7 @@ This repo uses [Conventional Commits](https://www.conventionalcommits.org/), enf
 | `perf` | patch bump | Performance improvements |
 | `docs`, `style`, `refactor`, `test`, `build`, `ci`, `chore` | no bump | Everything else |
 
-Add `BREAKING CHANGE:` in the commit body when the change warrants a major bump.
+A breaking change gets `!` in the PR title, and the PR description ends with `BREAKING CHANGE: <what breaks and what to do>` as its last paragraph, after the Definition of done. Squash-merging makes the description the commit body, and the release notes list that line under "Breaking changes"; the `policy` job fails a `!` title without it. Before 1.0 a breaking change bumps the minor version.
 
 **Scopes** (from `commitlint.config.cjs`; another scope warns): `core`, `obsidian`, `cli`, `parser`, `executor`, `runtime`, `scheduler`, `providers`, `vault`, `fixtures`, `deps`, `release`
 

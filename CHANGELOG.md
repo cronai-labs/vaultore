@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - 2026-10-28
 
+### Breaking changes
+
+- **obsidian:** Requires Obsidian 1.13.0 or later. VaultOre 0.1.3 remains the release for Obsidian 1.11.4 to 1.12.
+
 ### Features
 
 - **obsidian:** Settings appear in Obsidian's settings search ([#190](https://github.com/cronai-labs/vaultore/issues/190))

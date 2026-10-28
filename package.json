@@ -18,6 +18,7 @@
 		"test": "turbo run test --filter=./packages/*",
 		"test:integration": "turbo run test:integration --filter=./packages/*",
 		"test:canonical": "turbo run test:canonical --filter=./packages/*",
+		"test:scripts": "node --test scripts/breaking-changes.test.mjs",
 		"lint": "turbo run lint --filter=./packages/*",
 		"typecheck": "turbo run typecheck --filter=./packages/*",
 		"clean": "turbo run clean --filter=./packages/* && rm -rf node_modules",

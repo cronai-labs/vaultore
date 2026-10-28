@@ -2,6 +2,10 @@
   The PR title becomes the squash commit subject, so it must be a Conventional Commit:
     ^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(scope\))?!?: subject
 
+  A breaking change ("!" in the title) ends this description with a last
+  paragraph "BREAKING CHANGE: <what breaks and what to do>", after the
+  Definition of done. The release notes show that line.
+
   Open this as a DRAFT while the work is in progress. A draft cannot be merged,
   which is what stops auto-merge landing unfinished work.
 -->
