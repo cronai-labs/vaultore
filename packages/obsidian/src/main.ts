@@ -839,17 +839,12 @@ function parseNumericSetting(key: NumericSetting, raw: string): number | undefin
   return Number.isFinite(parsed) && NUMERIC_SETTINGS[key].valid(parsed) ? parsed : null;
 }
 
-// A scheduled note's approval toggle reads and writes this key plus the path.
-const SCHEDULE_APPROVAL_KEY = "scheduleApproval:";
-
 function isApproved(note: ScheduledNote): boolean {
   return note.error === undefined && note.approvedSchedule === note.schedule;
 }
 
 class VaultOreSettingsTab extends PluginSettingTab {
   plugin: VaultOrePlugin;
-  // The notes the current definitions list, so a toggle finds its schedule.
-  private scheduledNotes = new Map<string, ScheduledNote>();
 
   constructor(app: App, plugin: VaultOrePlugin) {
     super(app, plugin);
@@ -943,10 +938,6 @@ class VaultOreSettingsTab extends PluginSettingTab {
   }
 
   getControlValue(key: string): unknown {
-    if (key.startsWith(SCHEDULE_APPROVAL_KEY)) {
-      const note = this.scheduledNotes.get(key.slice(SCHEDULE_APPROVAL_KEY.length));
-      return note !== undefined && isApproved(note);
-    }
     if (isNumericSetting(key)) {
       const value = this.plugin.settings[key];
       return value === undefined ? "" : String(value);
@@ -956,18 +947,10 @@ class VaultOreSettingsTab extends PluginSettingTab {
 
   async setControlValue(key: string, value: unknown): Promise<void> {
     const { settings } = this.plugin;
-    if (key.startsWith(SCHEDULE_APPROVAL_KEY)) {
-      const note = this.scheduledNotes.get(key.slice(SCHEDULE_APPROVAL_KEY.length));
-      if (note) {
-        await this.plugin.setScheduleApproval(note.path, value === true ? note.schedule : null);
-      }
-      // Statuses and next runs change with the approval.
-      this.update();
-      return;
-    }
     switch (key) {
       case "runScheduledWorkflows":
         await this.plugin.setRunScheduledWorkflows(value === true);
+        // The note rows describe whether and when they run.
         this.update();
         return;
       case "defaultProvider":
@@ -1081,7 +1064,6 @@ class VaultOreSettingsTab extends PluginSettingTab {
     ];
 
     const notes = this.plugin.getScheduledNotes();
-    this.scheduledNotes = new Map(notes.map((note) => [note.path, note]));
     if (notes.length === 0) {
       items.push({
         name: "No scheduled workflows found",
@@ -1100,20 +1082,34 @@ class VaultOreSettingsTab extends PluginSettingTab {
     for (const note of notes) {
       items.push({
         name: note.path,
-        desc: this.describeSchedule(note, isApproved(note)),
+        desc: this.describeSchedule(note),
         // Note paths come and go with the vault; search indexes the settings.
         searchable: false,
-        control: {
-          type: "toggle",
-          key: `${SCHEDULE_APPROVAL_KEY}${note.path}`,
-          disabled: note.error !== undefined,
+        // Rendered by hand: Obsidian does not redraw the description of the
+        // row whose own control changed, even after update(), and this row's
+        // description follows its toggle.
+        render: (setting: Setting) => {
+          setting.setDesc(this.describeSchedule(note));
+          setting.addToggle((toggle) => {
+            const approved = isApproved(note);
+            toggle.setValue(approved);
+            toggle.setDisabled(note.error !== undefined);
+            toggle.setTooltip(approved ? "Approved to run on schedule" : "Approve to run on schedule");
+            toggle.onChange(async (value) => {
+              await this.plugin.setScheduleApproval(note.path, value ? note.schedule : null);
+              const current =
+                this.plugin.getScheduledNotes().find((entry) => entry.path === note.path) ?? note;
+              setting.setDesc(this.describeSchedule(current));
+            });
+          });
         },
       });
     }
     return items;
   }
 
-  private describeSchedule(note: ScheduledNote, approved: boolean): string {
+  private describeSchedule(note: ScheduledNote): string {
+    const approved = isApproved(note);
     const schedule = `Schedule "${note.schedule}"`;
     if (note.error !== undefined) {
       return `${schedule} is invalid, so this note does not run: ${note.error}`;

@@ -602,6 +602,21 @@ describe("scheduled workflows", () => {
     expect(settings.map((s) => s.name)).not.toContain("Notes/plain.md");
   });
 
+  // Obsidian 1.14 does not redraw the description of the row whose own
+  // control the user just changed, even after update() (observed in the app,
+  // 2026-10-28), so the row updates its own text. The mock re-renders new rows
+  // on update(); the row the test holds is the one the user clicked.
+  it("updates the clicked note's description itself", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    const daily = row("Workflows/daily.md");
+
+    await daily.toggles[0].changeHandler!(true);
+    expect(daily.desc).toMatch(/Approved; runs once "Run scheduled workflows" is on/);
+
+    await daily.toggles[0].changeHandler!(false);
+    expect(daily.desc).toMatch(/Not approved/);
+  });
+
   it("runs a note only with the master switch on and the note approved", async () => {
     useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
 
