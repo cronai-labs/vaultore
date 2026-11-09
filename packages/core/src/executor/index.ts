@@ -59,6 +59,19 @@ export class WorkflowExecutor {
 
   async runWorkflow(options: ExecuteOptions): Promise<Workflow> {
     const workflow = this.parser.parse(options.content, options.workflowPath);
+    // Before anything runs or is recorded: an id no cell has used to select
+    // no cell, and the run was recorded as completed (#223). An empty id
+    // counted as none given, and every cell ran.
+    if (
+      options.targetCellId !== undefined &&
+      !workflow.cells.some((cell) => cell.attributes.id === options.targetCellId)
+    ) {
+      const ids = workflow.cells.map((cell) => cell.attributes.id).join(", ");
+      throw new Error(
+        `Cell "${options.targetCellId}" not found in ${workflow.path}. ` +
+          (ids ? `Its cells are: ${ids}` : "It has no cells")
+      );
+    }
     const platform = confinedPlatform(options.platform);
     // Before any cell runs: the output is written back into this note, which
     // is refused when its path leads out of the vault through a link.
@@ -98,7 +111,7 @@ export class WorkflowExecutor {
       await ensureRuntimeAvailable(engineChoice, platform.timers);
 
       const orderedCells = orderCells(workflow.cells);
-      const cellsToRun = options.targetCellId
+      const cellsToRun = options.targetCellId !== undefined
         ? filterCellsForTarget(
             orderedCells,
             options.targetCellId,
