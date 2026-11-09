@@ -743,6 +743,17 @@ async function hydrateOutputsFromStubs(
       };
       if (!record?.meta || !record.cellId) continue;
 
+      // The callout says which record is this cell's, and the callout is text
+      // a cell, an edit or sync can change. A record that names another cell
+      // is that cell's output, whatever the note links it under.
+      if (record.cellId !== cellId) {
+        platform.log(
+          "warn",
+          `Not reading the recorded output of ${cellId}: ${stub.outputPath} is the record of cell ${record.cellId}`
+        );
+        continue;
+      }
+
       outputs.set(cellId, {
         cellId,
         value: record.value,

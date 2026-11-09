@@ -5,7 +5,10 @@ import type { PlatformAdapter } from "../types";
 /**
  * A cell that does not run in this run answers with the output an earlier run
  * recorded. Which record that is comes from the cell's callout in the note:
- * the link under `> [!ore-output] <id>`.
+ * the link under `> [!ore-output] <id>`. The callout is text, so a cell, an
+ * edit or sync can point it anywhere. Hydration used to take whatever record
+ * the link led to, also one that says it belongs to another cell, and handed
+ * that cell's value to dependents (#209).
  */
 
 vi.mock("../runtime", () => ({
@@ -102,6 +105,19 @@ describe("recorded outputs", () => {
 
 		expect(fetch?.value).toBe("from the earlier run");
 		expect(report?.meta.status).toBe("success");
+	});
+
+	it("does not take a record that belongs to another cell, and names both", async () => {
+		const path = "_vaultore/runs/wf/earlier/secrets.json";
+		const { fetch, report, logs } = await runReport(path, { [path]: record("secrets", "not for report") });
+
+		expect(fetch).toBeUndefined();
+		expect(report?.meta.status).toBe("error");
+		expect(String(report?.value)).toContain("Dependency output missing: fetch");
+		expect(vi.mocked(execContainer)).not.toHaveBeenCalled();
+		expect(logs).toEqual([
+			`Not reading the recorded output of fetch: ${path} is the record of cell secrets`,
+		]);
 	});
 
 	it("does not take a record that names no cell", async () => {
