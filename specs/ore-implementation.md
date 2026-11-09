@@ -21,7 +21,7 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 - **`runtime.timeout`** applies to container cells only; AI cells use the AI request timeout (below).
 - **`schedule`** is read by `cron-parser` 5. Schedulers tick every 60 seconds.
   - **Obsidian plugin:** runs a scheduled note only while Obsidian is open, only when the "Run scheduled workflows" setting is on (off by default), and only when the user approved that note's exact schedule in the settings list. A changed schedule, a renamed note or a note that arrives through sync is listed but not run until approved. An invalid expression is shown in the list and reported once as a notice.
-  - **`vaultore agent`:** runs every workflow in the vault that has a schedule. It has no approval list.
+  - **`vaultore agent`:** runs a scheduled note only after `vaultore schedules approve`, and only while the note's front matter and cells are what was approved (the hash a permission decision is bound to). The approvals are kept outside the vault, in `approvals.json` under `--state-dir`, and are separate from the plugin's. The note and the approvals are read again when a run is due. Details: [permissions-spec.md](permissions-spec.md) §6.2.
 - **`go:`:** the schema accepts a `go:` block ([go-cell-spec.md](go-cell-spec.md)); nothing reads it.
 
 ## Permissions (Ore §4)

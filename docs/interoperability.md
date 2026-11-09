@@ -28,6 +28,8 @@ alias vaultore="node $PWD/packages/cli/dist/cli.js"
 vaultore run Workflows/digest.md --vault ~/notes     # headless run
 vaultore run Workflows/digest.md --cell fetch --yes  # single cell, auto-grant asks
 vaultore list --vault ~/notes                        # discover workflow notes
+vaultore schedules approve Workflows/digest.md       # let the agent run this note
+vaultore schedules list --vault ~/notes              # scheduled notes and their approval
 vaultore agent --vault ~/notes                       # headless scheduler daemon
 vaultore schedules export --out schedules.json       # CronAI handover manifest
 ```
@@ -39,7 +41,7 @@ Conventions that differ from the plugin, on purpose:
 | Settings | Obsidian settings UI | `<vault>/.vaultore/config.json` |
 | Secrets | Obsidian secret storage | Environment (`VAULTORE_OPENAI_APIKEY`, `OPENAI_API_KEY`, …) |
 | Permission prompts | Modal dialog | Non-interactive: deny unless `--yes`; decisions persist to config, bound to the note's content |
-| Scheduling | Only notes the user approved, while Obsidian is open | `vaultore agent` runs every scheduled note |
+| Scheduling | Only notes the user approved (path and schedule), while Obsidian is open | `vaultore agent` runs only notes approved with `vaultore schedules approve` (path and content); the approvals are kept outside the vault |
 
 The same workflow note produces the same run either way — outputs, run
 JSON, and artifact indexes are written by shared core code.
@@ -47,11 +49,19 @@ JSON, and artifact indexes are written by shared core code.
 ### Headless agent
 
 `vaultore agent` is a local scheduler daemon: it scans the vault,
-registers every workflow with a `schedule:`, runs them on cron, and rescans
-(every 300 seconds unless `--rescan` says otherwise). **It has no approval
-step**, unlike the plugin: point it only at a vault whose workflows you
-trust. It skips a scheduled run while the previous run of the same note is
-still going. Run it under systemd or launchd to keep it alive.
+registers the scheduled workflows you approved, runs them on cron, and
+rescans (every 300 seconds unless `--rescan` says otherwise). **A note runs
+only after `vaultore schedules approve <note.md>`**, and only while its
+frontmatter and cells are what was approved; the agent reads the note and
+the approvals again when a run is due, and names every scheduled note it
+does not run. Its approvals are separate from the plugin's and are kept
+outside the vault, in `approvals.json` under `$XDG_CONFIG_HOME/vaultore` or
+`~/.config/vaultore` (`--state-dir <dir>` for another place): on a server
+that syncs the vault, an approval cannot arrive with it
+([permissions spec](../specs/permissions-spec.md) §6.2). It skips a
+scheduled run while the previous run of the same note is still going. Run
+it under systemd or launchd to keep it alive, with the same user and the
+same `--state-dir` you approved with.
 
 ### Embedding as a library
 

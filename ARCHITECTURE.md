@@ -70,6 +70,8 @@ vaultore/
 │       ├── src/cli.ts        # the vaultore command
 │       ├── src/adapter.ts    # NodeAdapter
 │       ├── src/scan.ts       # workflow discovery, schedule manifest
+│       ├── src/schedules.ts  # schedules list, approve, revoke
+│       ├── src/approvals.ts  # the agent's approvals file, outside the vault
 │       ├── src/args.ts, src/agent.ts, src/index.ts, *.test.ts
 │       └── tsup.config.ts, tsconfig.json, eslint.config.mjs, vitest.config.ts
 ├── scripts/                  # package-obsidian.mjs, release*.mjs, release-gate.sh
@@ -97,7 +99,7 @@ vaultore/
 | HTTP | `requestUrl` | `fetch` |
 | Timers (core calls none of its own) | The window's; the scheduler's interval is registered with the plugin | Node's |
 | `ask` permissions | Modal | Deny, or allow with `--yes` |
-| Scheduling | Approved notes only, while Obsidian is open | `vaultore agent`, every scheduled note |
+| Scheduling | Approved notes only, while Obsidian is open; an approval is a path and a schedule, in the plugin data | `vaultore agent`, approved notes only; an approval is a path and the note's content hash, in `approvals.json` outside the vault (`--state-dir`) |
 
 ## Core Modules
 
@@ -108,7 +110,7 @@ vaultore/
 | `executor` | A whole run: permissions, engine check, order, each cell, outputs, run records | `WorkflowExecutor`, `renderOutputMarkdown` |
 | `runtime` | Which engines answer; the `run` command line with its hardening; spawning it | `detectRuntimes`, `buildRunCommand`, `execContainer` |
 | `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` (core has no transport of its own); model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
-| `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback | `WorkflowScheduler`, `computeNextRun` |
+| `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback; whether a note still has its schedule approval | `WorkflowScheduler`, `computeNextRun`, `classifyScheduleApproval` |
 | `vault` | `createVaultAPI`, `generateRuntimeScript`: exported, but the executor injects its own copy (`buildTypeScriptRuntime`), and the two have diverged ([#45](https://github.com/cronai-labs/vaultore/issues/45)) | |
 
 ## How a Run Works

@@ -222,10 +222,13 @@ are used for the provider request only, not passed to containers.
 on npm yet; build it from source (`bun run build`) and run `node packages/cli/dist/cli.js`.
 
 ```
-vaultore run <workflow.md> [--vault <dir>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
-vaultore list [--vault <dir>]
-vaultore agent [--vault <dir>] [--yes] [--rescan <seconds>] [--quiet]
-vaultore schedules export [--vault <dir>] [--out <file>]
+vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
+vaultore list [--vault <dir>] [--config-dir <name>]
+vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--quiet]
+vaultore schedules list [--vault <dir>] [--config-dir <name>] [--state-dir <dir>]
+vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
+vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
+vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
 ```
 
 - Settings come from `<vault>/.vaultore/config.json` (`defaultProvider`, `defaultModel`,
@@ -235,8 +238,15 @@ vaultore schedules export [--vault <dir>] [--out <file>]
 - Permissions at `ask` are denied unless you pass `--yes`, and the decision is stored in the
   config file. A `deny` stored that way sticks until the note changes
   ([#28](https://github.com/cronai-labs/vaultore/issues/28)).
-- `vaultore agent` is a scheduler daemon. **It runs every workflow in the vault that has a
-  schedule; it has no approval step.**
+- `vaultore agent` is a scheduler daemon. **It runs a scheduled note only after
+  `vaultore schedules approve <note.md>`**, and only while the note's frontmatter and cells are
+  what you approved: an edit to either, including one that arrives through sync, stops it until
+  you approve again. `vaultore schedules list` shows where each note stands, and the agent
+  names what it does not run. `--yes` does not approve a schedule.
+- The agent's approvals are kept outside the vault, in `approvals.json` under
+  `$XDG_CONFIG_HOME/vaultore` or `~/.config/vaultore` (`%APPDATA%\vaultore` on Windows;
+  `--state-dir <dir>` for another place), so that sync cannot deliver one. They are separate
+  from the approvals in the plugin's settings.
 - `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
   ([handover spec](specs/cronai-handover-spec.md)).
 
