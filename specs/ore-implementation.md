@@ -1,9 +1,9 @@
 # VaultOre's Implementation of Ore
 
-> **Status:** How VaultOre 0.1.3 implements [Ore 0.1](https://github.com/cronai-labs/ore-spec/blob/main/SPEC.md). The format is defined there; this document adds only what VaultOre decides or adds.
-> **Last Updated:** 2026-10-19
+> **Status:** How VaultOre implements [Ore](https://github.com/cronai-labs/ore-spec/blob/main/SPEC.md) 0.2. The format is defined there; this document adds only what VaultOre decides or adds. It describes the code it is checked in with, so it names no VaultOre version.
+> **Last Updated:** 2026-11-10
 
-The [Ore specification](https://github.com/cronai-labs/ore-spec) defines what a workflow note is, what its front matter and cells mean, how cells run and in which order, and where outputs go. This document follows its sections and records, for each one, what the specification leaves to the runner: VaultOre's code symbols (`packages/core/src/…`), error texts, settings, provider details, and the extensions VaultOre adds (artifacts, the output note's fields). Where VaultOre deviates from the specification, the specification's Appendix B says so.
+The [Ore specification](https://github.com/cronai-labs/ore-spec) defines what a workflow note is, what its front matter and cells mean, how cells run and in which order, and where outputs go. This document follows its sections and records, for each one, what the specification leaves to the runner: VaultOre's code symbols (`packages/core/src/…`), error texts, settings, provider details, and the extensions VaultOre adds (artifacts, the output note's fields). Where a released VaultOre deviates from the specification, the specification's Appendix B says so.
 
 Permissions, their defaults and how `ask` is resolved are in [permissions-spec.md](permissions-spec.md); the container flags and hardening in [sandbox-spec.md](sandbox-spec.md).
 
@@ -17,7 +17,7 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 - **Unknown keys are dropped without a warning:** a `runIf:` or `defaultModel:` is ignored, not rejected. Every key, known or not, is still part of what a permission decision is bound to (permissions-spec §5.3).
 - `vaultore list` shows `name`.
 - **`runtime.engine`:** the runner's setting is the plugin's "Default runtime engine" (CLI: `runtimeEngine` in `.vaultore/config.json`). `runtime.memoryLimit` and `runtime.cpuLimit` are passed to the engine as `--memory` and `--cpus`. Defaults: `DEFAULT_RUNTIME`.
-- **The limits cannot be switched off from a note.** `runtime.timeout` is a number of seconds greater than 0 and at most 86400 (a day; `MAX_TIMEOUT_SECONDS`), `runtime.cpuLimit` a number greater than 0, and `runtime.memoryLimit` an amount greater than zero with an optional unit, such as `512m` (the unit itself is left to the engine). Anything else fails the run before any cell runs, with the key and the value in the message: `Invalid frontmatter: runtime.timeout: expected a number of seconds greater than 0 and at most 86400, got 0`. The engines read a memory or CPU limit of `0` as "no limit", and a time limit of `0` set no timer. Ore gives the time limit its range and says nothing about the other two.
+- **The limits cannot be switched off from a note.** `runtime.timeout` is a number of seconds greater than 0 and at most 86400 (a day; `MAX_TIMEOUT_SECONDS`), `runtime.cpuLimit` a number greater than 0, and `runtime.memoryLimit` an amount greater than zero with an optional unit, such as `512m` (the unit itself is left to the engine). Anything else fails the run before any cell runs, with the key and the value in the message: `Invalid frontmatter: runtime.timeout: expected a number of seconds greater than 0 and at most 86400, got 0`. The engines read a memory or CPU limit of `0` as "no limit", and a time limit of `0` set no timer. Ore gives the time limit its range (§3.3) and says nothing about the other two.
 - **Engine check:** every run checks that the engine is available before any cell runs, even a workflow with only AI cells.
 - **`runtime.timeout`** applies to container cells only; AI cells use the AI request timeout (below).
 - **`schedule`** is read by `cron-parser` 5. Schedulers tick every 60 seconds.
@@ -31,12 +31,12 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 
 ## Cells (Ore §5)
 
-- `ore:py` and `ore:go` cells are parsed and fail at run time with `Cell type not supported in v0.1`.
+- `ore:py` and `ore:go` cells are parsed and fail at run time with `Cell type not supported in v0.1: <type>`. The text still names the first release; no version of VaultOre runs these cells.
 - A missing, empty or duplicate `id`, or a `depends` entry naming no cell, is a parse error.
 - An `id` that is not of the form Ore §5.3 gives is a parse error that names the id and the rule it breaks (`idFault`, `packages/core/src/parser/index.ts`): `Cell id "fetch.raw" contains ".": an id holds only the letters A-Z and a-z, digits, "_" and "-"`, `Cell id "-rf" starts with "-": an id starts with a letter or digit`, `Cell id "…" has 65 characters: an id has at most 64`. The characters are matched as these exactly; a letter outside `A`-`Z` and `a`-`z` is refused.
 - A reserved `id` is a parse error in any letter case: `Cell id "Run" is reserved: its output would be run.json, the run's own record`, and for `con`, `prn`, `aux`, `nul`, `com0` to `com9` and `lpt0` to `lpt9`, `Cell id "COM1" is reserved: Windows keeps this name for a device, so it cannot be a file name there`. Only `A`-`Z` are folded for the comparison.
 - Two ids that differ only in letter case are a parse error at the second cell: `Cells fetch and Fetch differ only in letter case, and their output files are one file where case is ignored: rename one`. Ids are compared exactly everywhere else.
-- `timeout` on a container cell is a number of seconds greater than 0 and at most 86400, written in digits (`30`, `0.5`). Anything else (`2m`, `abc`, `0`, `-5`, `86401`) is a parse error that names the cell. Without a number above zero no kill timer was set, and far above a day the limit stops being one: a delay past 2^31-1 ms does not fit a timer, which then fires at once. On an `ore:ai` cell the attribute is ignored.
+- `timeout` on a container cell is a number of seconds greater than 0 and at most 86400, written in digits (`30`, `0.5`). Anything else (`2m`, `abc`, `0`, `-5`, `86401`) is a parse error that names the cell. Without a number above zero no kill timer was set, and far above a day the limit stops being one: a delay past 2^31-1 ms does not fit a timer, which then fires at once. On an `ore:ai` cell the attribute is ignored, whatever its value (Ore §5.3: it has no effect there).
 - `execContainer` refuses a `timeout` that is not greater than 0 or does not fit a timer (`MAX_TIMER_MS`), and `buildRunCommand` a memory or CPU limit of zero or an empty one, so a caller that does not go through the parser cannot get an unlimited cell by passing a wrong value. Leaving the option out is the only way to run without that limit.
 - `mode`, `stdin` and `stdout` are parsed for `ore:go` and unused.
 
@@ -84,7 +84,7 @@ Requests go to `https://api.openai.com/v1/chat/completions` or `https://api.anth
 - `orderCells` orders the cells.
 - A cell whose dependency did not succeed fails with `Dependency output missing: <id>` or `Dependency failed: <id>`.
 - **Running one cell:** "Run cell" (`vaultore run --cell`) runs it with its dependencies; "Run cell only (skip dependencies)" (`--skip-deps`) runs it alone, with the dependencies' last recorded outputs. An id that no cell of the note has, an empty one included, fails before anything runs or is recorded: `Cell "reprot" not found in Workflows/digest.md. Its cells are: fetch, report`.
-- **A dependency cycle is a parse error**, so no cell runs: `Dependency cycle: a depends on b, b depends on a`, or `Cell a depends on itself`, reported at the line of the cycle's first cell. Ore does not validate cycles in this version and reserves this meaning (§10, §12).
+- **A dependency cycle is a parse error**, so no cell runs: `Dependency cycle: a depends on b, b depends on a`, or `Cell a depends on itself`, reported at the line of the cycle's first cell (`findDependencyCycle`). Ore requires this from version 0.2 (§5.3, §10).
 - **One run per note:** the plugin refuses to start a second run of a note that is running; `vaultore agent` skips a scheduled run while the previous one is in progress.
 
 ## Outputs (Ore §9)
@@ -110,12 +110,12 @@ Requests go to `https://api.openai.com/v1/chat/completions` or `https://api.anth
   durationMs: 120
   source: _vaultore/runs/my-workflow/RUN_ID/step1.json
   generated:
-    by: vaultore/0.1.3
+    by: vaultore/VERSION
     at: 2026-10-15T08:00:00.000Z
   ---
   ```
 
-  The body is the value in a fenced block (`text` for a string, `json` otherwise), fenced longer than any backtick run inside it.
+  `VERSION` is the version of the VaultOre that wrote the note, `RUN_ID` the run's id. The body is the value in a fenced block (`text` for a string, `json` otherwise), fenced longer than any backtick run inside it.
 
 ### Artifacts (VaultOre extension)
 
@@ -123,4 +123,4 @@ A TS cell whose output is an object with `artifactDir` (a vault path) and/or `fi
 
 ## Reserved features (Ore §12)
 
-VaultOre implements one reserved feature: a dependency cycle is a validation error (see Execution above). Of the others it implements none: the parser drops the reserved front matter keys and cell attributes, and `ore:py` and `ore:go` cells fail (see Cells above). VaultOre's design work on them: conditions and structured outputs [#80](https://github.com/cronai-labs/vaultore/issues/80), note references from another cell [#71](https://github.com/cronai-labs/vaultore/issues/71), `ore:go` [go-cell-spec.md](go-cell-spec.md), parallel cells [ARCHITECTURE.md](../ARCHITECTURE.md#parallel-execution-not-built). The [roadmap](../docs/roadmap.md) lists the rest.
+VaultOre implements none of the reserved features: the parser drops the reserved front matter keys and cell attributes, and `ore:py` and `ore:go` cells fail (see Cells above). VaultOre's design work on them: conditions and structured outputs [#80](https://github.com/cronai-labs/vaultore/issues/80), note references from another cell [#71](https://github.com/cronai-labs/vaultore/issues/71), `ore:go` [go-cell-spec.md](go-cell-spec.md), parallel cells [ARCHITECTURE.md](../ARCHITECTURE.md#parallel-execution-not-built). The [roadmap](../docs/roadmap.md) lists the rest.
