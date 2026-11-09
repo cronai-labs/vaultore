@@ -52,6 +52,7 @@ Each container cell runs with `--rm`. How the vault is mounted and the container
 
 - The cell runs as `/tmp/vaultore.ts` under `bun`. The runtime that provides the globals is injected by `buildTypeScriptRuntime` (`packages/core/src/executor/index.ts`).
 - **Output** goes through `JSON.stringify`: what JSON cannot hold (a function, a `Map`, a `Date` as an object) does not survive.
+- **`cell(id)`** answers for cells that have an output and for nothing else; any other id throws `Cell output not found: <id>`. The outputs reach the script as one JSON string parsed into a `Map` (`cellOutputsSource`), so an id is data whatever it is: `cell("constructor")` throws, and a cell named `__proto__` is a cell like any other ([#223](https://github.com/cronai-labs/vaultore/issues/223)).
 - **Globals:** `vault.exists(path)` is also true for this cell's pending writes. `vault.write` creates parent folders itself. `vault.readRaw` has no permission check. The permission checks in these helpers only turn a doomed access into a clear error: the mount enforces reads (permissions-spec §3.3), the host enforces `vault.write` (§3.4). Bun's own APIs and `fetch` are available; `fetch` reaches the network only under `network: allow`.
 - **What `vault.write` guarantees** ([#83](https://github.com/cronai-labs/vaultore/issues/83)): each write records the SHA-256 of the text the cell last read from that path with `vault.read`, or that `vault.read` or `vault.exists` found nothing there. After the cell exits successfully, the host checks every such write against the file as it is now and applies the writes, in the order the cell made them, only if all match. Otherwise the cell fails, naming each note that changed: the note was edited during the run, or the container saw a stale copy (Colima with sshfs). Within a cell, a second write to a path replaces the first and keeps its base.
   - A cell that ends with `process.exit()` before its writes are handed over writes nothing.
@@ -80,7 +81,7 @@ Requests go to `https://api.openai.com/v1/chat/completions` or `https://api.anth
 
 - `orderCells` orders the cells.
 - A cell whose dependency did not succeed fails with `Dependency output missing: <id>` or `Dependency failed: <id>`.
-- **Running one cell:** "Run cell" (`vaultore run --cell`) runs it with its dependencies; "Run cell only (skip dependencies)" (`--skip-deps`) runs it alone, with the dependencies' last recorded outputs.
+- **Running one cell:** "Run cell" (`vaultore run --cell`) runs it with its dependencies; "Run cell only (skip dependencies)" (`--skip-deps`) runs it alone, with the dependencies' last recorded outputs. An id that no cell of the note has, an empty one included, fails before anything runs or is recorded: `Cell "reprot" not found in Workflows/digest.md. Its cells are: fetch, report`.
 - **A dependency cycle is a parse error**, so no cell runs: `Dependency cycle: a depends on b, b depends on a`, or `Cell a depends on itself`, reported at the line of the cycle's first cell. Ore does not validate cycles in this version and reserves this meaning (§10, §12).
 - **One run per note:** the plugin refuses to start a second run of a note that is running; `vaultore agent` skips a scheduled run while the previous one is in progress.
 
