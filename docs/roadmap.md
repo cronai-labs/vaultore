@@ -53,7 +53,8 @@ Everything in this section is in the code on `main`. The specs describe each par
 
 **CLI** ([interoperability](interoperability.md))
 
-- `vaultore run`, `list`, `agent` (a headless scheduler) and `schedules export` (the
+- `vaultore run`, `list`, `agent` (a headless scheduler that runs only notes approved with
+  `schedules approve`; `schedules list` and `revoke` go with it) and `schedules export` (the
   [CronAI handover manifest](../specs/cronai-handover-spec.md)). Built from source; not on npm.
 
 **Release path**
@@ -122,8 +123,7 @@ in principle; the order is not fixed. Grouped:
 - Runs as OKF Attested Computations
   ([#105](https://github.com/cronai-labs/vaultore/issues/105)); OKF bundle export
   ([interoperability](interoperability.md)).
-- The CLI on npm ([#112](https://github.com/cronai-labs/vaultore/issues/112)), with consent
-  for `vaultore agent` schedules ([#116](https://github.com/cronai-labs/vaultore/issues/116)).
+- The CLI on npm ([#112](https://github.com/cronai-labs/vaultore/issues/112)).
 - CronAI cloud execution: the cloud side of the
   [handover spec](../specs/cronai-handover-spec.md).
 

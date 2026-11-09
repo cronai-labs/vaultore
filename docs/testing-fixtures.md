@@ -80,7 +80,7 @@ and writes `Summaries/<date>-summary.md`.
 
 - In the plugin it runs on schedule only after **Run scheduled workflows** is on and the note
   is approved (**Settings → VaultOre → Scheduled workflows**); "Run all cells" runs it now.
-- `vaultore agent` runs it on schedule without approval.
+- `vaultore agent` runs it on schedule only after `vaultore schedules approve daily-summary.md`.
 
 ### smart-inbox.md
 

@@ -282,7 +282,11 @@ clear decisions; remove the note's entry from the file above.
 
 ## 6. Scheduled Runs
 
-A `schedule:` in frontmatter does not by itself make a note run unattended in the plugin:
+A `schedule:` in frontmatter does not by itself make a note run unattended, in the plugin or
+under `vaultore agent`. Each keeps its own approvals: approving a note in one does not approve
+it in the other.
+
+### 6.1 Plugin
 
 - The "Run scheduled workflows" setting is off by default.
 - Each scheduled note must be approved in **Settings → VaultOre → Scheduled workflows**. The
@@ -291,9 +295,58 @@ A `schedule:` in frontmatter does not by itself make a note run unattended in th
   approved again.
 - Approval is re-checked when a run is due. A scheduled run then resolves permissions like any
   other run (§5).
+- The approval does not cover what the note runs: an edit to its cells that leaves path and
+  schedule alone keeps it approved
+  ([#219](https://github.com/cronai-labs/vaultore/issues/219)).
 
-`vaultore agent` (CLI) has no approval step: it runs every workflow in the vault that has a
-schedule, with permissions resolved non-interactively (§5.2).
+### 6.2 `vaultore agent` (CLI)
+
+- The agent runs a scheduled note only after `vaultore schedules approve <note.md>`.
+- An approval is the note's vault-relative path and the hash a permission decision is bound to
+  (§5.3: the frontmatter as written and each cell's attributes and source). The schedule is
+  part of the frontmatter, so a changed schedule, a changed permission or a changed cell all
+  withdraw it; an output callout written by a run, or an edit to the prose, does not. A renamed
+  note, or a note that arrives through sync, has no approval.
+- Approvals are kept **outside the vault**, on the machine the agent runs on: anything inside
+  the vault can arrive through sync, and an approval must not. The file is `approvals.json` in
+  `$XDG_CONFIG_HOME/vaultore`, else `~/.config/vaultore`, on Windows `%APPDATA%\vaultore`;
+  `--state-dir <dir>` names another folder. It holds every vault's approvals, keyed by the
+  vault's real path:
+
+  ```json
+  {
+    "format": "vaultore.schedule-approvals",
+    "version": 1,
+    "vaults": {
+      "/home/me/notes": {
+        "Workflows/digest.md": {
+          "hash": "<sha256>",
+          "schedule": "0 9 * * 1-5",
+          "approvedAt": "2026-11-09T12:00:00.000Z"
+        }
+      }
+    }
+  }
+  ```
+
+  `schedule` and `approvedAt` are there to be shown; only `hash` is compared.
+- `vaultore schedules list` shows every scheduled note as approved, not approved or changed
+  since approval, and approvals whose note is gone. `vaultore schedules revoke <note.md>`
+  withdraws one. `approve` takes all the notes it is given or none.
+- The file is replaced by renaming a temporary file into place, so a running agent reads the
+  old list or the new one. A change happens under a lock (`approvals.json.lock`, a directory
+  holding one file that names the command's process, machine and start time), so two commands
+  cannot each write what they read plus their own change. A lock whose process no longer exists
+  on this machine is taken over, and a line on stderr says so; a lock that is held, held on
+  another machine, or unreadable is never removed, and the error names it
+  (`packages/cli/src/lock.ts`). A file that cannot be read, or is not an
+  approvals file, is an error that names it: the agent does not start, a running agent arms
+  nothing until it can be read, and `approve` and `revoke` leave it as it is.
+- Approval is re-checked when a run is due: the note and the approvals are read again, and the
+  content that was checked is the content that runs. A scheduled run then resolves permissions
+  non-interactively (§5.2). `--yes` grants `ask` permissions; it does not approve a schedule.
+- The agent names each scheduled note it does not run, with the reason, when it starts and
+  whenever that set changes.
 
 ---
 
@@ -334,14 +387,17 @@ workflow is granted `network`.
 | Resource exhaustion | Memory, CPU and timeout limits; a process limit on Docker, Podman and Colima |
 | Privilege escalation in the container | Non-root user, no capabilities, `no-new-privileges` (not on Apple) |
 | A note changing after it was granted `ask` permissions | Decisions bound to the content (§5.3) |
-| A synced or renamed note running unattended | Scheduling consent per path and schedule (§6), in the plugin |
+| A synced or renamed note running unattended | Scheduling consent: per path and schedule in the plugin (§6.1), per path and content under `vaultore agent` (§6.2) |
+| An approved scheduled note changing under `vaultore agent` | The approval is bound to the content and re-checked when a run is due (§6.2) |
+| Sync delivering an approval for `vaultore agent` | Approvals are kept outside the vault (§6.2) |
 
 ### 8.2 Not Mitigated
 
 | Threat | Notes |
 |--------|-------|
 | A note that declares `allow` | Applied without a prompt. Read a workflow before running it |
-| `vaultore agent` | Runs every scheduled workflow without approval (§6) |
+| An approved scheduled note changing in the plugin | Its approval covers path and schedule, not the cells (§6.1, [#219](https://github.com/cronai-labs/vaultore/issues/219)) |
+| The plugin and `vaultore agent` running one note at once | Each guards only its own runs ([#215](https://github.com/cronai-labs/vaultore/issues/215)) |
 | Container escape, kernel side channels | Containers share a kernel or VM; VaultOre relies on the engine |
 | Prompt injection, malicious AI responses | AI output is text that later cells may act on |
 | Approving without reading | A prompt cannot judge the code it grants |

@@ -17,7 +17,7 @@ export interface ParsedArgs {
  * `--yes workflow.md` swallows the workflow path, and a value flag missing from
  * it loses its value to the positionals.
  */
-const VALUE_FLAGS = new Set(["vault", "config-dir", "cell", "rescan", "out"]);
+const VALUE_FLAGS = new Set(["vault", "config-dir", "state-dir", "cell", "rescan", "out"]);
 
 /** Flags that take no value. */
 const BOOLEAN_FLAGS = new Set(["skip-deps", "yes", "quiet", "help", "version"]);
