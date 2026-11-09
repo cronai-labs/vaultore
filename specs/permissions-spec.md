@@ -201,9 +201,9 @@ Cells run as the host's `uid:gid` (`containerUser()`), never as root:
 
 | Limit | Default | Configurable |
 |-------|---------|--------------|
-| Memory | 512m | Per workflow: `runtime.memoryLimit` |
-| CPU | 1 core | Per workflow: `runtime.cpuLimit` |
-| Timeout | 60s | Per workflow (`runtime.timeout`) or per cell (`timeout`) |
+| Memory | 512m | Per workflow: `runtime.memoryLimit`, an amount greater than zero |
+| CPU | 1 core | Per workflow: `runtime.cpuLimit`, greater than 0 |
+| Timeout | 60s | Per workflow (`runtime.timeout`) or per cell (`timeout`): greater than 0, at most 86400 seconds |
 | PIDs | 256 | No; `DEFAULT_PIDS_LIMIT`, overridable only through the `pidsLimit` option of `execContainer` |
 
 At the timeout VaultOre kills the engine's CLI process, then the container by the name it gave

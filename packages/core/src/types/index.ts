@@ -75,6 +75,43 @@ export const DEFAULT_RUNTIME: RuntimeConfig = {
 };
 
 /**
+ * The longest time limit of a container cell, in seconds: a day (Ore §3.3,
+ * §5.3). There is no value that means "no limit".
+ */
+export const MAX_TIMEOUT_SECONDS = 86_400;
+
+/** What a time limit has to be, as the error messages say it. */
+export const TIMEOUT_RULE = `a number of seconds greater than 0 and at most ${MAX_TIMEOUT_SECONDS}`;
+
+/** Whether `seconds` can be the time limit of a container cell. */
+export function isTimeoutSeconds(seconds: unknown): seconds is number {
+  return (
+    typeof seconds === "number" &&
+    Number.isFinite(seconds) &&
+    seconds > 0 &&
+    seconds <= MAX_TIMEOUT_SECONDS
+  );
+}
+
+/** Whether `cpus` can be a container's CPU limit. The engines read 0 as "no limit". */
+export function isCpuLimit(cpus: unknown): cpus is number {
+  return typeof cpus === "number" && Number.isFinite(cpus) && cpus > 0;
+}
+
+/**
+ * Whether `amount` can be a container's memory limit: a number greater than
+ * zero and an optional unit, as in `512m`. The engines read an amount of 0 as
+ * "no limit" whatever its unit, and refuse an empty one. Which units exist is
+ * the engine's business, so any short run of letters passes here and a unit
+ * the engine does not know fails the cell there, with the engine's message.
+ */
+export function isMemoryLimit(amount: unknown): amount is string {
+  if (typeof amount !== "string") return false;
+  const match = /^(\d+(?:\.\d+)?) ?[A-Za-z]{0,3}$/.exec(amount);
+  return match !== null && Number(match[1]) > 0;
+}
+
+/**
  * Container runtime detection result
  */
 export interface RuntimeDetection {
@@ -91,8 +128,15 @@ export interface ContainerExecOptions {
   command: string[];
   workdir?: string;
   env?: Record<string, string>;
+  /**
+   * Time limit in milliseconds: greater than 0 and at most what a timer holds
+   * (2^31-1). Left out, the container runs without one; any other value is
+   * refused.
+   */
   timeout?: number;
+  /** Passed as `--memory`: an amount greater than zero, such as `512m`. Left out, no limit is set. */
   memoryLimit?: string;
+  /** Passed as `--cpus`: a number greater than 0. Left out, no limit is set. */
   cpuLimit?: number;
   networkEnabled?: boolean;
   mounts?: ContainerMount[];
@@ -184,6 +228,21 @@ export interface WorkflowFrontmatter {
 /**
  * Zod schema for validating frontmatter
  */
+/**
+ * A front matter value that must pass `test`. The message says what was
+ * expected and what was written; the parser puts the key in front of it.
+ */
+function limit<T>(test: (value: unknown) => value is T, expected: string) {
+  return z.custom<T>(test, {
+    error: (issue) => `expected ${expected}, got ${written(issue.input)}`,
+  });
+}
+
+/** A value as its author would recognise it: JSON, except for numbers JSON has no word for. */
+function written(value: unknown): string {
+  return typeof value === "number" ? String(value) : (JSON.stringify(value) ?? String(value));
+}
+
 export const WorkflowFrontmatterSchema = z.object({
   ore: z.literal(true),
   name: z.string(),
@@ -195,9 +254,16 @@ export const WorkflowFrontmatterSchema = z.object({
     .object({
       engine: z.enum(["docker", "podman", "colima", "apple"]).optional(),
       image: z.string().optional(),
-      timeout: z.number().optional(),
-      memoryLimit: z.string().optional(),
-      cpuLimit: z.number().optional(),
+      // Each of these limits has a value that switches it off (`timeout: 0`,
+      // `cpuLimit: 0`, `memoryLimit: "0"`). None is accepted: a note must not
+      // be able to remove its own limits, least of all one that arrived
+      // through sync (#210, #222).
+      timeout: limit(isTimeoutSeconds, TIMEOUT_RULE).optional(),
+      memoryLimit: limit(
+        isMemoryLimit,
+        'an amount of memory greater than zero, such as "512m"'
+      ).optional(),
+      cpuLimit: limit(isCpuLimit, "a number of CPUs greater than 0").optional(),
     })
     .optional(),
   permissions: z

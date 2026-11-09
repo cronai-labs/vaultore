@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
@@ -376,6 +376,52 @@ describe("execContainer timeout", () => {
       .map((line) => /--name (\S+)/.exec(line)?.[1]);
     expect(names).toHaveLength(2);
     expect(names[0]).not.toBe(names[1]);
+  });
+
+  // Zero or less used to mean "no timer", and a delay that does not fit the
+  // timer is clamped to 1 ms, which kills the cell at once (#222). The parser
+  // refuses both; whoever calls the runtime directly must not get them either.
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31, 2147484 * 1000])(
+    "refuses a timeout of %s ms and starts nothing",
+    async (timeout) => {
+      await expect(
+        execContainer(nodeTimers, "docker", { ...baseOptions, timeout })
+      ).rejects.toThrow(
+        `Container timeout must be a number of milliseconds greater than 0 and at most 2147483647, got ${timeout}`
+      );
+      expect(existsSync(log)).toBe(false);
+    }
+  );
+});
+
+// The engines read a memory or CPU limit of 0 as "no limit" and refuse an
+// empty one; a falsy value used to drop the flag altogether (#222).
+describe("buildRunCommand limits", () => {
+  it("passes the limits it is given", () => {
+    const { args } = buildRunCommand("docker", { ...baseOptions, memoryLimit: "1.5g", cpuLimit: 0.5 });
+    expect(args.join(" ")).toContain("--memory 1.5g --cpus 0.5");
+  });
+
+  it("sets no limit only when none is given", () => {
+    const { args } = buildRunCommand("docker", {
+      ...baseOptions,
+      memoryLimit: undefined,
+      cpuLimit: undefined,
+    });
+    expect(args).not.toContain("--memory");
+    expect(args).not.toContain("--cpus");
+  });
+
+  it.each(["", "0", "0m", "lots"])("refuses a memory limit of %j", (memoryLimit) => {
+    expect(() => buildRunCommand("docker", { ...baseOptions, memoryLimit })).toThrow(
+      `Container memory limit must be an amount greater than zero, such as "512m", got ${JSON.stringify(memoryLimit)}`
+    );
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])("refuses a CPU limit of %s", (cpuLimit) => {
+    expect(() => buildRunCommand("docker", { ...baseOptions, cpuLimit })).toThrow(
+      `Container CPU limit must be a number greater than 0, got ${cpuLimit}`
+    );
   });
 });
 

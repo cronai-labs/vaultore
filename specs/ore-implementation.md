@@ -17,6 +17,7 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 - **Unknown keys are dropped without a warning:** a `runIf:` or `defaultModel:` is ignored, not rejected. Every key, known or not, is still part of what a permission decision is bound to (permissions-spec §5.3).
 - `vaultore list` shows `name`.
 - **`runtime.engine`:** the runner's setting is the plugin's "Default runtime engine" (CLI: `runtimeEngine` in `.vaultore/config.json`). `runtime.memoryLimit` and `runtime.cpuLimit` are passed to the engine as `--memory` and `--cpus`. Defaults: `DEFAULT_RUNTIME`.
+- **The limits cannot be switched off from a note.** `runtime.timeout` is a number of seconds greater than 0 and at most 86400 (a day; `MAX_TIMEOUT_SECONDS`), `runtime.cpuLimit` a number greater than 0, and `runtime.memoryLimit` an amount greater than zero with an optional unit, such as `512m` (the unit itself is left to the engine). Anything else fails the run before any cell runs, with the key and the value in the message: `Invalid frontmatter: runtime.timeout: expected a number of seconds greater than 0 and at most 86400, got 0`. The engines read a memory or CPU limit of `0` as "no limit", and a time limit of `0` set no timer. Ore gives the time limit its range and says nothing about the other two.
 - **Engine check:** every run checks that the engine is available before any cell runs, even a workflow with only AI cells.
 - **`runtime.timeout`** applies to container cells only; AI cells use the AI request timeout (below).
 - **`schedule`** is read by `cron-parser` 5. Schedulers tick every 60 seconds.
@@ -33,7 +34,8 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 - `ore:py` and `ore:go` cells are parsed and fail at run time with `Cell type not supported in v0.1`.
 - A missing or duplicate `id`, or a `depends` entry naming no cell, is a parse error.
 - In output file names, characters of `id` other than letters, digits, `_` and `-` become `_` (`outputFileStem`). Two ids that then share a file name, such as `fetch.raw` and `fetch_raw`, are a parse error naming both: Ore §5.3 allows letters, digits, `_` and `-` only, so one of the two is outside it.
-- `timeout` on a container cell is a positive number of seconds, written in digits (`30`, `0.5`). Anything else (`2m`, `abc`, `0`, `-5`) is a parse error that names the cell: Ore leaves a wrong value unspecified, and without a number above zero no kill timer is set. On an `ore:ai` cell the attribute is ignored.
+- `timeout` on a container cell is a number of seconds greater than 0 and at most 86400, written in digits (`30`, `0.5`). Anything else (`2m`, `abc`, `0`, `-5`, `86401`) is a parse error that names the cell. Without a number above zero no kill timer was set, and far above a day the limit stops being one: a delay past 2^31-1 ms does not fit a timer, which then fires at once. On an `ore:ai` cell the attribute is ignored.
+- `execContainer` refuses a `timeout` that is not greater than 0 or does not fit a timer (`MAX_TIMER_MS`), and `buildRunCommand` a memory or CPU limit of zero or an empty one, so a caller that does not go through the parser cannot get an unlimited cell by passing a wrong value. Leaving the option out is the only way to run without that limit.
 - `mode`, `stdin` and `stdout` are parsed for `ore:go` and unused.
 
 ## Templates (Ore §6)

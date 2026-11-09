@@ -82,10 +82,96 @@ describe("WorkflowParser cell timeout", () => {
     "refuses timeout=%s and names the cell",
     (written) => {
       expect(() => parser.parseCells(cell(written))).toThrow(
-        `Cell slow has an invalid timeout "${written}": expected a positive number of seconds`
+        `Cell slow has an invalid timeout "${written}": expected a number of seconds greater than 0 and at most 86400`
       );
     }
   );
+
+  // A day is the most a time limit can be (Ore). Far above it the limit also
+  // stops being one: past 2^31-1 ms the timer fires at once (#222).
+  it("reads a timeout of exactly a day", () => {
+    expect(parser.parseCells(cell("86400"))[0]?.attributes.timeout).toBe(86400);
+  });
+
+  it.each(["86401", "86400.5", "2147484", "99999999999999999999"])(
+    "refuses timeout=%s, which is more than a day",
+    (written) => {
+      expect(() => parser.parseCells(cell(written))).toThrow(
+        `Cell slow has an invalid timeout "${written}": expected a number of seconds greater than 0 and at most 86400`
+      );
+    }
+  );
+});
+
+// The front matter's limits are what a container cell runs under when the cell
+// names none. A value that switches a limit off (`timeout: 0`, `cpuLimit: 0`,
+// `memoryLimit: "0"`) used to be passed on or dropped without a word (#210, #222).
+describe("WorkflowParser container limits in front matter", () => {
+  const parser = new WorkflowParser();
+  const note = (runtime: string) =>
+    `---\nore: true\nname: Limits\nruntime:\n  ${runtime}\n---\n\n\`\`\`ore:shell id=a\necho hi\n\`\`\`\n`;
+  const runtimeOf = (runtime: string) => parser.parseFrontmatter(note(runtime)).runtime;
+
+  it.each([
+    ["timeout: 60", { timeout: 60 }],
+    ["timeout: 0.5", { timeout: 0.5 }],
+    ["timeout: 86400", { timeout: 86400 }],
+    ["cpuLimit: 2", { cpuLimit: 2 }],
+    ["cpuLimit: 0.5", { cpuLimit: 0.5 }],
+    ['memoryLimit: "512m"', { memoryLimit: "512m" }],
+    ['memoryLimit: "1.5g"', { memoryLimit: "1.5g" }],
+    ['memoryLimit: "1GiB"', { memoryLimit: "1GiB" }],
+    ['memoryLimit: "268435456"', { memoryLimit: "268435456" }],
+  ])("reads %s", (written, expected) => {
+    expect(runtimeOf(written)).toEqual(expected);
+  });
+
+  it("leaves the limits to the defaults when the note names none", () => {
+    expect(runtimeOf("image: alpine:3.19")).toEqual({ image: "alpine:3.19" });
+  });
+
+  it.each([
+    ["timeout: 0", "0"],
+    ["timeout: -5", "-5"],
+    ["timeout: 86401", "86401"],
+    ["timeout: 2147484", "2147484"],
+    ["timeout: .inf", "Infinity"],
+    ["timeout: .nan", "NaN"],
+    ['timeout: "60"', '"60"'],
+    ["timeout: 2m", '"2m"'],
+    ["timeout: ~", "null"],
+  ])("refuses %s, naming the key and the value", (written, value) => {
+    expect(() => runtimeOf(written)).toThrow(
+      `Invalid frontmatter: runtime.timeout: expected a number of seconds greater than 0 and at most 86400, got ${value}`
+    );
+  });
+
+  it.each([
+    ["cpuLimit: 0", "0"],
+    ["cpuLimit: -1", "-1"],
+    ["cpuLimit: .inf", "Infinity"],
+    ['cpuLimit: "2"', '"2"'],
+  ])("refuses %s, naming the key and the value", (written, value) => {
+    expect(() => runtimeOf(written)).toThrow(
+      `Invalid frontmatter: runtime.cpuLimit: expected a number of CPUs greater than 0, got ${value}`
+    );
+  });
+
+  // The engines read `0` as "no limit", whatever its unit.
+  it.each([
+    ['memoryLimit: ""', '""'],
+    ['memoryLimit: "  "', '"  "'],
+    ['memoryLimit: "0"', '"0"'],
+    ['memoryLimit: "0m"', '"0m"'],
+    ['memoryLimit: "0.0g"', '"0.0g"'],
+    ['memoryLimit: "-512m"', '"-512m"'],
+    ['memoryLimit: "lots"', '"lots"'],
+    ["memoryLimit: 512", "512"],
+  ])("refuses %s, naming the key and the value", (written, value) => {
+    expect(() => runtimeOf(written)).toThrow(
+      `Invalid frontmatter: runtime.memoryLimit: expected an amount of memory greater than zero, such as "512m", got ${value}`
+    );
+  });
 });
 
 // An output goes under the cell that produced it. That cell was found with a
