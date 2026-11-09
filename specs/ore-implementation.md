@@ -3,7 +3,7 @@
 > **Status:** How VaultOre implements [Ore](https://github.com/cronai-labs/ore-spec/blob/main/SPEC.md) 0.2. The format is defined there; this document adds only what VaultOre decides or adds. It describes the code it is checked in with, so it names no VaultOre version.
 > **Last Updated:** 2026-11-10
 
-The [Ore specification](https://github.com/cronai-labs/ore-spec) defines what a workflow note is, what its front matter and cells mean, how cells run and in which order, and where outputs go. This document follows its sections and records, for each one, what the specification leaves to the runner: VaultOre's code symbols (`packages/core/src/…`), error texts, settings, provider details, and the extensions VaultOre adds (artifacts, the output note's fields). Where a released VaultOre deviates from the specification, the specification's Appendix B says so.
+The [Ore specification](https://github.com/cronai-labs/ore-spec) defines what a workflow note is, what its front matter and cells mean, how cells run and in which order, and where outputs go. This document follows its sections and records, for each one, what the specification leaves to the runner: VaultOre's code symbols (`packages/core/src/…`), error texts, settings, provider details, and the extensions VaultOre adds (artifacts, the output note's fields). Where a released VaultOre deviates from the specification, the specification's Appendix B says so. Where VaultOre accepts or checks more than Ore asks for, [Beyond the specification](#beyond-the-specification) lists it.
 
 Permissions, their defaults and how `ask` is resolved are in [permissions-spec.md](permissions-spec.md); the container flags and hardening in [sandbox-spec.md](sandbox-spec.md).
 
@@ -81,7 +81,7 @@ Requests go to `https://api.openai.com/v1/chat/completions` or `https://api.anth
 
 ## Execution order (Ore §8)
 
-- `orderCells` orders the cells.
+- `orderCells` orders the cells; how it orders cells that have dependencies is in [Beyond the specification](#beyond-the-specification).
 - A cell whose dependency did not succeed fails with `Dependency output missing: <id>` or `Dependency failed: <id>`.
 - **Running one cell:** "Run cell" (`vaultore run --cell`) runs it with its dependencies; "Run cell only (skip dependencies)" (`--skip-deps`) runs it alone, with the dependencies' last recorded outputs. An id that no cell of the note has, an empty one included, fails before anything runs or is recorded: `Cell "reprot" not found in Workflows/digest.md. Its cells are: fetch, report`.
 - **A dependency cycle is a parse error**, so no cell runs: `Dependency cycle: a depends on b, b depends on a`, or `Cell a depends on itself`, reported at the line of the cycle's first cell (`findDependencyCycle`). Ore requires this from version 0.2 (§5.3, §10).
@@ -120,6 +120,17 @@ Requests go to `https://api.openai.com/v1/chat/completions` or `https://api.anth
 ### Artifacts (VaultOre extension)
 
 A TS cell whose output is an object with `artifactDir` (a vault path) and/or `files` (vault paths) gets an index note, `<artifactDir>/_index.md`: an OKF concept of type `VaultOre Artifacts` that links each file with a relative Markdown link. See the last cell of `fixtures/canonical/sys-snapshot.md`.
+
+## Beyond the specification
+
+Where VaultOre accepts or checks more than Ore 0.2 asks for, or decides what Ore leaves open. Apart from the cell order, a note written as the specification describes never meets them. They are recorded so that a change to one of them is a decision.
+
+- **Attribute values (Ore §5.2, Appendix A).** Every attribute is read in each of the four forms a value can have, and its value is the text inside the quotes or brackets (`readAttributes`). So `timeout="30"`, `timeout='30'` and `timeout=[30]` are 30 seconds, `id="a"` and `id=[a]` are the id `a`, and `depends=a` and `depends="a, b"` name cells without brackets. Ore's grammar gives a value these forms without tying a form to an attribute; its text uses brackets for the list in `depends` only.
+- **A repeated attribute.** The last one on the fence line counts: `timeout=5 timeout=7` is 7 seconds. When a cell has both `maxTokens` and `max_tokens`, `maxTokens` counts. Ore does not say.
+- **`timeout` on `ore:py` and `ore:go` cells** is checked like on `ore:ts` and `ore:shell`: a wrong value is a parse error, so no cell runs. Ore requires the check for `ts` and `shell` cells (§5.3) and has these cell types fail at run time (§5.1), which they do when the value is valid or absent.
+- **`temperature` and `maxTokens` are read leniently.** A value that does not start with a number is dropped, and the cell runs with the setting instead: `temperature=warm`. A number followed by other text is read up to that text, and `maxTokens` loses its fraction: `temperature=0.5abc` is 0.5, `maxTokens=12.7` is 12. Ore gives the two attributes a type (§5.3) and no rule for a value that is not of it.
+- **Cell order past the first cells (Ore §8).** `orderCells` keeps a queue. It starts with the cells that have no dependencies, in document order. A cell joins the end when the last of its dependencies has left the queue, and cells that join at the same moment join in document order. For cells `a`, `b` (depends on `a`), `c` and `d` (depends on `a`) the order is `a c b d`: `c` was in the queue from the start, `b` and `d` joined after `a`. With `b` depending on `c` instead it is `a c d b`. Ore fixes the order of the cells without dependencies and, for the others, only that a cell runs after its dependencies.
+- **The limits `runtime.memoryLimit` and `runtime.cpuLimit`** are refused when zero or empty (see Front matter above); Ore gives them a type only.
 
 ## Reserved features (Ore §12)
 
