@@ -1,6 +1,6 @@
 # Permissions and Security Specification
 
-> **Status:** Canonical. Sections 1–8 describe what the code does at version 0.1.0;
+> **Status:** Canonical. Sections 1–8 describe what the code does, as checked in with it;
 > [Planned](#planned) lists what is specified but not built.
 > **Last Updated:** 2026-10-15
 

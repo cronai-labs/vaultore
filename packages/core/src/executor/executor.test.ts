@@ -99,6 +99,24 @@ describe("orderCells", () => {
 		expect(ids(orderCells([cell("b"), cell("a"), cell("c", "a")]))).toEqual(["b", "a", "c"]);
 	});
 
+	// A queue, not levels: a cell joins when its last dependency has left the
+	// queue, behind the cells already waiting. Ore §8 leaves this order open;
+	// specs/ore-implementation.md records it under "Beyond the specification".
+	it("runs a cell that was ready from the start before cells that became ready", () => {
+		expect(ids(orderCells([cell("a"), cell("b", "a"), cell("c"), cell("d", "a")]))).toEqual([
+			"a",
+			"c",
+			"b",
+			"d",
+		]);
+		expect(ids(orderCells([cell("a"), cell("b", "c"), cell("c"), cell("d", "a")]))).toEqual([
+			"a",
+			"c",
+			"d",
+			"b",
+		]);
+	});
+
 	it("throws for cells it cannot order and names them", () => {
 		expect(() => orderCells([cell("a", "b"), cell("b", "a"), cell("c")])).toThrow(
 			"Cells cannot be ordered, their dependencies never complete: a, b"

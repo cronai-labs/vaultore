@@ -557,3 +557,50 @@ describe("TemplateInterpolator.interpolateAsync", () => {
     ).rejects.toThrow("missing.md");
   });
 });
+
+// What VaultOre reads beyond what Ore 0.2 asks for, as
+// specs/ore-implementation.md lists it under "Beyond the specification". The
+// cases are that list's examples: when one changes, the document changes too.
+describe("WorkflowParser beyond the specification", () => {
+  const parser = new WorkflowParser();
+  const attributes = (fences: string[]) =>
+    parser
+      .parseCells(fences.map((fence) => `\`\`\`ore:${fence}\necho x\n\`\`\`\n`).join("\n"))
+      .map((cell) => cell.attributes);
+
+  it.each(['timeout="30"', "timeout='30'", "timeout=[30]"])(
+    "reads %s as 30 seconds",
+    (written) => {
+      expect(attributes([`shell id=a ${written}`])[0]?.timeout).toBe(30);
+    }
+  );
+
+  it.each(['id="a"', "id=[a]"])("reads %s as the id a", (written) => {
+    expect(attributes([`shell ${written}`])[0]?.id).toBe("a");
+  });
+
+  it.each([
+    ["depends=a", ["a"]],
+    ['depends="a, c"', ["a", "c"]],
+  ])("reads %s as a list of cells", (written, depends) => {
+    const cells = attributes(["shell id=a", "shell id=c", `shell id=b ${written}`]);
+
+    expect(cells[2]?.depends).toEqual(depends);
+  });
+
+  it("takes the last of a repeated attribute", () => {
+    expect(attributes(["shell id=a timeout=5 timeout=7"])[0]?.timeout).toBe(7);
+  });
+
+  it("takes maxTokens when max_tokens is there too", () => {
+    expect(attributes(["ai id=a max_tokens=9 maxTokens=5"])[0]?.maxTokens).toBe(5);
+    expect(attributes(["ai id=a max_tokens=9"])[0]?.maxTokens).toBe(9);
+  });
+
+  it.each(["py", "go"])("checks the timeout of an ore:%s cell", (type) => {
+    expect(() => attributes([`${type} id=a timeout=abc`])).toThrow(
+      'Cell a has an invalid timeout "abc": expected a number of seconds greater than 0 and at most 86400'
+    );
+    expect(attributes([`${type} id=a timeout=30`])[0]?.timeout).toBe(30);
+  });
+});

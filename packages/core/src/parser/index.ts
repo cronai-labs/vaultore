@@ -375,8 +375,8 @@ export class WorkflowParser {
       }
     }
 
-    // A cycle has no order to run in. Ore §12 reserves "dependency cycles as a
-    // validation error"; this is that meaning, ahead of the format.
+    // A cycle has no order to run in: Ore §5.3 and §10 make it a validation
+    // error, so no cell runs.
     const cycle = findDependencyCycle(cells);
     if (cycle) {
       const [first] = cycle;
@@ -429,8 +429,8 @@ export class WorkflowParser {
       id: attrs.id,
       type,
       depends,
-      // Ore §5.3 defines `timeout` for container cells; on an AI cell it is an
-      // unknown attribute, which §10 says to ignore.
+      // Ore §5.3 defines `timeout` for container cells and gives it no effect
+      // on an AI cell, so there it is not read, whatever it says.
       timeout: type === "ai" ? undefined : parseTimeout(attrs.timeout, attrs.id, line),
       model: attrs.model,
       temperature: Number.isFinite(temperature) ? temperature : undefined,

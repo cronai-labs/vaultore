@@ -166,7 +166,10 @@ permissions:
 Checklist:
 
 - Frontmatter has `ore: true`, `name`, and a quoted `version`
-- Each cell has a unique `id`; dependencies are declared with `depends=[…]`
+- Each cell has a unique `id`: letters `A`-`Z` and `a`-`z`, digits, `_` and `-`, starting with a
+  letter or digit, at most 64 characters, not `run` or a Windows device name such as `con` or
+  `nul`, and not differing from another id only in letter case (Ore §5.3). Dependencies are
+  declared with `depends=[…]`
 - Only the permissions it needs, at `allow` or `deny`
 - Expected results written down
 - Only features VaultOre implements ([Ore implementation](../specs/ore-implementation.md)),
