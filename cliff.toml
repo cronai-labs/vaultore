@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 # Breaking changes come first, each with the text of its `BREAKING CHANGE:`
 # footer (the subject when there is none), and stay in their own section as
 # well (#193).
+# "Upgrading" follows, one entry per `Upgrade-Note:` footer: what a user has
+# to do after a change that was not marked breaking. GitHub wraps a squash
+# commit's body, so a footer's lines are joined again.
 body = """
 {% if version -%}
 ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
@@ -35,6 +38,20 @@ body = """
 {% for commit in breaking %}
 - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.breaking_description | upper_first }}\
 {% endfor %}
+{% endif %}
+{%- set upgrading = false %}
+{%- for commit in commits %}
+{%- for footer in commit.footers | filter(attribute="token", value="Upgrade-Note") %}
+{%- set_global upgrading = true %}
+{%- endfor %}
+{%- endfor %}
+{%- if upgrading %}
+### Upgrading
+{% for commit in commits %}
+{%- for footer in commit.footers | filter(attribute="token", value="Upgrade-Note") %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ footer.value | replace_regex(from="\\s+", to=" ") | upper_first }}\
+{% endfor %}
+{%- endfor %}
 {% endif %}
 {%- for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
@@ -72,6 +89,14 @@ commit_preprocessors = [
   # #190 raised the minimum Obsidian version without a BREAKING CHANGE:
   # footer; this one says what the published 0.2.0 notes say (#193).
   { pattern = '(?s)^(feat\(obsidian\)!: settings appear in Obsidian.s settings search.*)$', replace = "${1}\n\nBREAKING CHANGE: Requires Obsidian 1.13.0 or later. VaultOre 0.1.3 remains the release for Obsidian 1.11.4 to 1.12." },
+  # The changes in 0.3.0 that ask something of the user were merged without an
+  # `Upgrade-Note:` footer, which did not exist yet (#233).
+  { pattern = '(?s)^(fix\(parser\): refuse invalid timeouts, cycles and colliding ids.*)$', replace = "${1}\n\nUpgrade-Note: A note is refused before anything runs when a cell's `timeout` is not a number above zero, or when cells depend on each other in a circle. Correct the `timeout`, or the `depends` list the error names." },
+  { pattern = '(?s)^(fix\(cli\): read --config-dir <name> and refuse unknown flags.*)$', replace = "${1}\n\nUpgrade-Note: An option the command line does not know is a usage error (`unknown option --name`, exit code 2); before, it was ignored. Correct the option where a script calls `vaultore`." },
+  { pattern = '(?s)^(feat\(cli\): the agent runs only scheduled notes that were approved.*)$', replace = "${1}\n\nUpgrade-Note: `vaultore agent` runs a scheduled note only after `vaultore schedules approve <note.md>`, and nothing until one is approved. An approval holds for the note's front matter and cells as they are: after changing either, approve again. `vaultore schedules list` shows what the agent may run." },
+  { pattern = '(?s)^(fix\(parser\): a note cannot switch off its time, memory or CPU limit.*)$', replace = "${1}\n\nUpgrade-Note: A note is refused when a limit has a value that cannot be enforced: `runtime.timeout` and a cell's `timeout` must be above 0 and at most 86400 seconds, `cpuLimit` above 0, and `memoryLimit` an amount above zero such as `512m`. Correct the value the error names." },
+  { pattern = '(?s)^(fix\(executor\): cell\(\) answers only for real outputs.*)$', replace = "${1}\n\nUpgrade-Note: `vaultore run <note.md> --cell <id>` fails for an id the note does not have; before, it ran nothing and reported a completed run. In a TypeScript cell, `cell(id)` throws for a name that is no cell's output, such as `constructor`." },
+  { pattern = '(?s)^(fix\(parser\): cell ids follow Ore 0\.2.*)$', replace = "${1}\n\nUpgrade-Note: A cell id is 1 to 64 characters from the letters A-Z and a-z, digits, `_` and `-`, and starts with a letter or digit. `run` and the Windows device names (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are reserved, and two ids that differ only in letter case are refused. Rename the cell the error names, also where `depends`, `cell()` and `{{id}}` use its id." },
 ]
 
 commit_parsers = [

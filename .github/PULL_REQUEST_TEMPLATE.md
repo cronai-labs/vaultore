@@ -5,6 +5,9 @@
   A breaking change ("!" in the title) ends this description with a last
   paragraph "BREAKING CHANGE: <what breaks and what to do>", after the
   Definition of done. The release notes show that line.
+  A change that is not breaking but asks something of the user ends with
+  "Upgrade-Note: <what changed for the user and what to do>" instead; the
+  release notes list it under "Upgrading".
 
   Open this as a DRAFT while the work is in progress. A draft cannot be merged,
   which is what stops auto-merge landing unfinished work.

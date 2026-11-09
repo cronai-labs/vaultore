@@ -85,6 +85,8 @@ This repo uses [Conventional Commits](https://www.conventionalcommits.org/), enf
 
 A breaking change gets `!` in the PR title, and the PR description ends with `BREAKING CHANGE: <what breaks and what to do>` as its last paragraph, after the Definition of done. Squash-merging makes the description the commit body, and the release notes list that line under "Breaking changes"; the `policy` job fails a `!` title without it. Before 1.0 a breaking change bumps the minor version.
 
+A change that is not marked breaking but still asks something of the user (a note that is refused where it ran before, a command that needs a new step) ends its description with `Upgrade-Note: <what changed for the user and what to do>` as its last paragraph instead. The release notes list that text under "Upgrading", after the breaking changes. Nothing checks for this footer, and it is read only on a commit that reaches the release notes: `feat`, `fix`, `perf`, `revert` and dependency updates.
+
 **Scopes** (from `commitlint.config.cjs`; another scope warns): `core`, `obsidian`, `cli`, `parser`, `executor`, `runtime`, `scheduler`, `providers`, `vault`, `fixtures`, `deps`, `release`
 
 Examples:
