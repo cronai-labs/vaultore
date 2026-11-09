@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  OutputSerializer,
   TemplateInterpolator,
   WorkflowParser,
   isWorkflowFrontmatter,
@@ -85,6 +86,79 @@ describe("WorkflowParser cell timeout", () => {
       );
     }
   );
+});
+
+// An output goes under the cell that produced it. That cell was found with a
+// pattern over the fence line, which took any id that starts with the wanted
+// one: the output of `fetch` landed under `fetch-summary` (#45).
+describe("OutputSerializer.updateWorkflowOutput", () => {
+  const serializer = new OutputSerializer();
+  const output = (cellId: string): CellOutput => ({
+    cellId,
+    value: "v",
+    meta: { status: "success", duration: 1, timestamp: "2026-01-01T00:00:00Z" },
+  });
+  const callout = (cellId: string) =>
+    `> [!ore-output] ${cellId}\n> status: success | duration: 1ms | at: 2026-01-01T00:00:00Z`;
+  const fence = (attrs: string) => `\`\`\`ore:ts ${attrs}\n1;\n\`\`\``;
+
+  it("writes the output under the cell, not under one whose id starts the same", () => {
+    const note = `${fence("id=fetch-summary depends=[fetch]")}\n\n${fence("id=fetch")}\n`;
+
+    expect(serializer.updateWorkflowOutput(note, output("fetch"))).toBe(
+      `${fence("id=fetch-summary depends=[fetch]")}\n\n${fence("id=fetch")}\n\n${callout("fetch")}\n`
+    );
+  });
+
+  it("tells quoted ids apart the same way", () => {
+    const note = `${fence('id="fetch-summary"')}\n\n${fence("id='fetch'")}\n`;
+
+    expect(serializer.updateWorkflowOutput(note, output("fetch"))).toBe(
+      `${fence('id="fetch-summary"')}\n\n${fence("id='fetch'")}\n\n${callout("fetch")}\n`
+    );
+  });
+
+  it("does not take another attribute for the id", () => {
+    const note = `${fence('id=other grid=fetch stdin="x id=fetch"')}\n\n${fence("id=fetch")}\n`;
+
+    expect(serializer.updateWorkflowOutput(note, output("fetch"))).toBe(
+      `${fence('id=other grid=fetch stdin="x id=fetch"')}\n\n${fence("id=fetch")}\n\n${callout("fetch")}\n`
+    );
+  });
+
+  it("gives the same note when the same output is written twice", () => {
+    const note = `${fence("id=fetch-summary")}\n\n${fence("id=fetch")}\n\nEnd.\n`;
+    const once = serializer.updateWorkflowOutput(note, output("fetch"));
+
+    expect(serializer.updateWorkflowOutput(once, output("fetch"))).toBe(once);
+  });
+
+  it("keeps each output under its own cell when both are written", () => {
+    const note = `${fence("id=fetch-summary")}\n\n${fence("id=fetch")}\n`;
+    const both = serializer.updateWorkflowOutput(
+      serializer.updateWorkflowOutput(note, output("fetch")),
+      output("fetch-summary")
+    );
+
+    const positions = [
+      "id=fetch-summary\n",
+      "[!ore-output] fetch-summary\n",
+      "id=fetch\n",
+      "[!ore-output] fetch\n",
+    ].map((text) => both.indexOf(text));
+
+    expect(positions).not.toContain(-1);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(both.match(/\[!ore-output\]/g)).toHaveLength(2);
+  });
+
+  it("appends the output when the note has no such cell", () => {
+    const note = `${fence("id=fetch-summary")}\n`;
+
+    expect(serializer.updateWorkflowOutput(note, output("fetch"))).toBe(
+      `${fence("id=fetch-summary")}\n\n${callout("fetch")}\n`
+    );
+  });
 });
 
 // Ore §9.2 names a cell's files after its id, with every character other than

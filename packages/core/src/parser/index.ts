@@ -142,6 +142,40 @@ export function outputFileStem(cellId: string): string {
 const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;
 const CELL_ATTR_REGEX = /(?:^|[ \t])(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
 
+/** The `key=value` attributes of a fence line, as written; a later key wins. */
+function readAttributes(attrString: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+
+  let match: RegExpExecArray | null;
+  CELL_ATTR_REGEX.lastIndex = 0;
+
+  while ((match = CELL_ATTR_REGEX.exec(attrString)) !== null) {
+    const [, key, doubleQuoted, singleQuoted, bracketed, unquoted] = match;
+    attrs[key] = doubleQuoted ?? singleQuoted ?? bracketed ?? unquoted;
+  }
+
+  return attrs;
+}
+
+/**
+ * Where the fenced block of cell `cellId` ends in `content`, or undefined when
+ * the note has no such cell. The id is read from the fence the way `parseCells`
+ * reads it, so it is compared whole.
+ */
+function findCellBlockEnd(content: string, cellId: string): number | undefined {
+  // Its own expression: CELL_REGEX is shared and stateful, and a parse that
+  // threw part-way through a note leaves its position behind.
+  const cellRegex = new RegExp(CELL_REGEX.source, "g");
+
+  let match: RegExpExecArray | null;
+  while ((match = cellRegex.exec(content)) !== null) {
+    if (readAttributes(match[2].trim()).id === cellId) {
+      return match.index + match[0].length;
+    }
+  }
+  return undefined;
+}
+
 // =============================================================================
 // PARSER CLASS
 // =============================================================================
@@ -326,15 +360,7 @@ export class WorkflowParser {
     type: CellType,
     line: number
   ): CellAttributes {
-    const attrs: Record<string, string> = {};
-
-    let match: RegExpExecArray | null;
-    CELL_ATTR_REGEX.lastIndex = 0;
-
-    while ((match = CELL_ATTR_REGEX.exec(attrString)) !== null) {
-      const [, key, doubleQuoted, singleQuoted, bracketed, unquoted] = match;
-      attrs[key] = doubleQuoted ?? singleQuoted ?? bracketed ?? unquoted;
-    }
+    const attrs = readAttributes(attrString);
 
     if (!attrs.id) {
       throw new ParserError(`Cell at line ${line} missing 'id' attribute`, line);
@@ -547,15 +573,15 @@ export class OutputSerializer {
     let nextContent = content.replace(existingRegex, "");
     nextContent = nextContent.replace(stubRegex, "");
 
-    const cellRegex = new RegExp(
-      `(\`\`\`ore:(?:ts|shell|ai|py|go)[^\\n]*id=["']?${escapeRegex(output.cellId)}["']?[^\\n]*\\n[\\s\\S]*?\`\`\`)(?:\\n[ \\t]*)*`,
-      "g"
-    );
-
-    const match = cellRegex.exec(nextContent);
-    if (match) {
-      const blockEnd = match.index + match[1].length;
-      const restStart = match.index + match[0].length;
+    // The cell is found by its parsed id. A pattern over the fence line took
+    // any id that starts with this one (`fetch` matched `id=fetch-summary`)
+    // and an `id=` inside another attribute, and put the output under that
+    // cell instead.
+    const blockEnd = findCellBlockEnd(nextContent, output.cellId);
+    if (blockEnd !== undefined) {
+      // Blank lines after the block are replaced by the callout's own spacing.
+      const blankLines = /^(?:\n[ \t]*)*/.exec(nextContent.slice(blockEnd))?.[0] ?? "";
+      const restStart = blockEnd + blankLines.length;
       const before = nextContent.slice(0, blockEnd);
       const after = nextContent.slice(restStart).replace(/^\n+/, "\n");
       const separator = after.startsWith("\n") ? "" : "\n";
