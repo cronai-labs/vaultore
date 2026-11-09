@@ -129,6 +129,16 @@ export function findOutputBlocks(
   return blocks;
 }
 
+/**
+ * The name of a cell's output files, without the extension (Ore §9.2): the
+ * id, with every character other than letters, digits, `_` and `-` replaced
+ * by `_`. Not one-to-one: `fetch.raw` and `fetch_raw` share a name, which is
+ * why `parseCells` refuses a note that holds both.
+ */
+export function outputFileStem(cellId: string): string {
+  return cellId.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
 const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;
 const CELL_ATTR_REGEX = /(?:^|[ \t])(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
 
@@ -253,13 +263,27 @@ export class WorkflowParser {
       });
     }
 
-    // Validate unique IDs
+    // Validate unique IDs, and unique output files: two ids can differ and
+    // still share a file name, and the later cell's record would then replace
+    // the earlier one's while both callouts link to it.
     const ids = new Set<string>();
+    const fileOwners = new Map<string, string>();
     for (const cell of cells) {
-      if (ids.has(cell.attributes.id)) {
-        throw new ParserError(`Duplicate cell ID: ${cell.attributes.id}`, cell.startLine);
+      const id = cell.attributes.id;
+      if (ids.has(id)) {
+        throw new ParserError(`Duplicate cell ID: ${id}`, cell.startLine);
       }
-      ids.add(cell.attributes.id);
+      ids.add(id);
+
+      const stem = outputFileStem(id);
+      const owner = fileOwners.get(stem);
+      if (owner !== undefined) {
+        throw new ParserError(
+          `Cells ${owner} and ${id} would write the same output file (${stem}.json): rename one`,
+          cell.startLine
+        );
+      }
+      fileOwners.set(stem, id);
     }
 
     // Validate dependencies

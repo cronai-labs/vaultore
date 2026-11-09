@@ -25,6 +25,7 @@ import {
   OutputSerializer,
   TemplateInterpolator,
   WorkflowParser,
+  outputFileStem,
   stripLeading,
   stripTrailing,
 } from "../parser";
@@ -743,7 +744,7 @@ async function persistCellOutput(
   workflowPath: string,
   output: CellOutput
 ): Promise<string> {
-  const outputPath = `${runContext.runDir}/${safeFileName(output.cellId)}.json`;
+  const outputPath = `${runContext.runDir}/${outputFileStem(output.cellId)}.json`;
   const outputViewPath = outputPath.replace(/\.json$/i, ".md");
   const artifacts = extractArtifacts(output.value);
   output.meta.artifacts = artifacts;
@@ -855,10 +856,6 @@ function runBasePath(outputRoot: string, workflowPath: string): string {
     .replace(/\.\./g, "")
     .replace(/\.md$/i, "");
   return `${outputRoot}/runs/${normalized || "workflow"}`;
-}
-
-function safeFileName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 function normalizeOutputRoot(value: string | undefined): string {

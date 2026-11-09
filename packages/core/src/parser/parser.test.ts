@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { TemplateInterpolator, WorkflowParser, isWorkflowFrontmatter } from "./index";
+import {
+  TemplateInterpolator,
+  WorkflowParser,
+  isWorkflowFrontmatter,
+  outputFileStem,
+} from "./index";
 import type { CellOutput } from "../types";
 
 describe("WorkflowParser", () => {
@@ -80,6 +85,42 @@ describe("WorkflowParser cell timeout", () => {
       );
     }
   );
+});
+
+// Ore §9.2 names a cell's files after its id, with every character other than
+// letters, digits, `_` and `-` replaced by `_`. Two ids that differ only there
+// shared `<runDir>/<name>.json`, and the later cell's record replaced the
+// earlier one's (#45).
+describe("WorkflowParser output file names", () => {
+  const parser = new WorkflowParser();
+  const note = (...ids: string[]) =>
+    ids.map((id) => `\`\`\`ore:ts id=${id}\n1;\n\`\`\`\n`).join("\n");
+
+  it("maps an id to its file name as Ore §9.2 says", () => {
+    expect(outputFileStem("fetch-raw_2")).toBe("fetch-raw_2");
+    expect(outputFileStem("fetch.raw")).toBe("fetch_raw");
+    expect(outputFileStem("a/b c")).toBe("a_b_c");
+  });
+
+  it("refuses two ids that would write the same file, naming both", () => {
+    expect(() => parser.parseCells(note("fetch.raw", "other", "fetch_raw"))).toThrow(
+      "Cells fetch.raw and fetch_raw would write the same output file (fetch_raw.json): rename one"
+    );
+  });
+
+  it("reports the collision at the second cell", () => {
+    try {
+      parser.parseCells(note("fetch.raw", "fetch_raw"));
+      expect.unreachable("colliding ids must not parse");
+    } catch (err) {
+      expect((err as { line?: number }).line).toBe(5);
+    }
+  });
+
+  it("accepts ids that differ in a letter, digit, underscore or hyphen", () => {
+    const ids = ["fetch-raw", "fetch_raw", "fetchraw", "fetch_raw2"];
+    expect(parser.parseCells(note(...ids)).map((cell) => cell.attributes.id)).toEqual(ids);
+  });
 });
 
 // A cycle has no order to run in. It used to fall back to document order, with
