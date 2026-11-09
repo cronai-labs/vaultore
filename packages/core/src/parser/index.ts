@@ -131,14 +131,53 @@ export function findOutputBlocks(
   return blocks;
 }
 
+/** The most characters a cell id may have (Ore §5.3). */
+const MAX_ID_LENGTH = 64;
+
 /**
- * The name of a cell's output files, without the extension (Ore §9.2): the
- * id, with every character other than letters, digits, `_` and `-` replaced
- * by `_`. Not one-to-one: `fetch.raw` and `fetch_raw` share a name, which is
- * why `parseCells` refuses a note that holds both.
+ * Why `id` cannot be a cell id, or undefined when it can (Ore §5.3): one to 64
+ * characters from `A`-`Z`, `a`-`z`, digits, `_` and `-`, the first a letter or
+ * digit, and not a reserved name. An id is a file name (§9.2), a `{{id}}`
+ * template and a command-line argument, so the set is these characters
+ * exactly: a class that follows Unicode would let `café` through, and a
+ * leading `-` reads as an option. Reserved are `run`, whose file is the run's
+ * record, and the names Windows keeps for devices, which are no file names
+ * there whatever their extension.
  */
-export function outputFileStem(cellId: string): string {
-  return cellId.replace(/[^a-zA-Z0-9_-]/g, "_");
+function idFault(id: string): string | undefined {
+  const named = `Cell id ${JSON.stringify(id)}`;
+  const [first] = id;
+  if (first !== undefined && !/^[A-Za-z0-9]$/.test(first)) {
+    return `${named} starts with ${JSON.stringify(first)}: an id starts with a letter or digit`;
+  }
+  for (const char of id) {
+    if (!/^[A-Za-z0-9_-]$/.test(char)) {
+      return `${named} contains ${JSON.stringify(char)}: an id holds only the letters A-Z and a-z, digits, "_" and "-"`;
+    }
+  }
+  if (id.length > MAX_ID_LENGTH) {
+    return `${named} has ${id.length} characters: an id has at most ${MAX_ID_LENGTH}`;
+  }
+
+  // Reserved in any letter case (Ore §5.3): a file system that ignores case
+  // makes `Run.json` the run's record as well.
+  const folded = foldCase(id);
+  if (folded === "run") {
+    return `${named} is reserved: its output would be run.json, the run's own record`;
+  }
+  if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(folded)) {
+    return `${named} is reserved: Windows keeps this name for a device, so it cannot be a file name there`;
+  }
+  return undefined;
+}
+
+/**
+ * `id` with `A`-`Z` in lower case and every other character as it is. The
+ * letters of an id are these 52 only, so nothing a locale or Unicode would
+ * fold differently is touched.
+ */
+function foldCase(id: string): string {
+  return id.replace(/[A-Z]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) + 32));
 }
 
 const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;
@@ -299,11 +338,14 @@ export class WorkflowParser {
       });
     }
 
-    // Validate unique IDs, and unique output files: two ids can differ and
-    // still share a file name, and the later cell's record would then replace
-    // the earlier one's while both callouts link to it.
+    // Validate unique IDs, and unique output files. A cell's files are named
+    // after its id as written (Ore §9.2), so two ids that differ only in
+    // letter case are one file where case is ignored (the macOS and Windows
+    // defaults): the later cell's record would replace the earlier one's
+    // while both callouts link to it. Ids are still compared exactly
+    // everywhere else: `depends=[Fetch]` does not name a cell `fetch`.
     const ids = new Set<string>();
-    const fileOwners = new Map<string, string>();
+    const spellings = new Map<string, string>();
     for (const cell of cells) {
       const id = cell.attributes.id;
       if (ids.has(id)) {
@@ -311,15 +353,14 @@ export class WorkflowParser {
       }
       ids.add(id);
 
-      const stem = outputFileStem(id);
-      const owner = fileOwners.get(stem);
-      if (owner !== undefined) {
+      const twin = spellings.get(foldCase(id));
+      if (twin !== undefined) {
         throw new ParserError(
-          `Cells ${owner} and ${id} would write the same output file (${stem}.json): rename one`,
+          `Cells ${twin} and ${id} differ only in letter case, and their output files are one file where case is ignored: rename one`,
           cell.startLine
         );
       }
-      fileOwners.set(stem, id);
+      spellings.set(foldCase(id), id);
     }
 
     // Validate dependencies
@@ -367,6 +408,8 @@ export class WorkflowParser {
     if (!attrs.id) {
       throw new ParserError(`Cell at line ${line} missing 'id' attribute`, line);
     }
+    const fault = idFault(attrs.id);
+    if (fault) throw new ParserError(fault, line);
 
     // Parse depends array
     let depends: string[] | undefined;

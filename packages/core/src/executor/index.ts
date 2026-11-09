@@ -25,7 +25,6 @@ import {
   OutputSerializer,
   TemplateInterpolator,
   WorkflowParser,
-  outputFileStem,
   stripLeading,
   stripTrailing,
 } from "../parser";
@@ -744,6 +743,17 @@ async function hydrateOutputsFromStubs(
       };
       if (!record?.meta || !record.cellId) continue;
 
+      // The callout says which record is this cell's, and the callout is text
+      // a cell, an edit or sync can change. A record that names another cell
+      // is that cell's output, whatever the note links it under.
+      if (record.cellId !== cellId) {
+        platform.log(
+          "warn",
+          `Not reading the recorded output of ${cellId}: ${stub.outputPath} is the record of cell ${record.cellId}`
+        );
+        continue;
+      }
+
       outputs.set(cellId, {
         cellId,
         value: record.value,
@@ -761,7 +771,9 @@ async function persistCellOutput(
   workflowPath: string,
   output: CellOutput
 ): Promise<string> {
-  const outputPath = `${runContext.runDir}/${outputFileStem(output.cellId)}.json`;
+  // The id is the file name as written: the parser keeps ids to names that
+  // are safe as one, apart from each other and from run.json (Ore §5.3, §9.2).
+  const outputPath = `${runContext.runDir}/${output.cellId}.json`;
   const outputViewPath = outputPath.replace(/\.json$/i, ".md");
   const artifacts = extractArtifacts(output.value);
   output.meta.artifacts = artifacts;
