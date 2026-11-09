@@ -168,6 +168,25 @@ function normalizePath(path: string): string {
 // =============================================================================
 
 /**
+ * JavaScript source for the cells' outputs, as a Map from cell id to value.
+ *
+ * The outputs travel as one JSON string that the script parses, never as an
+ * object literal: in a literal the key `__proto__` sets the prototype instead
+ * of an entry, and a lookup on an object answers for every name it inherits
+ * (`constructor`, `toString`), so `cell()` returned things no cell put out
+ * (#223). In a Map an id is data, whatever it is.
+ *
+ * A value JSON has no form for (undefined) is no entry, as it was no key when
+ * the outputs were a JSON object: `cell()` then says the output was not found.
+ */
+export function cellOutputsSource(cellOutputs: Map<string, CellOutput>): string {
+  const entries = Array.from(cellOutputs.entries())
+    .map(([id, output]): [string, unknown] => [id, output.value])
+    .filter(([, value]) => JSON.stringify(value) !== undefined);
+  return `new Map(JSON.parse(${JSON.stringify(JSON.stringify(entries))}))`;
+}
+
+/**
  * Generate the runtime script injected into ore:ts cells
  *
  * This creates the `vault` and `cell` globals available in user code.
@@ -176,28 +195,22 @@ export function generateRuntimeScript(
   cellOutputs: Map<string, CellOutput>,
   permissions: { vaultRead?: boolean; vaultWrite?: boolean } = {}
 ): string {
-  const outputsJson = JSON.stringify(
-    Object.fromEntries(
-      Array.from(cellOutputs.entries()).map(([id, output]) => [
-        id,
-        output.value,
-      ])
-    )
-  );
+  const outputsSource = cellOutputsSource(cellOutputs);
 
   const vaultRead = permissions.vaultRead ?? true;
   const vaultWrite = permissions.vaultWrite ?? false;
 
   return `
 // VaultOre Runtime Injection
-const __vaultore_outputs = ${outputsJson};
+const __vaultore_outputs = ${outputsSource};
 const __vaultore_permissions = { vaultRead: ${vaultRead}, vaultWrite: ${vaultWrite} };
 
 function cell(id) {
-  if (!(id in __vaultore_outputs)) {
-    throw new Error(\`Cell output not found: \${id}\`);
+  const key = String(id);
+  if (!__vaultore_outputs.has(key)) {
+    throw new Error(\`Cell output not found: \${key}\`);
   }
-  return __vaultore_outputs[id];
+  return __vaultore_outputs.get(key);
 }
 
 const vault = {

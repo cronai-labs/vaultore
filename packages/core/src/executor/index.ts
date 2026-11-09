@@ -36,6 +36,7 @@ import {
   resolveProviderName,
 } from "../providers";
 import { renderArtifactIndex, renderOutputMarkdown } from "./output-note";
+import { cellOutputsSource } from "../vault";
 import { parse } from "@babel/parser";
 
 // =============================================================================
@@ -1453,14 +1454,7 @@ function buildTypeScriptRuntime(
   runContext: RunContext,
   frame: Pick<CellFrame, "writesStart" | "writesEnd">
 ): string {
-  const outputsJson = JSON.stringify(
-    Object.fromEntries(
-      Array.from(outputs.entries()).map(([id, output]) => [
-        id,
-        output.value,
-      ])
-    )
-  );
+  const outputsSource = cellOutputsSource(outputs);
 
   const vaultRead = permissions.vaultRead ? "true" : "false";
   const vaultWrite = permissions.vaultWrite ? "true" : "false";
@@ -1470,7 +1464,7 @@ function buildTypeScriptRuntime(
   const workflowPath = JSON.stringify(runContext.workflowPath);
 
   return `
-const __vaultore_outputs = ${outputsJson};
+const __vaultore_outputs = ${outputsSource};
 const vaultore = {
   runId: ${runId},
   outputRoot: ${outputRoot},
@@ -1478,10 +1472,11 @@ const vaultore = {
   workflowPath: ${workflowPath},
 };
 function cell(id) {
-  if (!(id in __vaultore_outputs)) {
-    throw new Error(\`Cell output not found: \${id}\`);
+  const key = String(id);
+  if (!__vaultore_outputs.has(key)) {
+    throw new Error(\`Cell output not found: \${key}\`);
   }
-  return __vaultore_outputs[id];
+  return __vaultore_outputs.get(key);
 }
 
 // Advisory: these checks turn a doomed access into a clear error where the
