@@ -13,10 +13,24 @@ export interface ParsedArgs {
 }
 
 /**
- * Flags that consume the following argument as their value. Every other flag is
- * a boolean — without this list `--yes workflow.md` swallows the workflow path.
+ * Flags that consume the following argument as their value — without this list
+ * `--yes workflow.md` swallows the workflow path, and a value flag missing from
+ * it loses its value to the positionals.
  */
-const VALUE_FLAGS = new Set(["vault", "cell", "rescan", "out"]);
+const VALUE_FLAGS = new Set(["vault", "config-dir", "cell", "rescan", "out"]);
+
+/** Flags that take no value. */
+const BOOLEAN_FLAGS = new Set(["skip-deps", "yes", "quiet", "help", "version"]);
+
+/**
+ * A flag in neither list is a usage error: read as a boolean nothing looks at,
+ * a mistyped `--yes` or `--quiet` would do nothing and say nothing.
+ */
+function requireKnown(name: string): void {
+	if (!VALUE_FLAGS.has(name) && !BOOLEAN_FLAGS.has(name)) {
+		throw new Error(`unknown option --${name}`);
+	}
+}
 
 export function parseArgs(argv: string[]): ParsedArgs {
 	const positional: string[] = [];
@@ -39,10 +53,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
 		const body = arg.slice(2);
 		const eq = body.indexOf("=");
 		if (eq !== -1) {
+			requireKnown(body.slice(0, eq));
 			flags[body.slice(0, eq)] = body.slice(eq + 1);
 			continue;
 		}
 
+		requireKnown(body);
 		if (!VALUE_FLAGS.has(body)) {
 			flags[body] = true;
 			continue;

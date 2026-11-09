@@ -2,6 +2,7 @@ import { resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_RESCAN_SECONDS,
+	configDirFrom,
 	hasExplicitVault,
 	parseArgs,
 	rescanSecondsFrom,
@@ -50,6 +51,37 @@ describe("parseArgs", () => {
 		const { positional, flags } = parseArgs(["run", "--yes", "--", "--weird-name.md"]);
 		expect(positional).toEqual(["run", "--weird-name.md"]);
 		expect(flags["yes"]).toBe(true);
+	});
+
+	it("reads --config-dir <name> as the usage text writes it", () => {
+		const { positional, flags } = parseArgs(["run", "--config-dir", ".cfg", "wf.md"]);
+		expect(positional).toEqual(["run", "wf.md"]);
+		expect(configDirFrom(flags)).toBe(".cfg");
+	});
+
+	it("refuses a flag it does not know and names it", () => {
+		expect(() => parseArgs(["agent", "--yess"])).toThrow(/unknown option --yess/);
+		expect(() => parseArgs(["agent", "--rescann", "5"])).toThrow(/unknown option --rescann/);
+		expect(() => parseArgs(["run", "wf.md", "--vaultt=/vault"])).toThrow(/unknown option --vaultt/);
+	});
+
+	it("accepts every flag the commands read", () => {
+		const { flags } = parseArgs([
+			"--vault", "/vault", "--config-dir", ".cfg", "--cell", "a", "--rescan", "60", "--out", "m.json",
+			"--skip-deps", "--yes", "--quiet", "--help", "--version",
+		]);
+		expect(flags).toEqual({
+			vault: "/vault",
+			"config-dir": ".cfg",
+			cell: "a",
+			rescan: "60",
+			out: "m.json",
+			"skip-deps": true,
+			yes: true,
+			quiet: true,
+			help: true,
+			version: true,
+		});
 	});
 });
 
