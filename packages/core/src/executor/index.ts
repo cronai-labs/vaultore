@@ -25,6 +25,7 @@ import {
   OutputSerializer,
   TemplateInterpolator,
   WorkflowParser,
+  outputFileStem,
   stripLeading,
   stripTrailing,
 } from "../parser";
@@ -504,7 +505,7 @@ async function ensureRuntimeAvailable(choice: EngineChoice, timers: Timers): Pro
   throw new Error(describeEngineFailure(choice, detail, detection.available));
 }
 
-function orderCells(cells: Cell[]): Cell[] {
+export function orderCells(cells: Cell[]): Cell[] {
   const byId = new Map<string, Cell>();
   const deps = new Map<string, Set<string>>();
   const dependents = new Map<string, Set<string>>();
@@ -541,7 +542,18 @@ function orderCells(cells: Cell[]): Cell[] {
     }
   }
 
-  return ordered.length === cells.length ? ordered : cells;
+  if (ordered.length !== cells.length) {
+    // The parser refuses a cycle and an unknown dependency, so this is not
+    // reachable from a note. Document order is no answer for cells that have
+    // none: it ran each one against whatever an earlier run left behind.
+    const placed = new Set(ordered);
+    const stuck = cells.filter((cell) => !placed.has(cell)).map((cell) => cell.attributes.id);
+    throw new Error(
+      `Cells cannot be ordered, their dependencies never complete: ${stuck.join(", ")}`
+    );
+  }
+
+  return ordered;
 }
 
 function filterCellsForTarget(
@@ -732,7 +744,7 @@ async function persistCellOutput(
   workflowPath: string,
   output: CellOutput
 ): Promise<string> {
-  const outputPath = `${runContext.runDir}/${safeFileName(output.cellId)}.json`;
+  const outputPath = `${runContext.runDir}/${outputFileStem(output.cellId)}.json`;
   const outputViewPath = outputPath.replace(/\.json$/i, ".md");
   const artifacts = extractArtifacts(output.value);
   output.meta.artifacts = artifacts;
@@ -844,10 +856,6 @@ function runBasePath(outputRoot: string, workflowPath: string): string {
     .replace(/\.\./g, "")
     .replace(/\.md$/i, "");
   return `${outputRoot}/runs/${normalized || "workflow"}`;
-}
-
-function safeFileName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 function normalizeOutputRoot(value: string | undefined): string {
