@@ -147,9 +147,12 @@ const MAX_ID_LENGTH = 64;
 /**
  * Why `id` cannot be a cell id, or undefined when it can (Ore §5.3): one to 64
  * characters from `A`-`Z`, `a`-`z`, digits, `_` and `-`, the first a letter or
- * digit. An id is a file name (§9.2), a `{{id}}` template and a command-line
- * argument, so the set is these characters exactly: a class that follows
- * Unicode would let `café` through, and a leading `-` reads as an option.
+ * digit, and not a reserved name. An id is a file name (§9.2), a `{{id}}`
+ * template and a command-line argument, so the set is these characters
+ * exactly: a class that follows Unicode would let `café` through, and a
+ * leading `-` reads as an option. Reserved are `run`, whose file is the run's
+ * record, and the names Windows keeps for devices, which are no file names
+ * there whatever their extension.
  */
 function idFault(id: string): string | undefined {
   const named = `Cell id ${JSON.stringify(id)}`;
@@ -165,7 +168,26 @@ function idFault(id: string): string | undefined {
   if (id.length > MAX_ID_LENGTH) {
     return `${named} has ${id.length} characters: an id has at most ${MAX_ID_LENGTH}`;
   }
+
+  // Reserved in any letter case (Ore §5.3): a file system that ignores case
+  // makes `Run.json` the run's record as well.
+  const folded = foldCase(id);
+  if (folded === "run") {
+    return `${named} is reserved: its output would be run.json, the run's own record`;
+  }
+  if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(folded)) {
+    return `${named} is reserved: Windows keeps this name for a device, so it cannot be a file name there`;
+  }
   return undefined;
+}
+
+/**
+ * `id` with `A`-`Z` in lower case and every other character as it is. The
+ * letters of an id are these 52 only, so nothing a locale or Unicode would
+ * fold differently is touched.
+ */
+function foldCase(id: string): string {
+  return id.replace(/[A-Z]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) + 32));
 }
 
 const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;

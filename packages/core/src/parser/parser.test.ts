@@ -298,6 +298,26 @@ describe("WorkflowParser cell ids", () => {
     }
   });
 
+  it.each(["run", "Run", "RUN"])("refuses %s, the name of the run's own record", (id) => {
+    expect(() => ids(id)).toThrow(
+      `Cell id "${id}" is reserved: its output would be run.json, the run's own record`
+    );
+  });
+
+  it.each(["con", "PRN", "Aux", "nul", "com0", "COM1", "com9", "lpt0", "Lpt9"])(
+    "refuses %s, a device name on Windows",
+    (id) => {
+      expect(() => ids(id)).toThrow(
+        `Cell id "${id}" is reserved: Windows keeps this name for a device, so it cannot be a file name there`
+      );
+    }
+  );
+
+  it("accepts names that only look like a device name or like run", () => {
+    const allowed = ["com10", "lpt", "com", "console", "nul1", "runner", "rerun", "run-1"];
+    expect(ids(...allowed)).toEqual(allowed);
+  });
+
   it("reports a bad id at the line of its cell", () => {
     try {
       ids("fine", "not.fine");
