@@ -333,8 +333,13 @@ it in the other.
 - `vaultore schedules list` shows every scheduled note as approved, not approved or changed
   since approval, and approvals whose note is gone. `vaultore schedules revoke <note.md>`
   withdraws one. `approve` takes all the notes it is given or none.
-- The file is replaced by renaming a temporary file into place, under a lock file, so a
-  running agent reads the old list or the new one. A file that cannot be read, or is not an
+- The file is replaced by renaming a temporary file into place, so a running agent reads the
+  old list or the new one. A change happens under a lock (`approvals.json.lock`, a directory
+  holding one file that names the command's process, machine and start time), so two commands
+  cannot each write what they read plus their own change. A lock whose process no longer exists
+  on this machine is taken over, and a line on stderr says so; a lock that is held, held on
+  another machine, or unreadable is never removed, and the error names it
+  (`packages/cli/src/lock.ts`). A file that cannot be read, or is not an
   approvals file, is an error that names it: the agent does not start, a running agent arms
   nothing until it can be read, and `approve` and `revoke` leave it as it is.
 - Approval is re-checked when a run is due: the note and the approvals are read again, and the

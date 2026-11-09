@@ -16,6 +16,8 @@ import { promises as fs } from "node:fs";
 import { posix, resolve, win32 } from "node:path";
 import { errorMessage } from "@vaultore/core";
 import type { ScheduleApproval } from "@vaultore/core";
+import { LockHeldError, acquireLock } from "./lock";
+import type { LockHolder, LockOptions } from "./lock";
 
 const APPROVALS_FILE = "approvals.json";
 const FORMAT = "vaultore.schedule-approvals";
@@ -108,6 +110,10 @@ export async function vaultKeyFor(vaultRoot: string): Promise<string> {
 export interface ApprovalStoreOps {
 	/** Puts the written temporary file in place. Replaceable in tests. */
 	rename?: (from: string, to: string) => Promise<void>;
+	/** How the lock around a change is taken. Replaceable in tests. */
+	lock?: Pick<LockOptions, "isAlive" | "host">;
+	/** Told when a lock left by a command that is gone was removed. Default: a line on stderr. */
+	onStaleLock?: (holder: LockHolder, lockPath: string) => void;
 }
 
 export class ApprovalStore {
@@ -115,11 +121,21 @@ export class ApprovalStore {
 	readonly file: string;
 	private readonly dir: string;
 	private readonly rename: (from: string, to: string) => Promise<void>;
+	private readonly lockOptions: Pick<LockOptions, "isAlive" | "host">;
+	private readonly onStaleLock: (holder: LockHolder, lockPath: string) => void;
 
 	constructor(stateDir: string, ops: ApprovalStoreOps = {}) {
 		this.dir = resolve(stateDir);
 		this.file = resolve(this.dir, APPROVALS_FILE);
 		this.rename = ops.rename ?? ((from, to) => fs.rename(from, to));
+		this.lockOptions = ops.lock ?? {};
+		this.onStaleLock =
+			ops.onStaleLock ??
+			((holder, lockPath) => {
+				process.stderr.write(
+					`[vaultore] removed the lock ${lockPath}: process ${holder.pid}, which took it at ${holder.since}, is no longer running\n`
+				);
+			});
 	}
 
 	/**
@@ -137,7 +153,7 @@ export class ApprovalStore {
 	 * Change one vault's approvals. `change` edits the map it is given; the file
 	 * is written only if that changed something. Returns whether it was written.
 	 *
-	 * Read, change and write happen under a lock file, so two commands cannot
+	 * Read, change and write happen under a lock, so two commands cannot
 	 * each write what they read plus their own change. The new content goes to
 	 * a temporary file that is renamed into place: a reader sees the old file or
 	 * the new one, never part of one.
@@ -248,27 +264,21 @@ export class ApprovalStore {
 		}
 	}
 
-	/** Takes the lock file, or says who holds it. Returns the release. */
+	/**
+	 * Takes the lock around a change, or says who holds it. A lock left by a
+	 * command that is gone is taken over and reported (`acquireLock`).
+	 */
 	private async lock(): Promise<() => Promise<void>> {
-		const lockFile = `${this.file}.lock`;
-		let handle;
+		const lockPath = `${this.file}.lock`;
 		try {
-			handle = await fs.open(lockFile, "wx", 0o600);
+			return await acquireLock(lockPath, {
+				...this.lockOptions,
+				onStale: (holder) => this.onStaleLock(holder, lockPath),
+			});
 		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-				throw new ApprovalStoreError(
-					`Another vaultore command is changing the approvals (lock file ${lockFile}). ` +
-						"If none is running, remove the lock file and try again"
-				);
-			}
+			if (err instanceof LockHeldError) throw new ApprovalStoreError(err.message);
 			throw err;
 		}
-		try {
-			await handle.writeFile(`${process.pid}\n`);
-		} finally {
-			await handle.close();
-		}
-		return () => fs.rm(lockFile, { force: true });
 	}
 }
 

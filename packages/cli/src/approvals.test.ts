@@ -9,7 +9,7 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApprovalStore, ApprovalStoreError, resolveStateDir, vaultKeyFor } from "./approvals";
@@ -265,6 +265,48 @@ describe("ApprovalStore", () => {
 		expect(String(refusal)).toMatch(/approvals\.json\.lock/);
 		expect(await store.forVault("/vault")).toEqual({ "a.md": APPROVAL });
 		expect(readdirSync(dir)).toEqual(["approvals.json"]);
+	});
+
+	// A command killed in the middle of a change cannot release its lock. The
+	// next one must not need a person to clear it, and must not do it quietly.
+	it("takes over a lock left by a command that is gone, and says so", async () => {
+		const lockPath = join(dir, "approvals.json.lock");
+		mkdirSync(lockPath);
+		writeFileSync(
+			join(lockPath, "4242.abcdef.json"),
+			JSON.stringify({ pid: 4242, host: hostname(), since: "2026-01-01T00:00:00.000Z" })
+		);
+		const reports: string[] = [];
+		const store = new ApprovalStore(dir, {
+			lock: { isAlive: (pid) => pid !== 4242 },
+			onStaleLock: (holder, path) => reports.push(`${holder.pid} ${path}`),
+		});
+
+		await store.update("/vault", (approvals) => {
+			approvals["a.md"] = APPROVAL;
+		});
+
+		expect(reports).toEqual([`4242 ${lockPath}`]);
+		expect(await store.forVault("/vault")).toEqual({ "a.md": APPROVAL });
+		expect(readdirSync(dir)).toEqual(["approvals.json"]);
+	});
+
+	it("does not take over a lock whose command still runs", async () => {
+		const lockPath = join(dir, "approvals.json.lock");
+		mkdirSync(lockPath);
+		writeFileSync(
+			join(lockPath, "4242.abcdef.json"),
+			JSON.stringify({ pid: 4242, host: hostname(), since: "2026-01-01T00:00:00.000Z" })
+		);
+		const store = new ApprovalStore(dir, { lock: { isAlive: () => true } });
+
+		await expect(
+			store.update("/vault", (approvals) => {
+				approvals["a.md"] = APPROVAL;
+			})
+		).rejects.toThrow(/process 4242/);
+		expect(readdirSync(lockPath)).toEqual(["4242.abcdef.json"]);
+		expect(existsSync(join(dir, "approvals.json"))).toBe(false);
 	});
 
 	it("releases the lock when the change throws", async () => {
