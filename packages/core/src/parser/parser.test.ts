@@ -82,6 +82,65 @@ describe("WorkflowParser cell timeout", () => {
   );
 });
 
+// A cycle has no order to run in. It used to fall back to document order, with
+// each cell reading its dependency's output from an earlier run (#45).
+describe("WorkflowParser dependency cycles", () => {
+  const parser = new WorkflowParser();
+  const note = (...cells: Array<[id: string, depends?: string]>) =>
+    cells
+      .map(
+        ([id, depends]) =>
+          `\`\`\`ore:ts id=${id}${depends ? ` depends=[${depends}]` : ""}\n1;\n\`\`\`\n`
+      )
+      .join("\n");
+
+  it("refuses a cell that depends on itself", () => {
+    expect(() => parser.parseCells(note(["a", "a"]))).toThrow("Cell a depends on itself");
+  });
+
+  it("refuses a cycle and names its cells in dependency order", () => {
+    expect(() =>
+      parser.parseCells(note(["a", "c"], ["b", "a"], ["c", "b"]))
+    ).toThrow("Dependency cycle: a depends on c, c depends on b, b depends on a");
+  });
+
+  it("names the cycle, not the cells that lead into it", () => {
+    expect(() =>
+      parser.parseCells(note(["start"], ["entry", "start, x"], ["x", "y"], ["y", "x"]))
+    ).toThrow("Dependency cycle: x depends on y, y depends on x");
+  });
+
+  it("reports the cycle at the line of its first cell", () => {
+    try {
+      parser.parseCells(note(["start"], ["x", "y"], ["y", "x"]));
+      expect.unreachable("a cycle must not parse");
+    } catch (err) {
+      expect((err as { line?: number }).line).toBe(5);
+    }
+  });
+
+  it("finds a cycle at the end of a long chain", () => {
+    const length = 1_000;
+    const chain = Array.from({ length }, (_, i): [string, string?] => [
+      `c${i}`,
+      i + 1 < length ? `c${i + 1}` : undefined,
+    ]);
+    expect(parser.parseCells(note(...chain))).toHaveLength(length);
+
+    chain[length - 1] = [`c${length - 1}`, `c${length - 2}`];
+    expect(() => parser.parseCells(note(...chain))).toThrow(
+      `Dependency cycle: c${length - 2} depends on c${length - 1}, c${length - 1} depends on c${length - 2}`
+    );
+  });
+
+  it("accepts a diamond, where two cells share a dependency", () => {
+    const cells = parser.parseCells(
+      note(["root"], ["left", "root"], ["right", "root"], ["join", "left, right"])
+    );
+    expect(cells.map((cell) => cell.attributes.id)).toEqual(["root", "left", "right", "join"]);
+  });
+});
+
 // The meta block sits in the note, where anyone can edit it (#121).
 describe("WorkflowParser.parseOutputs meta block", () => {
   const block = (meta: string) => `<!-- ore:output:hello\n2\nmeta:\n${meta}-->\n`;

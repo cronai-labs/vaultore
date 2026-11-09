@@ -79,7 +79,7 @@ Requests go to `https://api.openai.com/v1/chat/completions` or `https://api.anth
 - `orderCells` orders the cells.
 - A cell whose dependency did not succeed fails with `Dependency output missing: <id>` or `Dependency failed: <id>`.
 - **Running one cell:** "Run cell" (`vaultore run --cell`) runs it with its dependencies; "Run cell only (skip dependencies)" (`--skip-deps`) runs it alone, with the dependencies' last recorded outputs.
-- **A dependency cycle is not detected.** All cells then run in document order, and the first one whose dependency has no output fails ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
+- **A dependency cycle is a parse error**, so no cell runs: `Dependency cycle: a depends on b, b depends on a`, or `Cell a depends on itself`, reported at the line of the cycle's first cell. Ore does not validate cycles in this version and reserves this meaning (§10, §12).
 - **One run per note:** the plugin refuses to start a second run of a note that is running; `vaultore agent` skips a scheduled run while the previous one is in progress.
 
 ## Outputs (Ore §9)
@@ -117,4 +117,4 @@ A TS cell whose output is an object with `artifactDir` (a vault path) and/or `fi
 
 ## Reserved features (Ore §12)
 
-VaultOre implements none of the reserved features: the parser drops the reserved front matter keys and cell attributes, and `ore:py` and `ore:go` cells fail (see Cells above). VaultOre's design work on them: conditions and structured outputs [#80](https://github.com/cronai-labs/vaultore/issues/80), note references from another cell [#71](https://github.com/cronai-labs/vaultore/issues/71), cycle detection [#45](https://github.com/cronai-labs/vaultore/issues/45), `ore:go` [go-cell-spec.md](go-cell-spec.md), parallel cells [ARCHITECTURE.md](../ARCHITECTURE.md#parallel-execution-not-built). The [roadmap](../docs/roadmap.md) lists the rest.
+VaultOre implements one reserved feature: a dependency cycle is a validation error (see Execution above). Of the others it implements none: the parser drops the reserved front matter keys and cell attributes, and `ore:py` and `ore:go` cells fail (see Cells above). VaultOre's design work on them: conditions and structured outputs [#80](https://github.com/cronai-labs/vaultore/issues/80), note references from another cell [#71](https://github.com/cronai-labs/vaultore/issues/71), `ore:go` [go-cell-spec.md](go-cell-spec.md), parallel cells [ARCHITECTURE.md](../ARCHITECTURE.md#parallel-execution-not-built). The [roadmap](../docs/roadmap.md) lists the rest.

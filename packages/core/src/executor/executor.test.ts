@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { describeEngineFailure, extractLastExpression, finalizeRunContext, resolveEngine } from "./index";
+import {
+	describeEngineFailure,
+	extractLastExpression,
+	finalizeRunContext,
+	orderCells,
+	resolveEngine,
+} from "./index";
 
 describe("resolveEngine", () => {
 	it("lets the workflow's frontmatter win over the configured default", () => {
@@ -69,6 +75,34 @@ describe("describeEngineFailure", () => {
 		expect(message).toContain("frontmatter requests \"docker\"");
 		expect(message).not.toContain("configured default is");
 		expect(message).toContain("Detected on this machine: colima, podman.");
+	});
+});
+
+// The parser refuses a dependency cycle, so no note reaches the executor with
+// one. Handed cells it cannot order, it must still not answer with document
+// order, which ran each cell against its dependency's output from an earlier
+// run and reported the run completed (#45).
+describe("orderCells", () => {
+	const cell = (id: string, ...depends: string[]) =>
+		({ attributes: { id, type: "ts", depends } }) as never;
+	const ids = (cells: Array<{ attributes: { id: string } }>) =>
+		cells.map((ordered) => ordered.attributes.id);
+
+	it("puts a cell after the cells it depends on", () => {
+		expect(ids(orderCells([cell("report", "fetch"), cell("fetch")]))).toEqual([
+			"fetch",
+			"report",
+		]);
+	});
+
+	it("keeps document order among cells that are ready together", () => {
+		expect(ids(orderCells([cell("b"), cell("a"), cell("c", "a")]))).toEqual(["b", "a", "c"]);
+	});
+
+	it("throws for cells it cannot order and names them", () => {
+		expect(() => orderCells([cell("a", "b"), cell("b", "a"), cell("c")])).toThrow(
+			"Cells cannot be ordered, their dependencies never complete: a, b"
+		);
 	});
 });
 

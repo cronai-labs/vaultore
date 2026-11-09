@@ -274,6 +274,23 @@ export class WorkflowParser {
       }
     }
 
+    // A cycle has no order to run in. Ore §12 reserves "dependency cycles as a
+    // validation error"; this is that meaning, ahead of the format.
+    const cycle = findDependencyCycle(cells);
+    if (cycle) {
+      const [first] = cycle;
+      const message =
+        cycle.length === 1
+          ? `Cell ${first.attributes.id} depends on itself`
+          : `Dependency cycle: ${cycle
+              .map(
+                (cell, i) =>
+                  `${cell.attributes.id} depends on ${cycle[(i + 1) % cycle.length].attributes.id}`
+              )
+              .join(", ")}`;
+      throw new ParserError(message, first.startLine);
+    }
+
     return cells;
   }
 
@@ -595,6 +612,61 @@ export class ParserError extends Error {
     super(`Parse error at line ${line}: ${message}`);
     this.name = "ParserError";
   }
+}
+
+/**
+ * The first dependency cycle among `cells`, or undefined when there is none.
+ *
+ * The cells are those of the cycle only, each depending on the next and the
+ * last on the first, starting with the one that comes first in the note. A
+ * cell that depends on itself is a cycle of one. Every `depends` entry must
+ * name a cell in `cells`.
+ */
+function findDependencyCycle(cells: Cell[]): Cell[] | undefined {
+  const byId = new Map(cells.map((cell) => [cell.attributes.id, cell]));
+  // Absent: not visited. "open": on the path being walked. "done": everything
+  // reachable from it has been walked without finding a cycle.
+  const state = new Map<string, "open" | "done">();
+
+  // Walked with an explicit path rather than by recursion: a note is input,
+  // and a chain of a few thousand cells must not end in a stack overflow.
+  for (const root of cells) {
+    if (state.has(root.attributes.id)) continue;
+
+    const path: Array<{ cell: Cell; nextDep: number }> = [{ cell: root, nextDep: 0 }];
+    state.set(root.attributes.id, "open");
+
+    while (path.length > 0) {
+      const top = path[path.length - 1];
+      const depId = (top.cell.attributes.depends ?? [])[top.nextDep];
+
+      if (depId === undefined) {
+        state.set(top.cell.attributes.id, "done");
+        path.pop();
+        continue;
+      }
+      top.nextDep += 1;
+
+      const dep = byId.get(depId);
+      if (!dep) continue;
+
+      const seen = state.get(depId);
+      if (seen === "open") {
+        const found = path.slice(path.findIndex((entry) => entry.cell === dep)).map((entry) => entry.cell);
+        // Rotate so the report starts at the cycle's first cell in the note.
+        const start = found.reduce(
+          (best, candidate, i) => (candidate.startLine < found[best].startLine ? i : best),
+          0
+        );
+        return [...found.slice(start), ...found.slice(0, start)];
+      }
+      if (seen === undefined) {
+        state.set(depId, "open");
+        path.push({ cell: dep, nextDep: 0 });
+      }
+    }
+  }
+  return undefined;
 }
 
 /**
