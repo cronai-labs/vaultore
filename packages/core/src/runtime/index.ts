@@ -16,6 +16,8 @@ import {
   ContainerExecResult,
   TimerHandle,
   Timers,
+  isCpuLimit,
+  isMemoryLimit,
 } from "../types";
 import { errorMessage } from "../errors";
 
@@ -122,16 +124,39 @@ async function probe(
 /** How long `<engine> kill` may take after a cell timed out. */
 const KILL_TIMEOUT_MS = 10_000;
 
+/**
+ * The longest delay a timer holds. Node and browsers keep it in a signed
+ * 32-bit integer and run a longer one after 1 ms.
+ */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * A container's time limit in milliseconds, or nothing when the caller set
+ * none. Zero or less used to mean "no timer", and a delay too large for the
+ * timer killed the cell at once (#222): a limit that is given is either in
+ * force or an error.
+ */
+function checkedTimeout(timeout: number | undefined): number | undefined {
+  if (timeout === undefined) return undefined;
+  if (!Number.isFinite(timeout) || timeout <= 0 || timeout > MAX_TIMER_MS) {
+    throw new Error(
+      `Container timeout must be a number of milliseconds greater than 0 and at most ${MAX_TIMER_MS}, got ${timeout}`
+    );
+  }
+  return timeout;
+}
+
 export async function execContainer(
   timers: Timers,
   engine: RuntimeEngine,
   options: ContainerExecOptions
 ): Promise<ContainerExecResult> {
   const start = Date.now();
+  const timeout = checkedTimeout(options.timeout);
   const name = options.name ?? `vaultore-${randomBytes(6).toString("hex")}`;
   const { command, args } = buildRunCommand(engine, { ...options, name });
 
-  const result = await runCommand(timers, command, args, options.stdin, options.timeout);
+  const result = await runCommand(timers, command, args, options.stdin, timeout);
 
   if (result.timedOut) {
     // Killing the `run` client leaves the container running (#113); `--rm`
@@ -242,11 +267,23 @@ export function buildRunCommand(
     args.push("-i");
   }
 
-  if (options.memoryLimit) {
+  // A limit that is given is passed on or refused. The engines read 0 as "no
+  // limit", and a falsy value used to drop the flag without a word (#222).
+  if (options.memoryLimit !== undefined) {
+    if (!isMemoryLimit(options.memoryLimit)) {
+      throw new Error(
+        `Container memory limit must be an amount greater than zero, such as "512m", got ${JSON.stringify(options.memoryLimit)}`
+      );
+    }
     args.push("--memory", options.memoryLimit);
   }
 
-  if (options.cpuLimit) {
+  if (options.cpuLimit !== undefined) {
+    if (!isCpuLimit(options.cpuLimit)) {
+      throw new Error(
+        `Container CPU limit must be a number greater than 0, got ${String(options.cpuLimit)}`
+      );
+    }
     args.push("--cpus", String(options.cpuLimit));
   }
 
