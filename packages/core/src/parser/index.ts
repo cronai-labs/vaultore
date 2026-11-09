@@ -22,6 +22,8 @@ import {
   CellAttributes,
   CellOutput,
   OutputMeta,
+  TIMEOUT_RULE,
+  isTimeoutSeconds,
 } from "../types";
 
 // =============================================================================
@@ -722,11 +724,12 @@ function findDependencyCycle(cells: Cell[]): Cell[] | undefined {
 /**
  * A cell's `timeout` attribute, in seconds (Ore §5.3).
  *
- * Only a positive decimal number is a timeout. The runtime installs its kill
- * timer for a value above zero and for nothing else, so `abc` (NaN), `0` and
- * `-5` each left the container running without a limit; `parseInt` also read
- * `0.5` as 0 and `2m` as two seconds. Refusing them says so before any cell
- * runs, where a fallback would hide that the author's limit is not in force.
+ * Only a decimal number above zero and up to a day is a timeout. `abc` (NaN),
+ * `0` and `-5` each left the container running without a limit; `parseInt`
+ * also read `0.5` as 0 and `2m` as two seconds; and a limit too large for the
+ * timer was the opposite of long: the cell was killed at once (#222).
+ * Refusing them says so before any cell runs, where a fallback would hide
+ * that the author's limit is not in force.
  */
 function parseTimeout(
   raw: string | undefined,
@@ -735,9 +738,9 @@ function parseTimeout(
 ): number | undefined {
   if (raw === undefined) return undefined;
   const seconds = /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : NaN;
-  if (!(seconds > 0) || !Number.isFinite(seconds)) {
+  if (!isTimeoutSeconds(seconds)) {
     throw new ParserError(
-      `Cell ${cellId} has an invalid timeout "${raw}": expected a positive number of seconds`,
+      `Cell ${cellId} has an invalid timeout "${raw}": expected ${TIMEOUT_RULE}`,
       line
     );
   }
