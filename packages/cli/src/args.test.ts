@@ -67,12 +67,14 @@ describe("parseArgs", () => {
 
 	it("accepts every flag the commands read", () => {
 		const { flags } = parseArgs([
-			"--vault", "/vault", "--config-dir", ".cfg", "--cell", "a", "--rescan", "60", "--out", "m.json",
+			"--vault", "/vault", "--config-dir", ".cfg", "--state-dir", "/state", "--cell", "a",
+			"--rescan", "60", "--out", "m.json",
 			"--skip-deps", "--yes", "--quiet", "--help", "--version",
 		]);
 		expect(flags).toEqual({
 			vault: "/vault",
 			"config-dir": ".cfg",
+			"state-dir": "/state",
 			cell: "a",
 			rescan: "60",
 			out: "m.json",
