@@ -36,6 +36,7 @@ import {
   resolveProviderName,
 } from "../providers";
 import { renderArtifactIndex, renderOutputMarkdown } from "./output-note";
+import { cellOutputsSource } from "../vault";
 import { parse } from "@babel/parser";
 
 // =============================================================================
@@ -58,6 +59,19 @@ export class WorkflowExecutor {
 
   async runWorkflow(options: ExecuteOptions): Promise<Workflow> {
     const workflow = this.parser.parse(options.content, options.workflowPath);
+    // Before anything runs or is recorded: an id no cell has used to select
+    // no cell, and the run was recorded as completed (#223). An empty id
+    // counted as none given, and every cell ran.
+    if (
+      options.targetCellId !== undefined &&
+      !workflow.cells.some((cell) => cell.attributes.id === options.targetCellId)
+    ) {
+      const ids = workflow.cells.map((cell) => cell.attributes.id).join(", ");
+      throw new Error(
+        `Cell "${options.targetCellId}" not found in ${workflow.path}. ` +
+          (ids ? `Its cells are: ${ids}` : "It has no cells")
+      );
+    }
     const platform = confinedPlatform(options.platform);
     // Before any cell runs: the output is written back into this note, which
     // is refused when its path leads out of the vault through a link.
@@ -97,7 +111,7 @@ export class WorkflowExecutor {
       await ensureRuntimeAvailable(engineChoice, platform.timers);
 
       const orderedCells = orderCells(workflow.cells);
-      const cellsToRun = options.targetCellId
+      const cellsToRun = options.targetCellId !== undefined
         ? filterCellsForTarget(
             orderedCells,
             options.targetCellId,
@@ -1453,14 +1467,7 @@ function buildTypeScriptRuntime(
   runContext: RunContext,
   frame: Pick<CellFrame, "writesStart" | "writesEnd">
 ): string {
-  const outputsJson = JSON.stringify(
-    Object.fromEntries(
-      Array.from(outputs.entries()).map(([id, output]) => [
-        id,
-        output.value,
-      ])
-    )
-  );
+  const outputsSource = cellOutputsSource(outputs);
 
   const vaultRead = permissions.vaultRead ? "true" : "false";
   const vaultWrite = permissions.vaultWrite ? "true" : "false";
@@ -1470,7 +1477,7 @@ function buildTypeScriptRuntime(
   const workflowPath = JSON.stringify(runContext.workflowPath);
 
   return `
-const __vaultore_outputs = ${outputsJson};
+const __vaultore_outputs = ${outputsSource};
 const vaultore = {
   runId: ${runId},
   outputRoot: ${outputRoot},
@@ -1478,10 +1485,11 @@ const vaultore = {
   workflowPath: ${workflowPath},
 };
 function cell(id) {
-  if (!(id in __vaultore_outputs)) {
-    throw new Error(\`Cell output not found: \${id}\`);
+  const key = String(id);
+  if (!__vaultore_outputs.has(key)) {
+    throw new Error(\`Cell output not found: \${key}\`);
   }
-  return __vaultore_outputs[id];
+  return __vaultore_outputs.get(key);
 }
 
 // Advisory: these checks turn a doomed access into a clear error where the
