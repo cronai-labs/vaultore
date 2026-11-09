@@ -131,16 +131,6 @@ export function findOutputBlocks(
   return blocks;
 }
 
-/**
- * The name of a cell's output files, without the extension (Ore §9.2): the
- * id, with every character other than letters, digits, `_` and `-` replaced
- * by `_`. Not one-to-one: `fetch.raw` and `fetch_raw` share a name, which is
- * why `parseCells` refuses a note that holds both.
- */
-export function outputFileStem(cellId: string): string {
-  return cellId.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
 /** The most characters a cell id may have (Ore §5.3). */
 const MAX_ID_LENGTH = 64;
 
@@ -348,11 +338,14 @@ export class WorkflowParser {
       });
     }
 
-    // Validate unique IDs, and unique output files: two ids can differ and
-    // still share a file name, and the later cell's record would then replace
-    // the earlier one's while both callouts link to it.
+    // Validate unique IDs, and unique output files. A cell's files are named
+    // after its id as written (Ore §9.2), so two ids that differ only in
+    // letter case are one file where case is ignored (the macOS and Windows
+    // defaults): the later cell's record would replace the earlier one's
+    // while both callouts link to it. Ids are still compared exactly
+    // everywhere else: `depends=[Fetch]` does not name a cell `fetch`.
     const ids = new Set<string>();
-    const fileOwners = new Map<string, string>();
+    const spellings = new Map<string, string>();
     for (const cell of cells) {
       const id = cell.attributes.id;
       if (ids.has(id)) {
@@ -360,15 +353,14 @@ export class WorkflowParser {
       }
       ids.add(id);
 
-      const stem = outputFileStem(id);
-      const owner = fileOwners.get(stem);
-      if (owner !== undefined) {
+      const twin = spellings.get(foldCase(id));
+      if (twin !== undefined) {
         throw new ParserError(
-          `Cells ${owner} and ${id} would write the same output file (${stem}.json): rename one`,
+          `Cells ${twin} and ${id} differ only in letter case, and their output files are one file where case is ignored: rename one`,
           cell.startLine
         );
       }
-      fileOwners.set(stem, id);
+      spellings.set(foldCase(id), id);
     }
 
     // Validate dependencies

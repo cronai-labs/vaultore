@@ -318,6 +318,26 @@ describe("WorkflowParser cell ids", () => {
     expect(ids(...allowed)).toEqual(allowed);
   });
 
+  it("refuses two ids that differ only in letter case, naming both", () => {
+    expect(() => ids("fetch", "other", "Fetch")).toThrow(
+      "Cells fetch and Fetch differ only in letter case, and their output files are one file where case is ignored: rename one"
+    );
+  });
+
+  it("reports ids that differ only in letter case at the second cell", () => {
+    try {
+      ids("fetch", "Fetch");
+      expect.unreachable("ids that differ only in case must not parse");
+    } catch (err) {
+      expect((err as { line?: number }).line).toBe(5);
+    }
+  });
+
+  it("still compares ids exactly: depends=[Fetch] does not name a cell fetch", () => {
+    const content = "```ore:ts id=fetch\n1;\n```\n\n```ore:ts id=report depends=[Fetch]\n2;\n```\n";
+    expect(() => parser.parseCells(content)).toThrow("Cell report depends on unknown cell: Fetch");
+  });
+
   it("reports a bad id at the line of its cell", () => {
     try {
       ids("fine", "not.fine");

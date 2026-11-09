@@ -25,7 +25,6 @@ import {
   OutputSerializer,
   TemplateInterpolator,
   WorkflowParser,
-  outputFileStem,
   stripLeading,
   stripTrailing,
 } from "../parser";
@@ -761,7 +760,9 @@ async function persistCellOutput(
   workflowPath: string,
   output: CellOutput
 ): Promise<string> {
-  const outputPath = `${runContext.runDir}/${outputFileStem(output.cellId)}.json`;
+  // The id is the file name as written: the parser keeps ids to names that
+  // are safe as one, apart from each other and from run.json (Ore §5.3, §9.2).
+  const outputPath = `${runContext.runDir}/${output.cellId}.json`;
   const outputViewPath = outputPath.replace(/\.json$/i, ".md");
   const artifacts = extractArtifacts(output.value);
   output.meta.artifacts = artifacts;
