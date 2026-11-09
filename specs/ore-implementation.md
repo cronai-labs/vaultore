@@ -33,7 +33,7 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 - `ore:py` and `ore:go` cells are parsed and fail at run time with `Cell type not supported in v0.1`.
 - A missing or duplicate `id`, or a `depends` entry naming no cell, is a parse error.
 - In output file names, characters of `id` other than letters, digits, `_` and `-` become `_`.
-- A non-numeric `timeout` currently disables the timeout ([#45](https://github.com/cronai-labs/vaultore/issues/45)).
+- `timeout` on a container cell is a positive number of seconds, written in digits (`30`, `0.5`). Anything else (`2m`, `abc`, `0`, `-5`) is a parse error that names the cell: Ore leaves a wrong value unspecified, and without a number above zero no kill timer is set. On an `ore:ai` cell the attribute is ignored.
 - `mode`, `stdin` and `stdout` are parsed for `ore:go` and unused.
 
 ## Templates (Ore §6)

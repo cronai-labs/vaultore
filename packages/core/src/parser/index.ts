@@ -317,7 +317,9 @@ export class WorkflowParser {
       id: attrs.id,
       type,
       depends,
-      timeout: attrs.timeout ? parseInt(attrs.timeout, 10) : undefined,
+      // Ore §5.3 defines `timeout` for container cells; on an AI cell it is an
+      // unknown attribute, which §10 says to ignore.
+      timeout: type === "ai" ? undefined : parseTimeout(attrs.timeout, attrs.id, line),
       model: attrs.model,
       temperature: Number.isFinite(temperature) ? temperature : undefined,
       maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
@@ -593,6 +595,31 @@ export class ParserError extends Error {
     super(`Parse error at line ${line}: ${message}`);
     this.name = "ParserError";
   }
+}
+
+/**
+ * A cell's `timeout` attribute, in seconds (Ore §5.3).
+ *
+ * Only a positive decimal number is a timeout. The runtime installs its kill
+ * timer for a value above zero and for nothing else, so `abc` (NaN), `0` and
+ * `-5` each left the container running without a limit; `parseInt` also read
+ * `0.5` as 0 and `2m` as two seconds. Refusing them says so before any cell
+ * runs, where a fallback would hide that the author's limit is not in force.
+ */
+function parseTimeout(
+  raw: string | undefined,
+  cellId: string,
+  line: number
+): number | undefined {
+  if (raw === undefined) return undefined;
+  const seconds = /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+  if (!(seconds > 0) || !Number.isFinite(seconds)) {
+    throw new ParserError(
+      `Cell ${cellId} has an invalid timeout "${raw}": expected a positive number of seconds`,
+      line
+    );
+  }
+  return seconds;
 }
 
 function escapeRegex(str: string): string {

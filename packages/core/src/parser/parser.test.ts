@@ -47,6 +47,41 @@ meta:
   });
 });
 
+// The runtime installs a kill timer only for a timeout above zero, so a value
+// that is not a positive number used to leave the container unbounded (#45).
+describe("WorkflowParser cell timeout", () => {
+  const parser = new WorkflowParser();
+  const cell = (timeout: string) =>
+    `\`\`\`ore:shell id=slow timeout=${timeout}\nsleep 60\n\`\`\`\n`;
+
+  it.each([
+    ["30", 30],
+    ["0.5", 0.5],
+    ['"90"', 90],
+  ])("reads timeout=%s as seconds", (written, seconds) => {
+    expect(parser.parseCells(cell(written))[0]?.attributes.timeout).toBe(seconds);
+  });
+
+  it("leaves the timeout to the workflow when the cell names none", () => {
+    const cells = parser.parseCells("```ore:shell id=slow\nsleep 60\n```\n");
+    expect(cells[0]?.attributes.timeout).toBeUndefined();
+  });
+
+  it("ignores the attribute on an AI cell, which has no container to stop", () => {
+    const cells = parser.parseCells("```ore:ai id=ask timeout=2m\nHello\n```\n");
+    expect(cells[0]?.attributes.timeout).toBeUndefined();
+  });
+
+  it.each(["abc", "2m", "30s", "0", "-5", "1e3"])(
+    "refuses timeout=%s and names the cell",
+    (written) => {
+      expect(() => parser.parseCells(cell(written))).toThrow(
+        `Cell slow has an invalid timeout "${written}": expected a positive number of seconds`
+      );
+    }
+  );
+});
+
 // The meta block sits in the note, where anyone can edit it (#121).
 describe("WorkflowParser.parseOutputs meta block", () => {
   const block = (meta: string) => `<!-- ore:output:hello\n2\nmeta:\n${meta}-->\n`;
