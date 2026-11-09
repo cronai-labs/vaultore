@@ -32,8 +32,10 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 ## Cells (Ore §5)
 
 - `ore:py` and `ore:go` cells are parsed and fail at run time with `Cell type not supported in v0.1`.
-- A missing or duplicate `id`, or a `depends` entry naming no cell, is a parse error.
-- In output file names, characters of `id` other than letters, digits, `_` and `-` become `_` (`outputFileStem`). Two ids that then share a file name, such as `fetch.raw` and `fetch_raw`, are a parse error naming both: Ore §5.3 allows letters, digits, `_` and `-` only, so one of the two is outside it.
+- A missing, empty or duplicate `id`, or a `depends` entry naming no cell, is a parse error.
+- An `id` that is not of the form Ore §5.3 gives is a parse error that names the id and the rule it breaks (`idFault`, `packages/core/src/parser/index.ts`): `Cell id "fetch.raw" contains ".": an id holds only the letters A-Z and a-z, digits, "_" and "-"`, `Cell id "-rf" starts with "-": an id starts with a letter or digit`, `Cell id "…" has 65 characters: an id has at most 64`. The characters are matched as these exactly; a letter outside `A`-`Z` and `a`-`z` is refused.
+- A reserved `id` is a parse error in any letter case: `Cell id "Run" is reserved: its output would be run.json, the run's own record`, and for `con`, `prn`, `aux`, `nul`, `com0` to `com9` and `lpt0` to `lpt9`, `Cell id "COM1" is reserved: Windows keeps this name for a device, so it cannot be a file name there`. Only `A`-`Z` are folded for the comparison.
+- Two ids that differ only in letter case are a parse error at the second cell: `Cells fetch and Fetch differ only in letter case, and their output files are one file where case is ignored: rename one`. Ids are compared exactly everywhere else.
 - `timeout` on a container cell is a number of seconds greater than 0 and at most 86400, written in digits (`30`, `0.5`). Anything else (`2m`, `abc`, `0`, `-5`, `86401`) is a parse error that names the cell. Without a number above zero no kill timer was set, and far above a day the limit stops being one: a delay past 2^31-1 ms does not fit a timer, which then fires at once. On an `ore:ai` cell the attribute is ignored.
 - `execContainer` refuses a `timeout` that is not greater than 0 or does not fit a timer (`MAX_TIMER_MS`), and `buildRunCommand` a memory or CPU limit of zero or an empty one, so a caller that does not go through the parser cannot get an unlimited cell by passing a wrong value. Leaving the option out is the only way to run without that limit.
 - `mode`, `stdin` and `stdout` are parsed for `ore:go` and unused.
@@ -52,7 +54,7 @@ Each container cell runs with `--rm`. How the vault is mounted and the container
 
 - The cell runs as `/tmp/vaultore.ts` under `bun`. The runtime that provides the globals is injected by `buildTypeScriptRuntime` (`packages/core/src/executor/index.ts`).
 - **Output** goes through `JSON.stringify`: what JSON cannot hold (a function, a `Map`, a `Date` as an object) does not survive.
-- **`cell(id)`** answers for cells that have an output and for nothing else; any other id throws `Cell output not found: <id>`. The outputs reach the script as one JSON string parsed into a `Map` (`cellOutputsSource`), so an id is data whatever it is: `cell("constructor")` throws, and a cell named `__proto__` is a cell like any other ([#223](https://github.com/cronai-labs/vaultore/issues/223)).
+- **`cell(id)`** answers for cells that have an output and for nothing else; any other id throws `Cell output not found: <id>`. The outputs reach the script as one JSON string parsed into a `Map` (`cellOutputsSource`), so a name is data whatever it is: `cell("constructor")` throws, and an output recorded under `__proto__` is an entry like any other ([#223](https://github.com/cronai-labs/vaultore/issues/223)). No cell can have that id, but a recorded output is named by its callout in the note.
 - **Globals:** `vault.exists(path)` is also true for this cell's pending writes. `vault.write` creates parent folders itself. `vault.readRaw` has no permission check. The permission checks in these helpers only turn a doomed access into a clear error: the mount enforces reads (permissions-spec §3.3), the host enforces `vault.write` (§3.4). Bun's own APIs and `fetch` are available; `fetch` reaches the network only under `network: allow`.
 - **What `vault.write` guarantees** ([#83](https://github.com/cronai-labs/vaultore/issues/83)): each write records the SHA-256 of the text the cell last read from that path with `vault.read`, or that `vault.read` or `vault.exists` found nothing there. After the cell exits successfully, the host checks every such write against the file as it is now and applies the writes, in the order the cell made them, only if all match. Otherwise the cell fails, naming each note that changed: the note was edited during the run, or the container saw a stale copy (Colima with sshfs). Within a cell, a second write to a path replaces the first and keeps its base.
   - A cell that ends with `process.exit()` before its writes are handed over writes nothing.
@@ -89,7 +91,8 @@ Requests go to `https://api.openai.com/v1/chat/completions` or `https://api.anth
 
 - `<outputRoot>` is the "Output folder" setting (CLI: `outputRoot`), default `_vaultore`.
 - **Callout:** a cell whose output names artifacts (below) adds `> artifactDir: [[<dir>/_index.md]]` and `> artifacts: [[file]], …`.
-- **`<cellId>.json`:** `meta` also holds `outputPath`, `outputViewPath` and `artifacts`. **`index.json`** lists each run with its outputs.
+- **`<cellId>.json`:** the file is named after the id as written. `meta` also holds `outputPath`, `outputViewPath` and `artifacts`. **`index.json`** lists each run with its outputs.
+- **A recorded output** (the last output of a cell that does not run in this run) is read from the path its callout in the note links, never from a computed name, so records of earlier versions are found where they are. The record must name the cell: one whose `cellId` is another cell's is skipped with the warning `Not reading the recorded output of <id>: <path> is the record of cell <other>` (`hydrateOutputsFromStubs`).
 - **`<cellId>.md`** is written by `renderOutputMarkdown` (`packages/core/src/executor/output-note.ts`). Its front matter:
 
   ```yaml
