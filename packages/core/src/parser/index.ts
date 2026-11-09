@@ -141,6 +141,33 @@ export function outputFileStem(cellId: string): string {
   return cellId.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+/** The most characters a cell id may have (Ore §5.3). */
+const MAX_ID_LENGTH = 64;
+
+/**
+ * Why `id` cannot be a cell id, or undefined when it can (Ore §5.3): one to 64
+ * characters from `A`-`Z`, `a`-`z`, digits, `_` and `-`, the first a letter or
+ * digit. An id is a file name (§9.2), a `{{id}}` template and a command-line
+ * argument, so the set is these characters exactly: a class that follows
+ * Unicode would let `café` through, and a leading `-` reads as an option.
+ */
+function idFault(id: string): string | undefined {
+  const named = `Cell id ${JSON.stringify(id)}`;
+  const [first] = id;
+  if (first !== undefined && !/^[A-Za-z0-9]$/.test(first)) {
+    return `${named} starts with ${JSON.stringify(first)}: an id starts with a letter or digit`;
+  }
+  for (const char of id) {
+    if (!/^[A-Za-z0-9_-]$/.test(char)) {
+      return `${named} contains ${JSON.stringify(char)}: an id holds only the letters A-Z and a-z, digits, "_" and "-"`;
+    }
+  }
+  if (id.length > MAX_ID_LENGTH) {
+    return `${named} has ${id.length} characters: an id has at most ${MAX_ID_LENGTH}`;
+  }
+  return undefined;
+}
+
 const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;
 const CELL_ATTR_REGEX = /(?:^|[ \t])(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
 
@@ -367,6 +394,8 @@ export class WorkflowParser {
     if (!attrs.id) {
       throw new ParserError(`Cell at line ${line} missing 'id' attribute`, line);
     }
+    const fault = idFault(attrs.id);
+    if (fault) throw new ParserError(fault, line);
 
     // Parse depends array
     let depends: string[] | undefined;

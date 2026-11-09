@@ -4,7 +4,6 @@ import {
   TemplateInterpolator,
   WorkflowParser,
   isWorkflowFrontmatter,
-  outputFileStem,
 } from "./index";
 import type { CellOutput } from "../types";
 
@@ -247,39 +246,69 @@ describe("OutputSerializer.updateWorkflowOutput", () => {
   });
 });
 
-// Ore §9.2 names a cell's files after its id, with every character other than
-// letters, digits, `_` and `-` replaced by `_`. Two ids that differ only there
-// shared `<runDir>/<name>.json`, and the later cell's record replaced the
-// earlier one's (#45).
-describe("WorkflowParser output file names", () => {
+// An id names the cell's output files and is how other cells refer to it. Ore
+// 0.2 (§5.3) fixes its form, so that it is a safe file name on every system and
+// cannot be the run's own record or another cell's file.
+describe("WorkflowParser cell ids", () => {
   const parser = new WorkflowParser();
   const note = (...ids: string[]) =>
     ids.map((id) => `\`\`\`ore:ts id=${id}\n1;\n\`\`\`\n`).join("\n");
+  const ids = (...written: string[]) =>
+    parser.parseCells(note(...written)).map((cell) => cell.attributes.id);
 
-  it("maps an id to its file name as Ore §9.2 says", () => {
-    expect(outputFileStem("fetch-raw_2")).toBe("fetch-raw_2");
-    expect(outputFileStem("fetch.raw")).toBe("fetch_raw");
-    expect(outputFileStem("a/b c")).toBe("a_b_c");
+  it("accepts letters, digits, underscore and hyphen after a letter or digit", () => {
+    const allowed = ["fetch", "Fetch2", "9lives", "a-b_c", "x", "writeNotes", "a".repeat(64)];
+    expect(ids(...allowed)).toEqual(allowed);
   });
 
-  it("refuses two ids that would write the same file, naming both", () => {
-    expect(() => parser.parseCells(note("fetch.raw", "other", "fetch_raw"))).toThrow(
-      "Cells fetch.raw and fetch_raw would write the same output file (fetch_raw.json): rename one"
+  it("refuses an id longer than 64 characters and says how long it is", () => {
+    expect(() => ids("a".repeat(65))).toThrow(
+      `Cell id "${"a".repeat(65)}" has 65 characters: an id has at most 64`
     );
   });
 
-  it("reports the collision at the second cell", () => {
+  it.each([
+    ["_private", "_"],
+    ["-rf", "-"],
+    ["--help", "-"],
+  ])("refuses %s, which does not start with a letter or digit", (id, first) => {
+    expect(() => ids(id)).toThrow(
+      `Cell id "${id}" starts with "${first}": an id starts with a letter or digit`
+    );
+  });
+
+  it.each([
+    ["fetch.raw", "."],
+    ["a/b", "/"],
+    ["café", "é"],
+    ["größe", "ö"],
+    ["a:b", ":"],
+    ["price$", "$"],
+  ])("refuses %s, which holds a character an id cannot", (id, bad) => {
+    expect(() => ids(id)).toThrow(
+      `Cell id "${id}" contains "${bad}": an id holds only the letters A-Z and a-z, digits, "_" and "-"`
+    );
+  });
+
+  it("matches the letters exactly, not whatever counts as a letter somewhere", () => {
+    // U+0130, U+212A and a full-width digit: letters or digits to Unicode,
+    // not to Ore.
+    for (const id of ["İd", "Kelvin", "a１"]) {
+      expect(() => ids(id)).toThrow(/an id (holds only|starts with)/);
+    }
+  });
+
+  it("reports a bad id at the line of its cell", () => {
     try {
-      parser.parseCells(note("fetch.raw", "fetch_raw"));
-      expect.unreachable("colliding ids must not parse");
+      ids("fine", "not.fine");
+      expect.unreachable("an id with a dot must not parse");
     } catch (err) {
       expect((err as { line?: number }).line).toBe(5);
     }
   });
 
-  it("accepts ids that differ in a letter, digit, underscore or hyphen", () => {
-    const ids = ["fetch-raw", "fetch_raw", "fetchraw", "fetch_raw2"];
-    expect(parser.parseCells(note(...ids)).map((cell) => cell.attributes.id)).toEqual(ids);
+  it("still calls an empty id missing", () => {
+    expect(() => parser.parseCells('```ore:ts id=""\n1;\n```\n')).toThrow(/missing 'id' attribute/);
   });
 });
 

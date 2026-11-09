@@ -11,8 +11,10 @@ import type { CellOutput, PlatformAdapter } from "../types";
  * `cell("id")` in a TS cell answers for cells that have an output and for
  * nothing else (#223). The outputs used to be an object literal looked up with
  * `in`, so every name an object inherits (`constructor`, `toString`) passed
- * for a cell, and an output of a cell named `__proto__` became the prototype
- * of the lookup and answered for ids that have no output at all.
+ * for a cell, and an output recorded under `__proto__` became the prototype
+ * of the lookup and answered for ids that have no output at all. No cell can
+ * have that id since Ore 0.2 fixed the form of ids, but a recorded output is
+ * named by a callout in the note, which is text anyone can write.
  *
  * The engine is mocked, but the script is not: what the executor would hand
  * to the container is run here with Bun, which is what the image runs it
@@ -83,17 +85,35 @@ function vault(files: Record<string, string>): PlatformAdapter {
 	} as unknown as PlatformAdapter;
 }
 
-/** Runs a note of `ore:ts` cells, given as `[id, depends, code]`, and returns each cell's outcome. */
-async function run(cells: [id: string, depends: string[], code: string][]) {
+/**
+ * Runs a note of `ore:ts` cells, given as `[id, depends, code]`, and returns
+ * each cell's outcome. `recorded` adds outputs of an earlier run: a callout in
+ * the note and the record it links to, by the name the callout gives.
+ */
+async function run(
+	cells: [id: string, depends: string[], code: string][],
+	recorded: Record<string, unknown> = {}
+) {
+	const files: Record<string, string> = {};
+	const callouts = Object.entries(recorded).map(([name, value], i) => {
+		const path = `_vaultore/runs/wf/earlier/record-${i}.json`;
+		files[path] = JSON.stringify({
+			cellId: name,
+			value,
+			meta: { status: "success", duration: 1, timestamp: "2026-01-01T00:00:00.000Z" },
+		});
+		return `> [!ore-output] ${name}\n> json: [[${path}]]\n`;
+	});
 	const content = [
 		"---\nore: true\nname: lookup\npermissions:\n  network: deny\n  vaultRead: deny\n  vaultWrite: deny\n---\n",
 		...cells.map(
 			([id, depends, code]) =>
 				`\`\`\`ore:ts id=${id}${depends.length ? ` depends=[${depends.join(", ")}]` : ""}\n${code}\n\`\`\`\n`
 		),
+		...callouts,
 	].join("\n");
 	const workflow = await new WorkflowExecutor().runWorkflow({
-		platform: vault({ "wf.md": content }),
+		platform: vault({ ...files, "wf.md": content }),
 		workflowPath: "wf.md",
 		content,
 	});
@@ -127,16 +147,19 @@ describe("cell() in a TS cell", { timeout: 60_000 }, () => {
 	);
 
 	// The object literal `{"__proto__": {...}}` sets a prototype instead of a
-	// key: the cell's output then answered for every name it holds.
-	it("treats the output of a cell named __proto__ as that cell's output and nothing more", async () => {
-		const outcome = await run([
-			["__proto__", [], '({ injected: "from the prototype" })'],
+	// key: the recorded output then answered for every name it holds.
+	it("treats an output recorded under __proto__ as that entry and nothing more", async () => {
+		const outcome = await run(
 			[
-				"b",
-				["__proto__"],
-				'let other; try { other = cell("injected"); } catch (err) { other = String(err.message); }\n[cell("__proto__"), other]',
+				[
+					"b",
+					[],
+					'let other; try { other = cell("injected"); } catch (err) { other = String(err.message); }\n[cell("__proto__"), other]',
+				],
 			],
-		]);
+			// A computed key: written plainly, this literal would set a prototype too.
+			{ ["__proto__"]: { injected: "from the prototype" } }
+		);
 
 		expect(outcome("b")).toMatchObject({
 			status: "success",

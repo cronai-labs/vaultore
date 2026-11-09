@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WorkflowExecutor } from "./index";
 import { filesystemPlatform, makeIntegrationVaultRoot } from "../testing/integration-vault";
@@ -58,12 +58,24 @@ describe("cell() in a container", { timeout: 180_000 }, () => {
 		expect(outcome("b").error).toContain("Cell output not found: constructor");
 	});
 
-	it("gives a cell named __proto__ its output and no say over other ids", async () => {
+	// No cell can be called __proto__ (Ore §5.3), but an output of an earlier run
+	// is named by a callout in the note, which is text anyone can write.
+	it("gives an output recorded under __proto__ no say over other ids", async () => {
+		const record = "_vaultore/runs/lookup/earlier/record.json";
+		mkdirSync(join(root, "_vaultore/runs/lookup/earlier"), { recursive: true });
+		writeFileSync(
+			join(root, record),
+			JSON.stringify({
+				cellId: "__proto__",
+				value: { injected: "from the prototype" },
+				meta: { status: "success", duration: 1, timestamp: "2026-01-01T00:00:00.000Z" },
+			})
+		);
 		const outcome = await run(
-			'```ore:ts id=__proto__\n({ injected: "from the prototype" })\n```\n\n' +
-				'```ore:ts id=b depends=[__proto__]\n' +
+			'```ore:ts id=b\n' +
 				'let other; try { other = cell("injected"); } catch (err) { other = String(err.message); }\n' +
-				'[cell("__proto__"), other]\n```\n'
+				'[cell("__proto__"), other]\n```\n\n' +
+				`> [!ore-output] __proto__\n> json: [[${record}]]\n`
 		);
 
 		expect(outcome("b")).toMatchObject({
