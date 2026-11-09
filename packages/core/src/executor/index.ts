@@ -81,7 +81,7 @@ export class WorkflowExecutor {
         platform,
         workflow.path,
         workflow.frontmatter,
-        await grantHash(this.parser, workflow)
+        await grantHash(workflow, this.parser)
       );
 
       const engineChoice = resolveEngine(
@@ -343,10 +343,13 @@ type StoredDecision = WorkflowPermissions & {
  * the schema drops included) and each cell's attributes and source. Line
  * numbers and output stubs are left out — the executor rewrites outputs into
  * the note after every cell, so they change on every run.
+ *
+ * Exported because a schedule approval is bound to the same hash
+ * (scheduler/approvals.ts): consent given for one content of a note.
  */
-async function grantHash(
-  parser: WorkflowParser,
-  workflow: Workflow
+export async function grantHash(
+  workflow: Workflow,
+  parser: WorkflowParser = new WorkflowParser()
 ): Promise<string> {
   const fingerprint = canonicalJson({
     frontmatter: parser.parseRawFrontmatter(workflow.rawContent) ?? null,

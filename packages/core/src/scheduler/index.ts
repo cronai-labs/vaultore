@@ -7,6 +7,9 @@
 import { CronExpressionParser } from "cron-parser";
 import { ScheduledWorkflow, TimerHandle, Timers } from "../types";
 
+export { classifyScheduleApproval } from "./approvals";
+export type { ScheduleApproval, ScheduleApprovalState } from "./approvals";
+
 export interface SchedulerOptions {
   /** Where the tick interval comes from: the platform's timers. */
   timers: Timers;

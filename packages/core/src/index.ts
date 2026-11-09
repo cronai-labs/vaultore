@@ -97,7 +97,7 @@ export {
 // EXECUTOR
 // =============================================================================
 
-export { WorkflowExecutor, DEFAULT_CONFIG_DIR } from "./executor";
+export { WorkflowExecutor, DEFAULT_CONFIG_DIR, grantHash } from "./executor";
 
 // =============================================================================
 // RUNTIME
@@ -124,7 +124,9 @@ export type { AIProviderName } from "./providers";
 // SCHEDULER
 // =============================================================================
 
-export { WorkflowScheduler, computeNextRun } from "./scheduler";
+export { WorkflowScheduler, computeNextRun, classifyScheduleApproval } from "./scheduler";
+
+export type { ScheduleApproval, ScheduleApprovalState } from "./scheduler";
 
 // =============================================================================
 // VAULT API
