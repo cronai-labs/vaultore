@@ -75,7 +75,7 @@ vaultore/
 │       ├── src/args.ts, src/agent.ts, src/index.ts, *.test.ts
 │       └── tsup.config.ts, tsconfig.json, eslint.config.mjs, vitest.config.ts
 ├── scripts/                  # package-obsidian.mjs, release*.mjs, release-gate.sh
-└── specs/                    # cronai-handover, go-cell, permissions, sandbox, workflow-note (-spec.md)
+└── specs/                    # ore-implementation.md; cronai-handover, go-cell, permissions, sandbox (-spec.md)
 ```
 
 `.github/` holds `ci.yml`, `release.yml`, `dependabot.yml` and the pull request template.
