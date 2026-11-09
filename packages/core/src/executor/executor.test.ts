@@ -100,8 +100,8 @@ describe("orderCells", () => {
 	});
 
 	// A queue, not levels: a cell joins when its last dependency has left the
-	// queue, behind the cells already waiting. Ore §8 leaves this order open;
-	// specs/ore-implementation.md records it under "Beyond the specification".
+	// queue, behind the cells already waiting. This is the order Ore §8 gives,
+	// with the same four cells as its example.
 	it("runs a cell that was ready from the start before cells that became ready", () => {
 		expect(ids(orderCells([cell("a"), cell("b", "a"), cell("c"), cell("d", "a")]))).toEqual([
 			"a",
