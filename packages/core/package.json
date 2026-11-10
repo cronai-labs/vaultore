@@ -1,6 +1,6 @@
 {
 	"name": "@vaultore/core",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Core engine for VaultOre - workflow parsing, execution, and scheduling",
 	"main": "./dist/index.js",
 	"module": "./dist/index.mjs",

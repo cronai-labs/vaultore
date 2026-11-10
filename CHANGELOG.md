@@ -5,6 +5,40 @@ All notable changes to VaultOre will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-10
+
+### Upgrading
+
+- **parser:** A note is refused before anything runs when a cell's `timeout` is not a number above zero, or when cells depend on each other in a circle. Correct the `timeout`, or the `depends` list the error names.
+- **cli:** An option the command line does not know is a usage error (`unknown option --name`, exit code 2); before, it was ignored. Correct the option where a script calls `vaultore`.
+- **cli:** `vaultore agent` runs a scheduled note only after `vaultore schedules approve <note.md>`, and nothing until one is approved. An approval holds for the note's front matter and cells as they are: after changing either, approve again. `vaultore schedules list` shows what the agent may run.
+- **parser:** A note is refused when a limit has a value that cannot be enforced: `runtime.timeout` and a cell's `timeout` must be above 0 and at most 86400 seconds, `cpuLimit` above 0, and `memoryLimit` an amount above zero such as `512m`. Correct the value the error names.
+- **executor:** `vaultore run <note.md> --cell <id>` fails for an id the note does not have; before, it ran nothing and reported a completed run. In a TypeScript cell, `cell(id)` throws for a name that is no cell's output, such as `constructor`.
+- **parser:** A cell id is 1 to 64 characters from the letters A-Z and a-z, digits, `_` and `-`, and starts with a letter or digit. `run` and the Windows device names (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are reserved, and two ids that differ only in letter case are refused. Rename the cell the error names, also where `depends`, `cell()` and `{{id}}` use its id.
+
+### Features
+
+- **cli:** The agent runs only scheduled notes that were approved ([#220](https://github.com/cronai-labs/vaultore/issues/220))
+
+### Bug Fixes
+
+- **parser:** Refuse invalid timeouts, cycles and colliding ids; match output ids exactly ([#214](https://github.com/cronai-labs/vaultore/issues/214))
+- **cli:** Read --config-dir <name> and refuse unknown flags ([#217](https://github.com/cronai-labs/vaultore/issues/217))
+- **parser:** A note cannot switch off its time, memory or CPU limit ([#225](https://github.com/cronai-labs/vaultore/issues/225))
+- **executor:** Cell() answers only for real outputs, and an unknown target cell is an error ([#226](https://github.com/cronai-labs/vaultore/issues/226))
+- **parser:** Cell ids follow Ore 0.2: form, reserved names and letter case ([#230](https://github.com/cronai-labs/vaultore/issues/230))
+
+### Dependencies
+
+- **deps:** Bump @babel/parser from 7.29.9 to 7.29.11 in the production-dependencies group across 1 directory ([#188](https://github.com/cronai-labs/vaultore/issues/188))
+- **deps-dev:** Bump @vitest/coverage-v8 from 4.1.10 to 5.0.5 ([#176](https://github.com/cronai-labs/vaultore/issues/176))
+- **deps-dev:** Bump the dev-dependencies group across 1 directory with 2 updates ([#183](https://github.com/cronai-labs/vaultore/issues/183))
+- **deps:** Move fast-uri to 3.1.9 ([#198](https://github.com/cronai-labs/vaultore/issues/198))
+- **deps:** Build core and cli with tsup 9 ([#199](https://github.com/cronai-labs/vaultore/issues/199))
+- **deps:** Move to TypeScript 6.0 with bundler module resolution ([#200](https://github.com/cronai-labs/vaultore/issues/200))
+- **deps-dev:** Bump the dev-dependencies group with 2 updates ([#203](https://github.com/cronai-labs/vaultore/issues/203))
+- **deps-dev:** Bump the dev-dependencies group with 4 updates ([#236](https://github.com/cronai-labs/vaultore/issues/236))
+
 ## [0.2.0] - 2026-10-28
 
 ### Breaking changes
