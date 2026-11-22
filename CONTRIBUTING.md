@@ -64,9 +64,13 @@ unticked box fails `policy` and blocks the merge.
 2. Make focused commits following the conventions below
 3. Run `bun run build`, `bun run test`, `bun run typecheck`, `bun run lint` and
    `bun run test:canonical`
-4. Open the PR against `main`. CI runs the policy checks, commitlint, build, packaging, tests,
-   typecheck, lint, the container integration tests on Docker and a build-reproducibility
-   check, all aggregated into the one `ci-required` check
+4. Open the PR against `main`. Two checks are required: `policy` (`policy.yml`: the PR title,
+   the breaking footer, rebase-not-merge, the Definition of done, no tool attribution, pinned
+   actions) runs on every PR event, edits included; `code` (`code.yml`: commitlint, secret scan,
+   dependency audit, build, packaging, a build-reproducibility check, tests, typecheck, lint and
+   the container integration tests on Docker) runs only when the head commit moves. Editing the
+   title or description re-runs `policy` alone
+   ([decision](docs/decisions/ci-two-checks.md))
 
 ## Commit Conventions
 
@@ -152,7 +156,7 @@ at that version and a usable changelog section. It then creates an annotated tag
 commit and prints the push command.
 
 Pushing the tag runs [`release.yml`](.github/workflows/release.yml). It waits until the
-tagged commit is on `main` and its `ci-required` check has passed, re-verifies the tag
+tagged commit is on `main` and its `code` check has passed, re-verifies the tag
 against both manifests and `versions.json`, builds, tests, typechecks and lints, then
 creates a draft release with `main.js`, `manifest.json` and `styles.css`, attests their
 build provenance, checks the uploaded files against the build and publishes it. The

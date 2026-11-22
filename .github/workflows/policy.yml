@@ -1,0 +1,180 @@
+name: Policy
+
+# The merge discipline GitHub has no setting for: the PR title, the breaking
+# footer, rebase-not-merge, the Definition of done, no tool attribution, and
+# actions pinned to a commit SHA. Its job `policy` is one of the two checks the
+# default-branch rules require; the other is code.yml's `code`
+# (docs/decisions/ci-two-checks.md). It runs on every PR event that can change
+# what it checks, edits included, and never runs the code checks, so an edit
+# costs one short job and leaves `code` as its last run reported it.
+on:
+  push:
+    branches: [main]
+  # No branch filter: a stacked layer targets the layer below it, and still
+  # needs the check. No path filters either: a required check that does not
+  # run blocks the PR forever.
+  pull_request:
+    # `edited` re-runs it when the PR title or body changes;
+    # `ready_for_review` re-runs the checklist step skipped while drafting.
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  merge_group:
+  workflow_dispatch:
+
+# A newer event on the same PR cancels the older run, so the check reports the
+# PR as it is now. Runs on main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Reads the repository only. Nothing here publishes, comments, or writes back
+# (CodeQL actions/missing-workflow-permissions).
+permissions:
+  contents: read
+
+jobs:
+  # Enforces the merge discipline that GitHub has no setting for.
+  #
+  # Two of these rules exist because the platform cannot express them:
+  #   - "Update with rebase" cannot be made the only option; the REST endpoint
+  #     PUT /pulls/{n}/update-branch merges and takes no rebase parameter, and the
+  #     UI dropdown ignores allow_merge_commit=false. So we detect the merge
+  #     commit instead of preventing it.
+  #   - A checklist in a PR template is a reminder, not a gate. Making it a
+  #     required check is what turns it into one — auto-merge waits for required
+  #     checks, so an unticked box cannot land.
+  #
+  # This job must never be skipped: a skipped required check blocks a PR forever
+  # and stalls a merge queue. Individual STEPS are conditional; the job is not.
+  policy:
+    name: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # pull-requests: read lets the attribution check list the PR's commits.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Runs on every event, not only on pull requests. Covers job-level
+      # `uses:` of reusable workflows too; local `./` references are exempt.
+      - name: Actions are pinned to a full commit SHA
+        run: |
+          unpinned="$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github/workflows \
+            | grep -vE 'uses:[[:space:]]*\./' \
+            | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)"
+          if [ -n "$unpinned" ]; then
+            echo "::error::Actions must be pinned to a 40-character commit SHA:"
+            echo "$unpinned"
+            exit 1
+          fi
+          echo "ok: every uses: is SHA-pinned"
+
+      - name: PR title is a Conventional Commit
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # The PR title becomes the squash subject and therefore the changelog
+          # entry, which is why it is linted rather than the branch commits.
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
+          if ! printf '%s' "$TITLE" | grep -qE "$pattern"; then
+            echo "::error::PR title is not a Conventional Commit: '$TITLE'"
+            echo "Expected e.g. 'fix(core): surface the cell error'. It becomes the squash commit subject."
+            exit 1
+          fi
+          echo "ok: $TITLE"
+
+      - name: A breaking change says what breaks
+        # The description becomes the squash commit's body, and its
+        # BREAKING CHANGE: footer is what the release notes show (#193).
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/breaking-footer.mjs
+
+      - name: Branch was rebased, not merged into
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --quiet origin "$BASE_REF"
+          merges="$(git log --merges --oneline "origin/$BASE_REF..$HEAD_SHA")"
+          if [ -n "$merges" ]; then
+            echo "::error::This branch contains merge commits from its base."
+            echo "$merges"
+            echo ""
+            echo "GitHub's 'Update branch' button defaults to a merge and cannot be"
+            echo "restricted to rebase. Use instead:"
+            echo "    git fetch origin && git rebase origin/$BASE_REF"
+            echo "    git push --force-with-lease"
+            exit 1
+          fi
+          echo "ok: no merge commits between origin/$BASE_REF and $HEAD_SHA"
+
+      - name: Definition of done is complete
+        # Skipped while the PR is a draft — a draft cannot merge, so unticked
+        # boxes there are work in progress rather than a defect. Also skipped for
+        # bots, which do not use the PR template.
+        if: >-
+          github.event_name == 'pull_request'
+          && github.event.pull_request.draft == false
+          && github.event.pull_request.user.type != 'Bot'
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # Blank out fenced code blocks before scanning: a PR that documents a
+          # checklist, or pastes a diff containing one, must not be blocked by its
+          # own example. Lines are blanked rather than removed so grep -n still
+          # reports the real line number.
+          unticked="$(printf '%s' "$BODY" \
+            | awk '/^[[:space:]]*```/ { f = !f; print ""; next } f { print ""; next } { print }' \
+            | grep -nE '^[[:space:]]*- \[ \]' || true)"
+          if [ -n "$unticked" ]; then
+            echo "::error::Unticked checkboxes remain in the PR description."
+            echo "$unticked"
+            echo ""
+            echo "Tick them, or convert the PR back to a draft while the work continues."
+            exit 1
+          fi
+          echo "ok: no unticked checkboxes"
+
+      - name: No tool or model attribution
+        # Owner rule: no AI co-author trailer and no "Generated with" line.
+        # A branch commit's trailer or the PR body can reach main through the
+        # squash. Commits come from the API, so checkout depth does not matter.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          tools='claude|anthropic|copilot|openai|chatgpt|codex|gemini|cursor|aider|windsurf|devin'
+          pattern="^[[:space:]]*(co-authored-by:.*($tools)|.*generated (with|by) \\[?($tools))"
+          # Captured first, so a failed API call fails the step instead of
+          # leaving nothing to check.
+          commits="$(gh api --paginate "repos/$REPO/pulls/$PR/commits" \
+            --jq '.[] | "\(.sha[0:7])\t\(.commit.message | @base64)"')"
+          hits=""
+          while IFS=$'\t' read -r sha msg; do
+            [ -n "$sha" ] || continue
+            m="$(printf '%s' "$msg" | base64 -d | grep -inE "$pattern" || true)"
+            if [ -n "$m" ]; then hits="${hits}commit ${sha}: ${m}"$'\n'; fi
+          done <<< "$commits"
+          # Fenced code blocks are blanked so a quoted example does not count.
+          b="$(printf '%s' "$BODY" \
+            | awk '/^[[:space:]]*```/ { f = !f; print ""; next } f { print ""; next } { print }' \
+            | grep -inE "$pattern" || true)"
+          if [ -n "$b" ]; then hits="${hits}PR body: ${b}"$'\n'; fi
+          if [ -n "$hits" ]; then
+            echo "::error::Tool or model attribution found:"
+            printf '%s' "$hits"
+            echo "Reword the commits (git rebase -i, then git push --force-with-lease) and edit the PR body."
+            exit 1
+          fi
+          echo "ok: no tool or model attribution"

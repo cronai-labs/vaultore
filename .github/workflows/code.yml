@@ -1,0 +1,150 @@
+name: Code
+
+# Every check of the code in one job, `code`, one of the two checks the
+# default-branch rules require; the other is policy.yml's `policy`
+# (docs/decisions/ci-two-checks.md). It runs when the code may have changed: a
+# push to main, a PR opened, reopened or its head moved, a merge group, by
+# hand. An edit of the PR's title or body does not start it, so the `code`
+# check of the head commit stays the one its last real run reported; a skipped
+# job would report success in its place.
+on:
+  push:
+    branches: [main]
+  # No branch filter: a stacked layer targets the layer below it, and still
+  # needs the check. No path filters either: a required check that does not
+  # run blocks the PR forever.
+  pull_request:
+    types: [opened, synchronize, reopened]
+  merge_group:
+  workflow_dispatch:
+
+# A newer push to the same PR cancels the older run. Runs on main always
+# finish: the release gate (scripts/release-gate.sh) reads their `code` check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Reads the repository only. Nothing here publishes, comments, or writes back
+# (CodeQL actions/missing-workflow-permissions).
+permissions:
+  contents: read
+
+jobs:
+  # One job, one checkout and one install: commit messages, the secret scan
+  # and the dependency audit first (they fail fast), then build, packaging,
+  # the reproducible-build comparison, tests, types, lint and the container
+  # integration tests. Steps are conditional, the job is not: a required check
+  # that is skipped reports success without having checked anything.
+  code:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+    steps:
+      # Full history: commitlint walks the PR's commits, gitleaks the whole
+      # history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install gitleaks (checksum-verified)
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+
+      - name: Secret scan (full history)
+        run: '"$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose .'
+
+      # Reads bun.lock only; no install needed. The threshold is a decision:
+      # docs/decisions/dependency-audit-scope.md.
+      - name: Dependency audit
+        run: bun run audit
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The branch commits, which the PR title's squash replaces on main; only
+      # a pull request has a range to lint.
+      - name: Lint commit messages
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npx commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
+
+      - name: Build
+        run: bun run build
+
+      # The release packages exactly this way; running it on every PR means a
+      # packaging break shows up here and not first on a release tag (#42).
+      - name: Package plugin
+        run: bun run obsidian:package
+
+      # The Obsidian community directory rebuilds the plugin from source and
+      # compares the result with the released main.js, and anyone can do the
+      # same to check a release against its tag. This builds a second time in
+      # a separate worktree at another path, with its own install and no turbo
+      # cache, and fails if main.js differs from the build above by one byte.
+      - name: Reproducible build (a second clean build, compared)
+        env:
+          TURBO_FORCE: "true"
+        run: |
+          set -euo pipefail
+          first="$(sha256sum packages/obsidian/dist/main.js | cut -d' ' -f1)"
+
+          rebuild="$RUNNER_TEMP/rebuild"
+          git worktree add --detach "$rebuild" HEAD
+          (cd "$rebuild" && bun install --frozen-lockfile && bun run build)
+          second="$(sha256sum "$rebuild/packages/obsidian/dist/main.js" | cut -d' ' -f1)"
+          git worktree remove --force "$rebuild"
+
+          echo "first build:  $first"
+          echo "second build: $second"
+          if [ "$first" != "$second" ]; then
+            echo "::error::main.js differs between two clean builds of the same commit; the release could not be verified against its tag."
+            exit 1
+          fi
+          echo "main.js sha256 \`$first\`, identical across two clean builds" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Test
+        run: bun run test
+
+      - name: Release and CI scripts
+        run: bun run test:scripts
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      # The container integration tests: vaultRead and vaultWrite enforced at
+      # the mount against a real Docker engine, which the mocked unit tests
+      # cannot show (#73). GitHub's Ubuntu runners ship Docker. The images are
+      # the one the ore:ts and ore:shell cells run in (DEFAULT_RUNTIME in
+      # packages/core/src/types/index.ts) and the one waitForContainerView in
+      # packages/core/src/testing/integration-vault.ts reads the vault with.
+      # Pulling them up front keeps registry time out of the per-test
+      # timeouts, and a registry outage fails here, named. If a cell image
+      # changes and this list does not, nothing breaks: the tests pull on
+      # demand.
+      - name: Pull cell images
+        run: |
+          docker pull oven/bun:1-alpine
+          docker pull alpine:3.19
+
+      - name: Container integration tests
+        env:
+          VAULTORE_IT_ENGINE: docker
+        run: bun run --cwd packages/core test:integration
