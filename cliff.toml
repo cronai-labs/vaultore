@@ -97,6 +97,10 @@ commit_preprocessors = [
   { pattern = '(?s)^(fix\(parser\): a note cannot switch off its time, memory or CPU limit.*)$', replace = "${1}\n\nUpgrade-Note: A note is refused when a limit has a value that cannot be enforced: `runtime.timeout` and a cell's `timeout` must be above 0 and at most 86400 seconds, `cpuLimit` above 0, and `memoryLimit` an amount above zero such as `512m`. Correct the value the error names." },
   { pattern = '(?s)^(fix\(executor\): cell\(\) answers only for real outputs.*)$', replace = "${1}\n\nUpgrade-Note: `vaultore run <note.md> --cell <id>` fails for an id the note does not have; before, it ran nothing and reported a completed run. In a TypeScript cell, `cell(id)` throws for a name that is no cell's output, such as `constructor`." },
   { pattern = '(?s)^(fix\(parser\): cell ids follow Ore 0\.2.*)$', replace = "${1}\n\nUpgrade-Note: A cell id is 1 to 64 characters from the letters A-Z and a-z, digits, `_` and `-`, and starts with a letter or digit. `run` and the Windows device names (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are reserved, and two ids that differ only in letter case are refused. Rename the cell the error names, also where `depends`, `cell()` and `{{id}}` use its id." },
+  # GitHub wrapped the Upgrade-Note of #253 so that a line starts with
+  # "directory:", which git-cliff reads as a new footer, ending the note there
+  # (#260). Joined back into the one sentence it is.
+  { pattern = '(?s)^(feat\(core\): one run per note across the plugin and the CLI.*create that)\ndirectory: ', replace = "${1} directory: " },
 ]
 
 commit_parsers = [
