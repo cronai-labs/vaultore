@@ -144,6 +144,20 @@ export { resolveInVaultRoot } from "./vault/confine";
 export type { VaultAPI, CellFn } from "./vault";
 
 // =============================================================================
+// LOCKS
+// =============================================================================
+
+export {
+  acquireLock,
+  describeHolder,
+  lastBootTime,
+  LockHeldError,
+  processIsAlive,
+} from "./lock";
+
+export type { LockHolder, LockOptions } from "./lock";
+
+// =============================================================================
 // ERRORS
 // =============================================================================
 

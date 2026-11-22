@@ -10,9 +10,9 @@ import {
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { LockHeldError, acquireLock, processIsAlive } from "./lock";
-import type { LockHolder } from "./lock";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LockHeldError, acquireLock, lastBootTime, processIsAlive } from ".";
+import type { LockHolder } from ".";
 
 let dir: string;
 let lock: string;
@@ -39,8 +39,10 @@ function leaveLock(holder: Partial<LockHolder> | string): string {
 	return file;
 }
 
-const gone = { isAlive: () => false };
-const running = { isAlive: () => true };
+// The holders left below took their lock on 2026-01-01; a boot time of 0 keeps
+// that from making them stale on its own.
+const gone = { isAlive: () => false, bootTime: 0 };
+const running = { isAlive: () => true, bootTime: 0 };
 
 describe("acquireLock", () => {
 	it("takes the lock and leaves nothing behind when released", async () => {
@@ -108,7 +110,7 @@ describe("acquireLock", () => {
 	it("lets exactly one of two takers have a lock whose holder is gone", async () => {
 		leaveLock({});
 		const stale: LockHolder[] = [];
-		const options = { onStale: (holder: LockHolder) => stale.push(holder) };
+		const options = { onStale: (holder: LockHolder) => stale.push(holder), bootTime: 0 };
 		// Only the lock that was left is stale: the winner's own process is alive.
 		const isAlive = (pid: number): boolean => pid !== 4242;
 
@@ -173,10 +175,88 @@ describe("acquireLock", () => {
 		expect(readFileSync(lock, "utf8")).toBe("not ours");
 	});
 
+	it("records which runner holds it, and names it when refusing", async () => {
+		const release = await acquireLock(lock, { by: "vaultore agent" });
+		const [name] = readdirSync(lock);
+		const holder = JSON.parse(readFileSync(join(lock, name ?? ""), "utf8")) as LockHolder;
+		expect(holder.by).toBe("vaultore agent");
+
+		const refusal: unknown = await acquireLock(lock, { by: "Obsidian" }).catch((err: unknown) => err);
+
+		expect(refusal).toBeInstanceOf(LockHeldError);
+		expect(String(refusal)).toContain(`process ${process.pid} (vaultore agent)`);
+		expect((refusal as LockHeldError).holder?.by).toBe("vaultore agent");
+		await release();
+	});
+
+	// Obsidian reloads a plugin in the same process. A lock a run of the earlier
+	// load left behind names this process, which is alive, and is not among
+	// the locks this process holds.
+	it("takes over a lock this process left behind, and says so", async () => {
+		leaveLock({ pid: process.pid, since: new Date().toISOString() });
+		const reasons: string[] = [];
+
+		const release = await acquireLock(lock, { ...running, onStale: (_, why) => reasons.push(why) });
+
+		expect(reasons).toEqual([
+			"is this process, which no longer holds it: an earlier load of VaultOre in it took it",
+		]);
+		await release();
+	});
+
+	// The record of held locks is kept on `process`, so a fresh copy of this
+	// module, as a plugin reload loads, still sees a lock of the earlier one.
+	it("refuses a lock this process holds through another copy of the module", async () => {
+		const release = await acquireLock(lock);
+		vi.resetModules();
+		const fresh = await import("./index");
+
+		const refusal: unknown = await fresh.acquireLock(lock).catch((err: unknown) => err);
+
+		expect(refusal).toBeInstanceOf(fresh.LockHeldError);
+		await release();
+		const again = await fresh.acquireLock(lock);
+		await again();
+	});
+
+	// After a crash and a reboot, the holder's process id may belong to any
+	// process. A lock taken before this machine started is stale regardless.
+	it("takes over a lock taken before this machine last started, whatever runs under its id", async () => {
+		leaveLock({ since: "2026-01-01T00:00:00.000Z" });
+		const reasons: string[] = [];
+
+		const release = await acquireLock(lock, {
+			isAlive: () => true,
+			bootTime: Date.parse("2026-01-02T00:00:00.000Z"),
+			onStale: (_, why) => reasons.push(why),
+		});
+
+		expect(reasons).toEqual(["took it before this machine last started"]);
+		await release();
+	});
+
+	// The boot time is computed from the clock and the uptime. A lock taken
+	// shortly before the computed boot time is not judged by it.
+	it("does not judge a lock by a boot time only minutes after it was taken", async () => {
+		leaveLock({ since: "2026-01-01T00:00:00.000Z" });
+
+		await expect(
+			acquireLock(lock, { isAlive: () => true, bootTime: Date.parse("2026-01-01T00:04:00.000Z") })
+		).rejects.toBeInstanceOf(LockHeldError);
+	});
+
 	it("fails as the file system says when the lock cannot be created at all", async () => {
 		await expect(acquireLock(join(dir, "missing", "state.lock"))).rejects.toMatchObject({
 			code: "ENOENT",
 		});
+	});
+});
+
+describe("lastBootTime", () => {
+	it("lies in the past", () => {
+		const boot = lastBootTime();
+		expect(boot).toBeLessThanOrEqual(Date.now());
+		expect(boot).toBeGreaterThan(Date.parse("2000-01-01T00:00:00.000Z"));
 	});
 });
 

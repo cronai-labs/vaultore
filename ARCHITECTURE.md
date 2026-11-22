@@ -56,6 +56,7 @@ vaultore/
 │   │   │   ├── runtime/      # engine detection; container command line
 │   │   │   ├── providers/    # OpenAI and Anthropic
 │   │   │   ├── scheduler/    # cron registrations and ticks
+│   │   │   ├── lock/         # a lock between VaultOre processes on one machine
 │   │   │   ├── vault/        # exported vault helpers (not used by the executor)
 │   │   │   ├── fixtures/     # canonical and smart-inbox tests
 │   │   │   └── testing/      # integration-test helpers, network guard
