@@ -104,22 +104,47 @@ export interface RunLockOptions extends Pick<LockOptions, "isAlive" | "host" | "
 	directory?: string;
 }
 
+/** A stale holder that taking the lock removed, and why it was stale. */
+export interface LeftBehind {
+	holder: LockHolder;
+	/** Completes "process <pid>, which took it at <since>, …". */
+	why: string;
+}
+
+/** A note's run lock, held. */
+export interface RunLock {
+	/** Releases it; may be called more than once. */
+	release(): Promise<void>;
+	/**
+	 * The holders of a lock left behind that were removed to take this one:
+	 * runs of the note that ended without finishing. Usually none. When two
+	 * runners find the same stale lock at once, the one that loses the race
+	 * may be the one that removed it, and then the winner's list is empty.
+	 */
+	readonly leftBehind: readonly LeftBehind[];
+}
+
 /**
- * Takes the run lock of a note. Resolves to its release, which may be called
- * more than once. Rejects with RunLockHeldError while another run holds it.
+ * Takes the run lock of a note. Rejects with RunLockHeldError while another
+ * run holds it.
  */
-export async function acquireRunLock(options: RunLockOptions): Promise<() => Promise<void>> {
+export async function acquireRunLock(options: RunLockOptions): Promise<RunLock> {
 	const directory = options.directory ?? runLockDirectory();
 	await fs.mkdir(directory, { recursive: true, mode: 0o700 });
 	const lockPath = await runLockPath(directory, options.vaultRoot, options.notePath);
+	const leftBehind: LeftBehind[] = [];
 	try {
-		return await acquireLock(lockPath, {
+		const release = await acquireLock(lockPath, {
 			by: options.by,
 			isAlive: options.isAlive,
 			host: options.host,
 			bootTime: options.bootTime,
-			onStale: options.onStale,
+			onStale: (holder, why) => {
+				leftBehind.push({ holder, why });
+				options.onStale?.(holder, why);
+			},
 		});
+		return { release, leftBehind };
 	} catch (err) {
 		if (!(err instanceof LockHeldError)) throw err;
 		const holder = err.holder;

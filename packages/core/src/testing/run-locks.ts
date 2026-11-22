@@ -4,18 +4,25 @@
  */
 
 import { RunLockHeldError } from "../lock/run-lock";
+import type { LeftBehind, RunLock } from "../lock/run-lock";
 
 export interface MemoryRunLocks {
 	/** The method a fake PlatformAdapter offers as `acquireRunLock`. */
-	acquireRunLock(notePath: string): Promise<() => Promise<void>>;
+	acquireRunLock(notePath: string): Promise<RunLock>;
 	/** The notes whose lock is held now. */
 	readonly held: ReadonlySet<string>;
+	/** What the next taking reports as left behind, as a stale lock would. */
+	leaveBehind(entry: LeftBehind): void;
 }
 
 export function memoryRunLocks(by = "a test"): MemoryRunLocks {
 	const held = new Set<string>();
+	let pending: LeftBehind[] = [];
 	return {
 		held,
+		leaveBehind(entry: LeftBehind) {
+			pending.push(entry);
+		},
 		async acquireRunLock(notePath: string) {
 			if (held.has(notePath)) {
 				throw new RunLockHeldError(
@@ -25,11 +32,16 @@ export function memoryRunLocks(by = "a test"): MemoryRunLocks {
 				);
 			}
 			held.add(notePath);
+			const leftBehind = pending;
+			pending = [];
 			let released = false;
-			return async () => {
-				if (released) return;
-				released = true;
-				held.delete(notePath);
+			return {
+				leftBehind,
+				release: async () => {
+					if (released) return;
+					released = true;
+					held.delete(notePath);
+				},
 			};
 		},
 	};

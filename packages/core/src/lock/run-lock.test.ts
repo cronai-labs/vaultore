@@ -111,21 +111,21 @@ describe("acquireRunLock", () => {
 		expect(message).toContain("Nothing was run");
 		expect(message).toContain(await runLockPath(locks, vaultRoot, "Notes/Daily.md"));
 		expect((refusal as RunLockHeldError).holder?.by).toBe("vaultore agent");
-		await release();
+		await release.release();
 	});
 
 	it("lets runs of two notes in at once", async () => {
 		const daily = await take("Notes/Daily.md");
 		const other = await take("Notes/Other.md");
-		await daily();
-		await other();
+		await daily.release();
+		await other.release();
 	});
 
 	it("lets the next run in once the first released it", async () => {
 		const first = await take("Notes/Daily.md");
-		await first();
+		await first.release();
 		const second = await take("Notes/Daily.md");
-		await second();
+		await second.release();
 	});
 
 	it("creates its directory for this user only", async () => {
@@ -133,7 +133,7 @@ describe("acquireRunLock", () => {
 		if (process.platform !== "win32") {
 			expect(statSync(locks).mode & 0o777).toBe(0o700);
 		}
-		await release();
+		await release.release();
 	});
 
 	// Two runners are two processes: Obsidian and `vaultore agent`.
@@ -157,7 +157,11 @@ describe("acquireRunLock", () => {
 		});
 
 		expect(reasons).toEqual([`${pid} is no longer running`]);
-		await release();
+		// And it says so to the run that took it over, which finalises that run's record (#256).
+		expect(release.leftBehind.map(({ holder, why }) => `${holder.pid} (${holder.by}) ${why}`)).toEqual([
+			`${pid} (vaultore agent) is no longer running`,
+		]);
+		await release.release();
 	}, 20_000);
 });
 

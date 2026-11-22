@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
 import { DEFAULT_CONFIG_DIR, acquireRunLock, describeHolder, resolveInVaultRoot } from "@vaultore/core";
-import type { PlatformAdapter, PlatformRequest, PlatformResponse, Timers } from "@vaultore/core";
+import type { PlatformAdapter, PlatformRequest, PlatformResponse, RunLock, Timers } from "@vaultore/core";
 import { fetchRequest } from "./fetch-request";
 
 // The vault's config folders are skipped as well, see NodeAdapter.skipDirs.
@@ -144,7 +144,7 @@ export class NodeAdapter implements PlatformAdapter {
 	 * machine. A lock left by a run that was killed is taken over, and a line on
 	 * stderr says so.
 	 */
-	acquireRunLock(notePath: string): Promise<() => Promise<void>> {
+	acquireRunLock(notePath: string): Promise<RunLock> {
 		return acquireRunLock({
 			vaultRoot: this.vaultRoot,
 			notePath,

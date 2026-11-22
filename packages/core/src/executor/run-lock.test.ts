@@ -59,7 +59,10 @@ function vault(overrides: Partial<PlatformAdapter> = {}): Vault {
 		exists: async (path: string) =>
 			path in files || Object.keys(files).some((file) => file.startsWith(`${path}/`)),
 		mkdirp: async () => undefined,
-		listFiles: async () => [],
+		listFiles: async (directory: string, pattern?: string) =>
+			Object.keys(files).filter(
+				(path) => path.startsWith(`${directory}/`) && (pattern === undefined || path.includes(pattern))
+			),
 		getVaultRoot: async () => "/vault",
 		resolveInVault: async (path: string) => path,
 		acquireRunLock: (notePath: string) => locks.acquireRunLock(notePath),
@@ -124,7 +127,7 @@ describe("the run lock", () => {
 		expect(v.files[PATH]).toBe(NOTE);
 		// The other run's lock is left as it was.
 		expect(v.locks.held.has(PATH)).toBe(true);
-		await other();
+		await other.release();
 	});
 
 	it("locks the note where its path really leads", async () => {
@@ -171,9 +174,12 @@ describe("the run lock", () => {
 
 	it("keeps the run's own error when the release fails, and logs the release", async () => {
 		const v = vault({
-			acquireRunLock: async () => async () => {
-				throw new Error("disk gone");
-			},
+			acquireRunLock: async () => ({
+				leftBehind: [],
+				release: async () => {
+					throw new Error("disk gone");
+				},
+			}),
 		});
 		noEngine();
 
@@ -184,9 +190,12 @@ describe("the run lock", () => {
 
 	it("keeps a run's result when only the release fails", async () => {
 		const v = vault({
-			acquireRunLock: async () => async () => {
-				throw new Error("disk gone");
-			},
+			acquireRunLock: async () => ({
+				leftBehind: [],
+				release: async () => {
+					throw new Error("disk gone");
+				},
+			}),
 		});
 
 		const workflow = await run(v.platform);
@@ -200,5 +209,76 @@ describe("the run lock", () => {
 
 		await expect(run(v.platform)).rejects.toThrow("it has no acquireRunLock");
 		expect(execContainer).not.toHaveBeenCalled();
+	});
+});
+
+// A run whose process was killed, or whose window was reloaded, never
+// finalised its record. The run that takes over its lock does (#256).
+describe("records of runs that ended without finishing", () => {
+	const SINCE = "2026-11-23T00:00:00.000Z";
+	const BASE = "_vaultore/runs/Workflows/lock";
+	const record = (runId: string, startedAt: string, status = "running", workflowPath = PATH) =>
+		JSON.stringify({ runId, workflowPath, startedAt, status }, null, 2);
+	const statusOf = (v: Vault, runId: string) =>
+		(JSON.parse(v.files[`${BASE}/${runId}/run.json`] as string) as { status: string; error?: string });
+
+	function leftBehind(v: Vault): void {
+		v.locks.leaveBehind({
+			holder: { pid: 4242, host: "here", since: SINCE, by: "Obsidian" },
+			why: "is no longer running",
+		});
+	}
+
+	it("marks the run the dead holder started as aborted, saying why", async () => {
+		const v = vault();
+		v.files[`${BASE}/dead/run.json`] = record("dead", "2026-11-23T00:00:00.002Z");
+		leftBehind(v);
+
+		await run(v.platform);
+
+		const dead = statusOf(v, "dead");
+		expect(dead.status).toBe("aborted");
+		expect(dead.error).toContain(
+			`The run ended without finishing: process 4242 (Obsidian), which took the note's run lock at ${SINCE}, is no longer running`
+		);
+		expect(v.logged.some((line) => line.includes(`${BASE}/dead/run.json as aborted`))).toBe(true);
+	});
+
+	it("leaves records it cannot tie to the dead holder alone", async () => {
+		const v = vault();
+		// Started before the holder took the lock: not its run.
+		v.files[`${BASE}/older/run.json`] = record("older", "2026-11-22T23:00:00.000Z");
+		// Finished.
+		v.files[`${BASE}/done/run.json`] = record("done", "2026-11-23T00:00:01.000Z", "completed");
+		// Another note's record, under this note's folder by name only.
+		v.files[`${BASE}/stray/run.json`] = record("stray", "2026-11-23T00:00:01.000Z", "running", "Other.md");
+		leftBehind(v);
+
+		await run(v.platform);
+
+		expect(statusOf(v, "older").status).toBe("running");
+		expect(statusOf(v, "done").status).toBe("completed");
+		expect(statusOf(v, "stray").status).toBe("running");
+	});
+
+	it("touches nothing when no lock was left behind", async () => {
+		const v = vault();
+		v.files[`${BASE}/live/run.json`] = record("live", "2026-11-23T00:00:01.000Z");
+
+		await run(v.platform);
+
+		expect(statusOf(v, "live").status).toBe("running");
+	});
+
+	it("goes ahead with the run when a record cannot be read", async () => {
+		const v = vault();
+		v.files[`${BASE}/broken/run.json`] = "{ not json";
+		leftBehind(v);
+
+		const workflow = await run(v.platform);
+
+		expect(Array.from(workflow.outputs.keys())).toEqual(["one"]);
+		expect(v.files[`${BASE}/broken/run.json`]).toBe("{ not json");
+		expect(v.logged.some((line) => line.startsWith(`warn: The run record ${BASE}/broken/run.json could not be finalised`))).toBe(true);
 	});
 });
