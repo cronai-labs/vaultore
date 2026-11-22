@@ -78,7 +78,7 @@ vaultore/
 └── specs/                    # ore-implementation.md; cronai-handover, go-cell, permissions, sandbox (-spec.md)
 ```
 
-`.github/` holds `ci.yml`, `release.yml`, `dependabot.yml` and the pull request template.
+`.github/` holds `policy.yml` and `code.yml` (the two required checks), `release.yml`, `dependabot.yml` and the pull request template.
 
 ## Packages
 

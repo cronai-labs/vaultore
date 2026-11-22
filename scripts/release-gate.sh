@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
 # Refuses a release unless the commit is on the default branch and its
-# ci-required check run concluded success. The release reads the evidence CI
-# already produced instead of re-running the gate, so .github/workflows/ci.yml
-# stays the only definition of what "passed" means.
+# `code` check run concluded success. The release reads the evidence CI
+# already produced instead of re-running the gate, so .github/workflows/code.yml
+# stays the only definition of what "passed" means. `policy` is not read: on a
+# commit of main it checks only the action pins, and the PR that made the commit
+# could not merge without it.
 #
 #   scripts/release-gate.sh <owner/repo> <commit-sha> [options]
 #
@@ -21,11 +23,11 @@
 
 set -uo pipefail
 
-readonly REQUIRED_CHECK="ci-required"
+readonly REQUIRED_CHECK="code"
 # The GitHub Actions app on github.com. A check run of the same name created by
 # any other app, or by a token through the Checks API, does not count.
 readonly ACTIONS_APP_ID=15368
-readonly CI_WORKFLOW_PATH=".github/workflows/ci.yml"
+readonly CI_WORKFLOW_PATH=".github/workflows/code.yml"
 
 refuse() {
 	# GitHub renders ::error:: as an annotation on the run; locally it is a line.
@@ -67,7 +69,7 @@ done
 
 # --- on the default branch ---------------------------------------------------
 #
-# A green ci-required alone is not enough: a pull request's head commit carries
+# A green `code` alone is not enough: a pull request's head commit carries
 # one too, and a tag can point at any commit.
 
 default_branch="$(gh api "repos/$repo" --jq '.default_branch // empty')" ||
@@ -85,7 +87,7 @@ case "$relation" in
 esac
 echo "on $default_branch: $sha ($relation)"
 
-# --- passed ci-required ------------------------------------------------------
+# --- passed code -------------------------------------------------------------
 
 started=$SECONDS
 while true; do

@@ -17,7 +17,7 @@ status: active
 
 ## Decision
 
-`bun run audit` runs `bun audit --audit-level=high` in the `security` job, which feeds `ci-required`. On 2026-10-22 it exits 0 with 2 advisories below the threshold. A plain `bun audit` still lists every advisory, and Dependabot reports them.
+`bun run audit` runs `bun audit --audit-level=high` in the `code` job (`code.yml`; until 2026-11-22 the `security` job, which fed `ci-required`). On 2026-10-22 it exits 0 with 2 advisories below the threshold. A plain `bun audit` still lists every advisory, and Dependabot reports them.
 
 Rejected: gating on every severity. It would fail every PR on the two advisories below, which nobody here can fix. A production-only scope, as cronai-labs/web-cronai-app uses with `npm audit --omit=dev`, is not available: `bun audit` (1.3.14) has no flag to leave out development dependencies.
 

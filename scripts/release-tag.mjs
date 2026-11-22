@@ -11,7 +11,7 @@
  * read from the commit itself, not from the working tree. Then it creates an
  * annotated tag <version> on that commit. Nothing is pushed; it prints the
  * push command. Pushing the tag runs .github/workflows/release.yml, which
- * checks the commit is on main and passed ci-required before publishing.
+ * checks the commit is on main and passed its `code` check before publishing.
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

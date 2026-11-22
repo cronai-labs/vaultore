@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # A tag can point at any commit. Only a commit on main whose ci-required
+  # A tag can point at any commit. Only a commit on main whose `code`
   # check concluded success may be released; the gate reads that evidence
   # rather than re-running CI, and waits if CI on the commit is still
   # running, as it is when the tag follows the release PR's merge closely.
@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: read # checkout, and compare the tagged commit with main
-      checks: read # the ci-required check run on that commit
+      checks: read # the code check run on that commit
       actions: read # the CI workflow run, to tell "not yet" from "never"
 
     steps:
@@ -41,7 +41,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Tagged commit is on main and passed ci-required
+      - name: Tagged commit is on main and passed code
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/release-gate.sh "$GITHUB_REPOSITORY" "$(git rev-parse 'HEAD^{commit}')"

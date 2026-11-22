@@ -59,8 +59,8 @@ Everything in this section is in the code on `main`. The specs describe each par
 
 **Release path**
 
-- One `ci-required` check over policy, commitlint, build, tests, lint, container integration
-  tests and a reproducible-build check; tag-driven, immutable, attested GitHub releases
+- Two required checks: `policy` over the PR's text and the merge discipline, `code` over
+  commitlint, build, tests, lint, container integration tests and a reproducible-build check; tag-driven, immutable, attested GitHub releases
   ([CONTRIBUTING](../CONTRIBUTING.md#release-process)).
 
 ## Released: 0.1.0 to 0.1.2, and the listing
