@@ -247,7 +247,7 @@ function staleBecause(holder: LockHolder, name: string, check: StaleCheck): stri
 		return "took it before this machine last started";
 	}
 	if (holder.pid === process.pid) {
-		return "is this process, which no longer holds it: an earlier load of VaultOre in it took it";
+		return "is this process, but the load of VaultOre that took it has ended (a reload)";
 	}
 	return check.isAlive(holder.pid) ? undefined : "is no longer running";
 }

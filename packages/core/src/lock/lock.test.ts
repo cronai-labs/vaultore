@@ -199,7 +199,7 @@ describe("acquireLock", () => {
 		const release = await acquireLock(lock, { ...running, onStale: (_, why) => reasons.push(why) });
 
 		expect(reasons).toEqual([
-			"is this process, which no longer holds it: an earlier load of VaultOre in it took it",
+			"is this process, but the load of VaultOre that took it has ended (a reload)",
 		]);
 		await release();
 	});
