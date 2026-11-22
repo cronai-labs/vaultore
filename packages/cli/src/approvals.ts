@@ -14,10 +14,8 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { posix, resolve, win32 } from "node:path";
-import { errorMessage } from "@vaultore/core";
-import type { ScheduleApproval } from "@vaultore/core";
-import { LockHeldError, acquireLock } from "./lock";
-import type { LockHolder, LockOptions } from "./lock";
+import { LockHeldError, acquireLock, errorMessage } from "@vaultore/core";
+import type { LockHolder, LockOptions, ScheduleApproval } from "@vaultore/core";
 
 const APPROVALS_FILE = "approvals.json";
 const FORMAT = "vaultore.schedule-approvals";
@@ -111,9 +109,9 @@ export interface ApprovalStoreOps {
 	/** Puts the written temporary file in place. Replaceable in tests. */
 	rename?: (from: string, to: string) => Promise<void>;
 	/** How the lock around a change is taken. Replaceable in tests. */
-	lock?: Pick<LockOptions, "isAlive" | "host">;
+	lock?: Pick<LockOptions, "isAlive" | "host" | "bootTime">;
 	/** Told when a lock left by a command that is gone was removed. Default: a line on stderr. */
-	onStaleLock?: (holder: LockHolder, lockPath: string) => void;
+	onStaleLock?: (holder: LockHolder, lockPath: string, why: string) => void;
 }
 
 export class ApprovalStore {
@@ -121,8 +119,8 @@ export class ApprovalStore {
 	readonly file: string;
 	private readonly dir: string;
 	private readonly rename: (from: string, to: string) => Promise<void>;
-	private readonly lockOptions: Pick<LockOptions, "isAlive" | "host">;
-	private readonly onStaleLock: (holder: LockHolder, lockPath: string) => void;
+	private readonly lockOptions: Pick<LockOptions, "isAlive" | "host" | "bootTime">;
+	private readonly onStaleLock: (holder: LockHolder, lockPath: string, why: string) => void;
 
 	constructor(stateDir: string, ops: ApprovalStoreOps = {}) {
 		this.dir = resolve(stateDir);
@@ -131,9 +129,9 @@ export class ApprovalStore {
 		this.lockOptions = ops.lock ?? {};
 		this.onStaleLock =
 			ops.onStaleLock ??
-			((holder, lockPath) => {
+			((holder, lockPath, why) => {
 				process.stderr.write(
-					`[vaultore] removed the lock ${lockPath}: process ${holder.pid}, which took it at ${holder.since}, is no longer running\n`
+					`[vaultore] removed the lock ${lockPath}: process ${holder.pid}, which took it at ${holder.since}, ${why}\n`
 				);
 			});
 	}
@@ -273,7 +271,7 @@ export class ApprovalStore {
 		try {
 			return await acquireLock(lockPath, {
 				...this.lockOptions,
-				onStale: (holder) => this.onStaleLock(holder, lockPath),
+				onStale: (holder, why) => this.onStaleLock(holder, lockPath, why),
 			});
 		} catch (err) {
 			if (err instanceof LockHeldError) throw new ApprovalStoreError(err.message);

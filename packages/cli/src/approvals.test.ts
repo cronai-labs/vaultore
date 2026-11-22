@@ -278,7 +278,7 @@ describe("ApprovalStore", () => {
 		);
 		const reports: string[] = [];
 		const store = new ApprovalStore(dir, {
-			lock: { isAlive: (pid) => pid !== 4242 },
+			lock: { isAlive: (pid) => pid !== 4242, bootTime: 0 },
 			onStaleLock: (holder, path) => reports.push(`${holder.pid} ${path}`),
 		});
 
@@ -298,7 +298,7 @@ describe("ApprovalStore", () => {
 			join(lockPath, "4242.abcdef.json"),
 			JSON.stringify({ pid: 4242, host: hostname(), since: "2026-01-01T00:00:00.000Z" })
 		);
-		const store = new ApprovalStore(dir, { lock: { isAlive: () => true } });
+		const store = new ApprovalStore(dir, { lock: { isAlive: () => true, bootTime: 0 } });
 
 		await expect(
 			store.update("/vault", (approvals) => {
