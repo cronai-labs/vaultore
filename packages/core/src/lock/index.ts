@@ -85,11 +85,14 @@ const ATTEMPTS = 5;
 
 /**
  * How far before the boot time a holder's start must lie to count as earlier.
- * The boot time is computed from the clock and the uptime, both read now, and
- * a clock that was set back since the lock was taken would otherwise make a
- * held lock look older than the boot.
+ * The boot time is the clock now minus the uptime, so a clock set forward
+ * after the lock was taken (a time sync after waking, a resumed virtual
+ * machine) moves it past the lock's start, and a live lock would look older
+ * than the boot. An hour keeps ordinary corrections out of it; a lock taken
+ * less than an hour before a crash and a reboot falls back to the process
+ * check. A lock this process holds is never judged by the clock.
  */
-const BOOT_MARGIN_MS = 5 * 60 * 1000;
+const BOOT_MARGIN_MS = 60 * 60 * 1000;
 
 /** When this machine last started, in ms since the epoch. */
 export function lastBootTime(): number {
@@ -237,14 +240,14 @@ export function describeHolder(holder: LockHolder): string {
  * "process <pid>, which took it at <since>, …"; undefined while it does.
  */
 function staleBecause(holder: LockHolder, name: string, check: StaleCheck): string | undefined {
+	// This process's own: held, whatever the clock says.
+	if (holder.pid === process.pid && check.held.has(name)) return undefined;
 	const since = Date.parse(holder.since);
 	if (!Number.isNaN(since) && since < check.bootTime - BOOT_MARGIN_MS) {
 		return "took it before this machine last started";
 	}
 	if (holder.pid === process.pid) {
-		return check.held.has(name)
-			? undefined
-			: "is this process, which no longer holds it: an earlier load of VaultOre in it took it";
+		return "is this process, which no longer holds it: an earlier load of VaultOre in it took it";
 	}
 	return check.isAlive(holder.pid) ? undefined : "is no longer running";
 }

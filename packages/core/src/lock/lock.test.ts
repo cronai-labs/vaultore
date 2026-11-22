@@ -235,14 +235,27 @@ describe("acquireLock", () => {
 		await release();
 	});
 
-	// The boot time is computed from the clock and the uptime. A lock taken
-	// shortly before the computed boot time is not judged by it.
-	it("does not judge a lock by a boot time only minutes after it was taken", async () => {
+	// The boot time is the clock minus the uptime. A clock set forward after a
+	// lock was taken moves it past the lock's start; within the margin, the
+	// lock is not judged by it.
+	it("does not judge a lock by a boot time less than an hour after it was taken", async () => {
 		leaveLock({ since: "2026-01-01T00:00:00.000Z" });
 
 		await expect(
-			acquireLock(lock, { isAlive: () => true, bootTime: Date.parse("2026-01-01T00:04:00.000Z") })
+			acquireLock(lock, { isAlive: () => true, bootTime: Date.parse("2026-01-01T00:59:00.000Z") })
 		).rejects.toBeInstanceOf(LockHeldError);
+	});
+
+	// However far the clock moved, a lock in this process's own record is held.
+	it("never judges a lock this process holds by the boot time", async () => {
+		const release = await acquireLock(lock, { bootTime: Date.now() + 24 * 60 * 60 * 1000 });
+
+		const refusal: unknown = await acquireLock(lock, { bootTime: Date.now() + 24 * 60 * 60 * 1000 }).catch(
+			(err: unknown) => err
+		);
+
+		expect(refusal).toBeInstanceOf(LockHeldError);
+		await release();
 	});
 
 	it("fails as the file system says when the lock cannot be created at all", async () => {
