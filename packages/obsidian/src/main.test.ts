@@ -477,7 +477,7 @@ describe("VaultOrePlugin", () => {
 
     function acquireRunLock(path: string) {
       return (plugin as unknown as {
-        adapter: { acquireRunLock: (p: string) => Promise<() => Promise<void>> };
+        adapter: { acquireRunLock: (p: string) => Promise<{ release: () => Promise<void> }> };
       }).adapter.acquireRunLock(path);
     }
 
@@ -488,8 +488,8 @@ describe("VaultOrePlugin", () => {
 
       expect(refusal).toBeInstanceOf(RunLockHeldError);
       expect(String(refusal)).toContain(`notes/daily.md is already being run by process ${process.pid} (Obsidian)`);
-      await release();
-      await (await acquireRunLock("notes/daily.md"))();
+      await release.release();
+      await (await acquireRunLock("notes/daily.md")).release();
     });
 
     // Not an error of this run: the notice names who has the note.

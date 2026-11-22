@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import type { RunLock } from "../lock/run-lock";
 
 // =============================================================================
 // PERMISSION TYPES
@@ -553,13 +554,14 @@ export interface PlatformAdapter {
   readonly configDir: string;
   /**
    * Takes the run lock of the note at `notePath`, vault-relative as
-   * `resolveInVault` returns it, and resolves to its release. Rejects with
+   * `resolveInVault` returns it, and resolves to it: its release, and the
+   * holders of a lock left behind it removed (#256). Rejects with
    * `RunLockHeldError` while another run of the note holds it, in this runner
    * or another. Both desktop adapters implement it with `acquireRunLock` from
    * core's lock module, so the plugin and the CLI meet on one lock (#215).
    * The executor holds it for a whole run and refuses to run without it.
    */
-  acquireRunLock(notePath: string): Promise<() => Promise<void>>;
+  acquireRunLock(notePath: string): Promise<RunLock>;
 
   // Settings
   getSetting<T>(key: string): T | undefined;

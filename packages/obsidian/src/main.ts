@@ -25,7 +25,7 @@ import {
   isWorkflowFrontmatter,
   resolveInVaultRoot,
 } from "@vaultore/core";
-import type { PlatformAdapter, PlatformRequest, PlatformResponse, Timers } from "@vaultore/core";
+import type { PlatformAdapter, PlatformRequest, PlatformResponse, RunLock, Timers } from "@vaultore/core";
 
 interface VaultOreSettings {
   defaultProvider: "openai" | "anthropic";
@@ -215,7 +215,7 @@ class ObsidianAdapter implements PlatformAdapter {
 
   // The note's run lock, outside the vault and shared with the CLI, so a note
   // runs once at a time whether Obsidian or `vaultore agent` starts it (#215).
-  async acquireRunLock(notePath: string): Promise<() => Promise<void>> {
+  async acquireRunLock(notePath: string): Promise<RunLock> {
     return acquireRunLock({
       vaultRoot: await this.getVaultRoot(),
       notePath,

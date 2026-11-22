@@ -72,7 +72,7 @@ describe("NodeAdapter.acquireRunLock", () => {
 			`notes/wf.md is already being run by process ${process.pid} (vaultore agent)`
 		);
 
-		await release();
-		await (await adapter("vaultore run").acquireRunLock("notes/wf.md"))();
+		await release.release();
+		await (await adapter("vaultore run").acquireRunLock("notes/wf.md")).release();
 	});
 });

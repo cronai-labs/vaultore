@@ -164,7 +164,7 @@ export {
   RunLockHeldError,
 } from "./lock/run-lock";
 
-export type { RunLockOptions } from "./lock/run-lock";
+export type { LeftBehind, RunLock, RunLockOptions } from "./lock/run-lock";
 
 // =============================================================================
 // ERRORS

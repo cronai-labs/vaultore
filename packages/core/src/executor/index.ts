@@ -36,6 +36,8 @@ import {
 } from "../providers";
 import { renderArtifactIndex, renderOutputMarkdown } from "./output-note";
 import { cellOutputsSource } from "../vault";
+import { describeHolder } from "../lock";
+import type { LeftBehind } from "../lock/run-lock";
 import { parse } from "@babel/parser";
 
 // =============================================================================
@@ -79,8 +81,12 @@ export class WorkflowExecutor {
     // One run per note, across the plugin and the CLI (#215). Taken before
     // anything is recorded or run; a second runner is refused here, with the
     // holder named, and nothing of this run exists yet.
-    const release = await platform.acquireRunLock(notePath);
+    const lock = await platform.acquireRunLock(notePath);
     try {
+      // A lock left behind is a run of this note that ended without
+      // finishing; its record still says "running" (#256).
+      await finalizeAbandonedRuns(platform, workflow.path, lock.leftBehind);
+
       // Decided inside the lock: the caller read the note, and checked its
       // approval, before the lock was held. Another run may have written into
       // it since, or the user changed it; then what was checked is not what
@@ -97,7 +103,7 @@ export class WorkflowExecutor {
       // run's own result or error; the lock it leaves is taken over as stale
       // once this process is gone.
       try {
-        await release();
+        await lock.release();
       } catch (err) {
         platform.log("warn", `The run lock of ${workflow.path} could not be released: ${errorMessage(err)}`);
       }
@@ -703,6 +709,71 @@ async function createRunContext(
  * Best effort: a failure to write the record must not mask whatever error is
  * already propagating out of the run.
  */
+/**
+ * Marks the records of runs that ended without finishing as `aborted`. A run
+ * whose process was killed, or whose window was reloaded, never reached its
+ * `finally`, so its `run.json` says "running" for good. Its run lock stayed
+ * behind, and the run that took it over passes its holders here.
+ *
+ * Only records this note's runs left, still "running", and started at or after
+ * the holder took the lock are touched: while it held the lock, no other run of
+ * the note could start one. Records of other runs, finished or not, are left
+ * alone. Failures are logged, never thrown: the run that took over goes ahead.
+ */
+export async function finalizeAbandonedRuns(
+  platform: PlatformAdapter,
+  workflowPath: string,
+  leftBehind: readonly LeftBehind[]
+): Promise<void> {
+  if (leftBehind.length === 0) return;
+  const outputRoot = normalizeOutputRoot(platform.getSetting<string>("vaultore.outputRoot"));
+  const runBaseDir = runBasePath(outputRoot, workflowPath);
+  let records: string[];
+  try {
+    if (!(await platform.exists(runBaseDir))) return;
+    records = (await platform.listFiles(runBaseDir, "run.json")).filter(
+      (path) => path.startsWith(`${runBaseDir}/`) && path.endsWith("/run.json")
+    );
+  } catch (err) {
+    platform.log("warn", `The run records of ${workflowPath} could not be listed: ${errorMessage(err)}`);
+    return;
+  }
+
+  const now = new Date().toISOString();
+  for (const path of records) {
+    try {
+      const record: unknown = JSON.parse(await platform.readFile(path));
+      if (typeof record !== "object" || record === null) continue;
+      const { status, startedAt, workflowPath: recorded } = record as Record<string, unknown>;
+      if (status !== "running" || recorded !== workflowPath || typeof startedAt !== "string") continue;
+      const started = Date.parse(startedAt);
+      const owner = leftBehind.find(({ holder }) => {
+        const since = Date.parse(holder.since);
+        return Number.isFinite(started) && Number.isFinite(since) && started >= since;
+      });
+      if (!owner) continue;
+      const { holder, why } = owner;
+      await platform.writeFile(
+        path,
+        JSON.stringify(
+          {
+            ...record,
+            status: "aborted",
+            error:
+              `The run ended without finishing: ${describeHolder(holder)}, which took the note's run lock at ${holder.since}, ${why}. ` +
+              `Recorded at ${now}, when the next run took the lock over`,
+          },
+          null,
+          2
+        )
+      );
+      platform.log("info", `Marked the run ${path} as aborted: it ended without finishing`);
+    } catch (err) {
+      platform.log("warn", `The run record ${path} could not be finalised: ${errorMessage(err)}`);
+    }
+  }
+}
+
 export async function finalizeRunContext(
   platform: PlatformAdapter,
   runContext: RunContext,

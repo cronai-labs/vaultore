@@ -122,8 +122,10 @@ vaultore/
 
 1. **Parse** the note: frontmatter against the schema, cells, existing outputs.
 2. **Lock the note**: the platform's `acquireRunLock`, refused while another run of the note
-   holds it; then read the note again, and stop if it is no longer what the caller read. The
-   lock is released when the run ends (ore-implementation, "One run per note").
+   holds it. A lock left behind by a run that ended without finishing is taken over, and that
+   run's record is marked `aborted`. Then read the note again, and stop if it is no longer what
+   the caller read. The lock is released when the run ends (ore-implementation, "One run per
+   note").
 3. **Create the run**: a run id, `<outputRoot>/runs/<workflow>/<runId>/run.json` with status
    `running`.
 4. **Resolve permissions**: defaults, then frontmatter, then a stored decision or a prompt for
