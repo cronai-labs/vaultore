@@ -19,6 +19,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { identityProblems, identityRefusal } from "./git-identity.mjs";
+
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const releaseNotes = resolve(dirname(fileURLToPath(import.meta.url)), "release-notes.mjs");
 
@@ -35,6 +37,11 @@ const version = process.argv[2];
 if (!version || !SEMVER.test(version)) {
 	fail("usage: bun run release:tag <X.Y.Z>");
 }
+
+// An annotated tag carries the committer address as its tagger; a private one
+// is refused only at the push, after the tag exists (#238).
+const identity = identityProblems(["GIT_COMMITTER_IDENT"]);
+if (identity.length > 0) fail(identityRefusal(identity, `bun run release:tag ${version}`));
 
 console.log("Fetching origin...");
 git("fetch", "--quiet", "--tags", "origin");

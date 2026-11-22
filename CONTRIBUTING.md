@@ -118,6 +118,12 @@ Please keep tests green and add coverage for new behavior. Canonical fixtures in
 `main` only changes through pull requests, so a release is a pull request too, followed by
 a tag. Two commands, each run locally; neither pushes anything.
 
+Both write with your git identity, and GitHub refuses to publish a commit or tag that
+carries a private address. They stop before creating anything unless the author and
+committer addresses are your `users.noreply.github.com` address; pass it per command with
+`GIT_AUTHOR_EMAIL=<no-reply> GIT_COMMITTER_EMAIL=<no-reply>` rather than changing your
+configuration.
+
 **1. Prepare the release pull request** on an up-to-date `main`:
 
 ```bash
