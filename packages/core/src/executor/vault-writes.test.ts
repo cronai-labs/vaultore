@@ -17,6 +17,7 @@ vi.mock("../runtime", () => ({
 }));
 
 import { execContainer } from "../runtime";
+import { memoryRunLocks } from "../testing/run-locks";
 
 const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
@@ -100,6 +101,7 @@ function vault(
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
 		getVaultRoot: async () => "/vault",
+		acquireRunLock: memoryRunLocks().acquireRunLock,
 		resolveInVault: async (path: string) => {
 			const link = links[path];
 			if (link instanceof Error) throw link;

@@ -16,6 +16,7 @@ vi.mock("../runtime", () => ({
 }));
 
 import { execContainer } from "../runtime";
+import { memoryRunLocks } from "../testing/run-locks";
 
 const SECRET = "the contents of a private note";
 
@@ -60,6 +61,7 @@ function vault(
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
 		getVaultRoot: async () => "/vault",
+		acquireRunLock: memoryRunLocks().acquireRunLock,
 		resolveInVault: async (path: string) => {
 			const refused = links[path];
 			if (refused) throw refused;

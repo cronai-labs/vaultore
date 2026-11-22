@@ -51,3 +51,28 @@ describe("NodeAdapter.configDir", () => {
 		expect(await adapter.listFiles("")).toEqual(["notes/wf.md"]);
 	});
 });
+
+// One run per note across runners (#215). The plugin's side is tested in
+// packages/obsidian; both use core's acquireRunLock.
+describe("NodeAdapter.acquireRunLock", () => {
+	function adapter(runner: string): NodeAdapter {
+		return new NodeAdapter({
+			vaultRoot: join(base, "vault"),
+			quiet: true,
+			runner,
+			runLockDirectory: join(base, "locks"),
+		});
+	}
+
+	it("refuses a second runner while the first runs the note, naming the first", async () => {
+		writeFileSync(join(base, "vault/notes/wf.md"), "---\nore: true\n---\n");
+		const release = await adapter("vaultore agent").acquireRunLock("notes/wf.md");
+
+		await expect(adapter("vaultore run").acquireRunLock("notes/wf.md")).rejects.toThrow(
+			`notes/wf.md is already being run by process ${process.pid} (vaultore agent)`
+		);
+
+		await release();
+		await (await adapter("vaultore run").acquireRunLock("notes/wf.md"))();
+	});
+});

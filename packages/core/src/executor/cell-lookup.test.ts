@@ -27,6 +27,7 @@ vi.mock("../runtime", () => ({
 }));
 
 import { execContainer } from "../runtime";
+import { memoryRunLocks } from "../testing/run-locks";
 
 let scratch: string;
 let scripts = 0;
@@ -75,6 +76,7 @@ function vault(files: Record<string, string>): PlatformAdapter {
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
 		getVaultRoot: async () => "/vault",
+		acquireRunLock: memoryRunLocks().acquireRunLock,
 		resolveInVault: async (path: string) => path,
 		getSetting: () => undefined,
 		setSetting: async () => undefined,

@@ -14,10 +14,13 @@ import type { SettingDefinition, SettingDefinitionItem, SettingGroupItem } from 
 import {
   DEFAULT_MODELS,
   DEFAULT_PROVIDER,
+  RunLockHeldError,
   WorkflowExecutor,
   WorkflowParser,
   WorkflowScheduler,
+  acquireRunLock,
   computeNextRun,
+  describeHolder,
   errorMessage,
   isWorkflowFrontmatter,
   resolveInVaultRoot,
@@ -208,6 +211,22 @@ class ObsidianAdapter implements PlatformAdapter {
   // against, so getVaultRoot throws and nothing is read or written.
   async resolveInVault(path: string): Promise<string> {
     return resolveInVaultRoot(await this.getVaultRoot(), this.normalizePath(path));
+  }
+
+  // The note's run lock, outside the vault and shared with the CLI, so a note
+  // runs once at a time whether Obsidian or `vaultore agent` starts it (#215).
+  async acquireRunLock(notePath: string): Promise<() => Promise<void>> {
+    return acquireRunLock({
+      vaultRoot: await this.getVaultRoot(),
+      notePath,
+      by: "Obsidian",
+      onStale: (holder, why) => {
+        this.log(
+          "warn",
+          `Removed the run lock of ${notePath}: ${describeHolder(holder)}, which took it at ${holder.since}, ${why}`
+        );
+      },
+    });
   }
 
   getSetting<T>(key: string): T | undefined {
@@ -614,7 +633,7 @@ export default class VaultOrePlugin extends Plugin {
       });
       new Notice("VaultOre: Workflow completed");
     } catch (err) {
-      new Notice(`VaultOre error: ${errorMessage(err)}`);
+      new Notice(runFailureNotice(err));
     } finally {
       // The notice is only created once the read succeeds, so it may not exist.
       startNotice?.hide();
@@ -810,11 +829,21 @@ export default class VaultOrePlugin extends Plugin {
       new Notice(`VaultOre: Cell ${cell.attributes.id} completed`);
     } catch (err) {
       startNotice.hide();
-      new Notice(`VaultOre error: ${errorMessage(err)}`);
+      new Notice(runFailureNotice(err));
     } finally {
       this.runningWorkflows.delete(file.path);
     }
   }
+}
+
+/**
+ * What a run that did not complete shows. A note another runner is running is
+ * not an error of this one: the notice says who has it.
+ */
+function runFailureNotice(err: unknown): string {
+  return err instanceof RunLockHeldError
+    ? `VaultOre: ${err.message}`
+    : `VaultOre error: ${errorMessage(err)}`;
 }
 
 type NumericSetting = "aiTemperature" | "aiMaxTokens" | "aiTimeoutSeconds";

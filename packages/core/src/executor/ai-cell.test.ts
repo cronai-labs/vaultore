@@ -3,6 +3,7 @@ import { WorkflowExecutor } from "./index";
 import { DEFAULT_MODELS } from "../providers";
 import { nodeTimers } from "../testing/timers";
 import type { PlatformAdapter } from "../types";
+import { memoryRunLocks } from "../testing/run-locks";
 
 /**
  * Which model and provider an `ore:ai` cell uses (#78), through the real
@@ -46,6 +47,7 @@ function vault(settings: Record<string, unknown> = {}) {
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
 		getVaultRoot: async () => "/vault",
+		acquireRunLock: memoryRunLocks().acquireRunLock,
 		resolveInVault: async (path: string) => path,
 		getSetting: <T>(key: string) => settings[key] as T | undefined,
 		setSetting: async (key: string, value: unknown) => {

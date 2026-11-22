@@ -7,8 +7,9 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { DEFAULT_CONFIG_DIR } from "../executor";
+import { acquireRunLock } from "../lock/run-lock";
 import { execContainer } from "../runtime";
 import { resolveInVaultRoot } from "../vault/confine";
 import { nodeTimers } from "./timers";
@@ -34,6 +35,14 @@ export interface FilesystemPlatformOptions {
 	secrets?: Record<string, string>;
 	/** The HTTP transport. By default every request fails: no test reaches a provider. */
 	request?: (request: PlatformRequest) => Promise<PlatformResponse>;
+	/**
+	 * Where the run locks live. By default a fresh temporary directory, so a
+	 * test never touches the user's own; platforms that are to contend for a
+	 * note's lock pass the same directory.
+	 */
+	runLockDirectory?: string;
+	/** Which runner the locks name. Default: "integration test". */
+	runner?: string;
 }
 
 /** A PlatformAdapter over a plain directory, as the CLI would provide. */
@@ -47,6 +56,8 @@ export function filesystemPlatform(
 	]);
 	const secrets = new Map<string, string>(Object.entries(options.secrets ?? {}));
 	const abs = (path: string) => join(root, path);
+	const lockDirectory =
+		options.runLockDirectory ?? mkdtempSync(join(tmpdir(), "vaultore-it-locks-"));
 	return {
 		platform: "cli",
 		configDir: DEFAULT_CONFIG_DIR,
@@ -62,6 +73,13 @@ export function filesystemPlatform(
 		listFiles: async () => [],
 		getVaultRoot: async () => root,
 		resolveInVault: (path: string) => resolveInVaultRoot(root, path),
+		acquireRunLock: (notePath: string) =>
+			acquireRunLock({
+				vaultRoot: root,
+				notePath,
+				by: options.runner ?? "integration test",
+				directory: lockDirectory,
+			}),
 		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
 			settings.set(key, value);

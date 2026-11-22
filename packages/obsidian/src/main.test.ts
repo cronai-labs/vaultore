@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,11 +9,18 @@ import { join } from "node:path";
 // against core's behaviour and the plugin cannot carry its own copy of the
 // defaults (#78). Only the executor (containers, AI) and the cell parser are
 // faked.
+// The run lock is the real one, in a directory of the test's own: a test never
+// touches the user's ~/.config/vaultore/locks.
+const runLocks = vi.hoisted(() => ({ directory: "" }));
 vi.mock("@vaultore/core", async () => {
   const actual = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
   return {
     DEFAULT_MODELS: actual.DEFAULT_MODELS,
     DEFAULT_PROVIDER: actual.DEFAULT_PROVIDER,
+    RunLockHeldError: actual.RunLockHeldError,
+    acquireRunLock: (options: import("@vaultore/core").RunLockOptions) =>
+      actual.acquireRunLock({ ...options, directory: runLocks.directory }),
+    describeHolder: actual.describeHolder,
     WorkflowExecutor: class {
       runWorkflow = vi.fn().mockResolvedValue({});
     },
@@ -35,7 +42,7 @@ vi.mock("@vaultore/core", async () => {
 const { default: VaultOrePlugin } = await import("./main");
 // Typed as the mock, which records notices and event handlers for assertions.
 const { FileSystemAdapter, Notice, TFile, requestUrl } = (await import("obsidian")) as unknown as typeof import("./__mocks__/obsidian");
-const { DEFAULT_MODELS, DEFAULT_PROVIDER, WorkflowScheduler } = await import("@vaultore/core");
+const { DEFAULT_MODELS, DEFAULT_PROVIDER, RunLockHeldError, WorkflowScheduler } = await import("@vaultore/core");
 type RecordedSetting = import("./__mocks__/obsidian").Setting;
 
 describe("VaultOrePlugin", () => {
@@ -447,6 +454,58 @@ describe("VaultOrePlugin", () => {
       plugin.app.vault.adapter = {} as never;
 
       await expect(resolveInVault("notes/new.md")).rejects.toThrow(/file system access/);
+    });
+  });
+
+  // One run per note, shared with the CLI (#215).
+  describe("the run lock", () => {
+    let base: string;
+
+    beforeEach(() => {
+      base = mkdtempSync(join(tmpdir(), "vaultore-obsidian-lock-"));
+      runLocks.directory = join(base, "locks");
+      mkdirSync(join(base, "vault/notes"), { recursive: true });
+      writeFileSync(join(base, "vault/notes/daily.md"), "---\nore: true\n---\n");
+      const adapter = new FileSystemAdapter();
+      vi.spyOn(adapter, "getBasePath").mockReturnValue(join(base, "vault"));
+      plugin.app.vault.adapter = adapter as never;
+    });
+
+    afterEach(() => {
+      rmSync(base, { recursive: true, force: true });
+    });
+
+    function acquireRunLock(path: string) {
+      return (plugin as unknown as {
+        adapter: { acquireRunLock: (p: string) => Promise<() => Promise<void>> };
+      }).adapter.acquireRunLock(path);
+    }
+
+    it("locks the note as Obsidian, and a second run of it is told so", async () => {
+      const release = await acquireRunLock("notes/daily.md");
+
+      const refusal: unknown = await acquireRunLock("notes/daily.md").catch((err: unknown) => err);
+
+      expect(refusal).toBeInstanceOf(RunLockHeldError);
+      expect(String(refusal)).toContain(`notes/daily.md is already being run by process ${process.pid} (Obsidian)`);
+      await release();
+      await (await acquireRunLock("notes/daily.md"))();
+    });
+
+    // Not an error of this run: the notice names who has the note.
+    it("shows a note another runner is running as such, not as an error", async () => {
+      const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
+      plugin.app.vault.read = vi.fn().mockResolvedValue("---\nore: true\n---\n") as never;
+      const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
+      executor.runWorkflow.mockRejectedValueOnce(
+        new RunLockHeldError("notes/daily.md", undefined, "notes/daily.md is already being run by process 7 (vaultore agent)")
+      );
+      Notice.shown.length = 0;
+
+      await (plugin as unknown as { runWorkflow: (f: unknown) => Promise<void> }).runWorkflow(file);
+
+      expect(Notice.shown).toContain("VaultOre: notes/daily.md is already being run by process 7 (vaultore agent)");
+      expect(Notice.shown.some((message) => message.startsWith("VaultOre error"))).toBe(false);
     });
   });
 

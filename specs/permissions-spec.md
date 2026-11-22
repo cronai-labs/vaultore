@@ -390,6 +390,7 @@ workflow is granted `network`.
 | A synced or renamed note running unattended | Scheduling consent: per path and schedule in the plugin (§6.1), per path and content under `vaultore agent` (§6.2) |
 | An approved scheduled note changing under `vaultore agent` | The approval is bound to the content and re-checked when a run is due (§6.2) |
 | Sync delivering an approval for `vaultore agent` | Approvals are kept outside the vault (§6.2) |
+| The plugin and the CLI running one note at once | One run lock per note, outside the vault, shared by both runners (ore-implementation, "One run per note") |
 
 ### 8.2 Not Mitigated
 
@@ -397,7 +398,7 @@ workflow is granted `network`.
 |--------|-------|
 | A note that declares `allow` | Applied without a prompt. Read a workflow before running it |
 | An approved scheduled note changing in the plugin | Its approval covers path and schedule, not the cells (§6.1, [#219](https://github.com/cronai-labs/vaultore/issues/219)) |
-| The plugin and `vaultore agent` running one note at once | Each guards only its own runs ([#215](https://github.com/cronai-labs/vaultore/issues/215)) |
+| Two machines syncing one vault running a note at once | The run lock is per machine (ore-implementation, "One run per note") |
 | Container escape, kernel side channels | Containers share a kernel or VM; VaultOre relies on the engine |
 | Prompt injection, malicious AI responses | AI output is text that later cells may act on |
 | Approving without reading | A prompt cannot judge the code it grants |
