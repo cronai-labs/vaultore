@@ -16,13 +16,15 @@
  * reached as `notes/a.md` and as `Notes/A.md` is one file, and one lock.
  *
  * It cannot make two machines that share a synced vault safe: each has its own
- * locks.
+ * locks. Nor runners in separate containers that share a lock directory: a
+ * holder's process id means nothing outside its own container.
  */
 
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
+import { errorMessage } from "../errors";
 import { LockHeldError, acquireLock, describeHolder } from "./index";
 import type { LockHolder, LockOptions } from "./index";
 
@@ -46,7 +48,8 @@ export class RunLockHeldError extends Error {
  */
 export function runLockDirectory(
 	platform: NodeJS.Platform = process.platform,
-	env: NodeJS.ProcessEnv = process.env
+	env: NodeJS.ProcessEnv = process.env,
+	accountHome: () => string = () => userInfo().homedir
 ): string {
 	if (platform === "win32") {
 		const appData = env["APPDATA"];
@@ -55,7 +58,23 @@ export function runLockDirectory(
 		}
 		return join(appData, "vaultore", "locks");
 	}
-	return join(userInfo().homedir, ".config", "vaultore", "locks");
+	let home: string;
+	try {
+		home = accountHome();
+	} catch (err) {
+		// A process under a user id with no account, as a container may run
+		// one: Node's userInfo() throws.
+		throw new Error(
+			"This process's user has no account with a home directory, so VaultOre cannot tell where its run locks belong " +
+				`(${errorMessage(err)}). Run it as a user that has one`
+		);
+	}
+	if (!home) {
+		throw new Error(
+			"This process's user has no home directory, so VaultOre cannot tell where its run locks belong. Run it as a user that has one"
+		);
+	}
+	return join(home, ".config", "vaultore", "locks");
 }
 
 /**

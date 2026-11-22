@@ -44,6 +44,18 @@ describe("runLockDirectory", () => {
 	it("refuses to guess on Windows without %APPDATA%", () => {
 		expect(() => runLockDirectory("win32", {})).toThrow("APPDATA is not set");
 	});
+
+	// A container may run the CLI under a user id with no account entry.
+	it("refuses to guess for a user with no account, and says what to do", () => {
+		const noAccount = () => {
+			throw new Error("ENOENT: no such file or directory, uv_os_get_passwd");
+		};
+
+		expect(() => runLockDirectory("linux", { HOME: "/tmp" }, noAccount)).toThrow(
+			/no account with a home directory.*uv_os_get_passwd.*Run it as a user that has one/
+		);
+		expect(() => runLockDirectory("linux", {}, () => "")).toThrow("has no home directory");
+	});
 });
 
 describe("runLockPath", () => {

@@ -100,6 +100,7 @@ vaultore/
 | HTTP | `requestUrl` | `fetch` |
 | Timers (core calls none of its own) | The window's; the scheduler's interval is registered with the plugin | Node's |
 | `ask` permissions | Modal | Deny, or allow with `--yes` |
+| Run lock | `acquireRunLock` as `Obsidian` | `acquireRunLock` as `vaultore run` or `vaultore agent` |
 | Scheduling | Approved notes only, while Obsidian is open; an approval is a path and a schedule, in the plugin data | `vaultore agent`, approved notes only; an approval is a path and the note's content hash, in `approvals.json` outside the vault (`--state-dir`) |
 
 ## Core Modules
@@ -112,6 +113,7 @@ vaultore/
 | `runtime` | Which engines answer; the `run` command line with its hardening; spawning it | `detectRuntimes`, `buildRunCommand`, `execContainer` |
 | `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` (core has no transport of its own); model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
 | `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback; whether a note still has its schedule approval | `WorkflowScheduler`, `computeNextRun`, `classifyScheduleApproval` |
+| `lock` | A lock between VaultOre processes on one machine: the approvals file's, and one run lock per note, shared by the plugin and the CLI, in `~/.config/vaultore/locks` | `acquireLock`, `acquireRunLock`, `RunLockHeldError` |
 | `vault` | `createVaultAPI`, `generateRuntimeScript`: exported, but the executor injects its own copy (`buildTypeScriptRuntime`), and the two have diverged ([#45](https://github.com/cronai-labs/vaultore/issues/45)) | |
 
 ## How a Run Works
@@ -119,19 +121,22 @@ vaultore/
 `WorkflowExecutor.runWorkflow` (`packages/core/src/executor/index.ts`):
 
 1. **Parse** the note: frontmatter against the schema, cells, existing outputs.
-2. **Create the run**: a run id, `<outputRoot>/runs/<workflow>/<runId>/run.json` with status
+2. **Lock the note**: the platform's `acquireRunLock`, refused while another run of the note
+   holds it; then read the note again, and stop if it is no longer what the caller read. The
+   lock is released when the run ends (ore-implementation, "One run per note").
+3. **Create the run**: a run id, `<outputRoot>/runs/<workflow>/<runId>/run.json` with status
    `running`.
-3. **Resolve permissions**: defaults, then frontmatter, then a stored decision or a prompt for
+4. **Resolve permissions**: defaults, then frontmatter, then a stored decision or a prompt for
    each `ask`, bound to a hash of the frontmatter and cells (permissions-spec §5).
-4. **Choose and check the engine**: frontmatter, else setting, else `docker`; `detectRuntimes`
+5. **Choose and check the engine**: frontmatter, else setting, else `docker`; `detectRuntimes`
    probes all four engines in parallel, each with a 10-second timeout.
-5. **Order the cells** by `depends`; for a single-cell run, keep the target and what it needs.
-6. **Hydrate** earlier outputs from the JSON files the note's callouts link, so `cell()` and
+6. **Order the cells** by `depends`; for a single-cell run, keep the target and what it needs.
+7. **Hydrate** earlier outputs from the JSON files the note's callouts link, so `cell()` and
    dependency checks can use them for cells that do not run this time.
-7. **For each cell, one at a time:** check its dependencies succeeded; run it (a container for
+8. **For each cell, one at a time:** check its dependencies succeeded; run it (a container for
    `ts` and `shell`, a provider request for `ai`); write its JSON record, Markdown view and the
    run index; re-read the note and replace the cell's callout.
-8. **Finish** `run.json`: `completed`, `failed` (a cell failed) or `aborted` (the run threw).
+9. **Finish** `run.json`: `completed`, `failed` (a cell failed) or `aborted` (the run threw).
 
 A container cell is `docker run --rm …` (or `podman`, or `container` for Apple; Colima uses
 the `docker` CLI). TS cells get a generated script on stdin that defines `cell()`, `vault` and
