@@ -19,6 +19,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+import { identityProblems, identityRefusal } from "./git-identity.mjs";
+
 const SEMVER = /^\d+\.\d+\.\d+$/;
 
 const args = process.argv.slice(2);
@@ -51,6 +53,11 @@ const branch = git("rev-parse", "--abbrev-ref", "HEAD");
 if (branch !== "main") {
 	fail(`releases are cut from main, not '${branch}'`);
 }
+
+// The release commit carries both addresses; a private one is refused only at
+// the push, after the branch and the commit exist (#238).
+const identity = identityProblems(["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"]);
+if (identity.length > 0) fail(identityRefusal(identity, "bun run release"));
 
 // The release branch must start from what is actually on origin/main, and the
 // tag check below must see tags pushed from elsewhere.
