@@ -1,6 +1,5 @@
 import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
-import tseslint from "typescript-eslint";
 import { globalIgnores, defineConfig } from "eslint/config";
 
 export default defineConfig(
@@ -61,15 +60,11 @@ export default defineConfig(
 			],
 		},
 	},
-	// The recommended config applies validate-manifest to JS and TS files only,
-	// so the manifest needs its own block. The community directory's review
-	// warns on keys the rule does not allow (#133, #135).
+	// The recommended config lints manifest.json as JSON, with validate-manifest
+	// at "warn". The community directory's review warns on keys the rule does
+	// not allow (#133, #135), so here they fail lint.
 	{
 		files: ["manifest.json"],
-		extends: [tseslint.configs.disableTypeChecked],
-		languageOptions: {
-			parser: tseslint.parser,
-		},
 		rules: {
 			"obsidianmd/validate-manifest": "error",
 		},
