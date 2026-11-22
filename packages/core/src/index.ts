@@ -157,6 +157,15 @@ export {
 
 export type { LockHolder, LockOptions } from "./lock";
 
+export {
+  acquireRunLock,
+  runLockDirectory,
+  runLockPath,
+  RunLockHeldError,
+} from "./lock/run-lock";
+
+export type { RunLockOptions } from "./lock/run-lock";
+
 // =============================================================================
 // ERRORS
 // =============================================================================

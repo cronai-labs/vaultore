@@ -21,7 +21,7 @@ import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
-import { DEFAULT_CONFIG_DIR, resolveInVaultRoot } from "@vaultore/core";
+import { DEFAULT_CONFIG_DIR, acquireRunLock, describeHolder, resolveInVaultRoot } from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse, Timers } from "@vaultore/core";
 import { fetchRequest } from "./fetch-request";
 
@@ -47,6 +47,17 @@ export interface NodeAdapterOptions {
 	 * default is Obsidian's (`.obsidian`).
 	 */
 	configDir?: string;
+	/**
+	 * Which runner this is, named in the run locks it takes and in the refusal
+	 * another runner gets: "vaultore run", "vaultore agent". Default: "vaultore".
+	 */
+	runner?: string;
+	/**
+	 * Where the run locks live. Default: core's `runLockDirectory()`, the one
+	 * place the plugin and every CLI meet; there is no flag for it. Tests pass
+	 * their own.
+	 */
+	runLockDirectory?: string;
 }
 
 export class NodeAdapter implements PlatformAdapter {
@@ -63,6 +74,8 @@ export class NodeAdapter implements PlatformAdapter {
 	private readonly assumeYes: boolean;
 	private readonly overrides: Record<string, unknown>;
 	private readonly quiet: boolean;
+	private readonly runner: string;
+	private readonly runLockDirectory: string | undefined;
 	/** SKIP_DIRS plus the configured and the default config folder. */
 	private readonly skipDirs: ReadonlySet<string>;
 	private config: Record<string, unknown>;
@@ -74,6 +87,8 @@ export class NodeAdapter implements PlatformAdapter {
 		this.assumeYes = options.assumeYes ?? false;
 		this.overrides = options.settingsOverride ?? {};
 		this.quiet = options.quiet ?? false;
+		this.runner = options.runner ?? "vaultore";
+		this.runLockDirectory = options.runLockDirectory;
 		this.config = this.loadConfig();
 	}
 
@@ -122,6 +137,25 @@ export class NodeAdapter implements PlatformAdapter {
 
 	resolveInVault(path: string): Promise<string> {
 		return resolveInVaultRoot(this.vaultRoot, path);
+	}
+
+	/**
+	 * The note's run lock, shared with the plugin and every other CLI on this
+	 * machine. A lock left by a run that was killed is taken over, and a line on
+	 * stderr says so.
+	 */
+	acquireRunLock(notePath: string): Promise<() => Promise<void>> {
+		return acquireRunLock({
+			vaultRoot: this.vaultRoot,
+			notePath,
+			by: this.runner,
+			directory: this.runLockDirectory,
+			onStale: (holder, why) => {
+				process.stderr.write(
+					`[vaultore] removed the run lock of ${notePath}: ${describeHolder(holder)}, which took it at ${holder.since}, ${why}\n`
+				);
+			},
+		});
 	}
 
 	// ── Settings ──────────────────────────────────────────────────────────

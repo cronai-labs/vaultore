@@ -72,8 +72,11 @@ access, and your own API key; the provider bills you for each request. Everythin
 (`docker`, `podman`, `colima` or `container`) to detect it and to run each code cell, and the
 cell runs the code written in the note. See the warning above.
 
-**Files outside the vault.** VaultOre reads and writes files only inside the vault. Outside it,
-it looks for the engine's command-line tool in the directories on your `PATH` and in fixed
+**Files outside the vault.** VaultOre reads and writes your notes and its outputs only inside
+the vault. Outside it, it writes one small lock file per running note, in
+`~/.config/vaultore/locks` (`%APPDATA%\vaultore\locks` on Windows), so that Obsidian and the
+command-line runner never run one note at the same time; the file is removed when the run
+ends. It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
 install locations (macOS: `/usr/local/bin`, `/opt/homebrew/bin`,
 `/Applications/Docker.app/Contents/Resources/bin/docker`; Linux: `/usr/bin`; Windows: the
 Docker Desktop and Podman folders under `C:\Program Files`), and starts it. The engine mounts
@@ -247,6 +250,10 @@ vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
   `$XDG_CONFIG_HOME/vaultore` or `~/.config/vaultore` (`%APPDATA%\vaultore` on Windows;
   `--state-dir <dir>` for another place), so that sync cannot deliver one. They are separate
   from the approvals in the plugin's settings.
+- A note runs once at a time, whether Obsidian, `vaultore run` or `vaultore agent` starts it: a
+  second run is refused and told who has the note
+  ([one run per note](specs/ore-implementation.md)). This holds on one machine; two machines
+  that sync the same vault can still run a note twice, so run scheduled notes on one of them.
 - `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
   ([handover spec](specs/cronai-handover-spec.md)).
 

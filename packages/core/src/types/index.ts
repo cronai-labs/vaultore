@@ -551,6 +551,15 @@ export interface PlatformAdapter {
    * another. The executor hides it from cells.
    */
   readonly configDir: string;
+  /**
+   * Takes the run lock of the note at `notePath`, vault-relative as
+   * `resolveInVault` returns it, and resolves to its release. Rejects with
+   * `RunLockHeldError` while another run of the note holds it, in this runner
+   * or another. Both desktop adapters implement it with `acquireRunLock` from
+   * core's lock module, so the plugin and the CLI meet on one lock (#215).
+   * The executor holds it for a whole run and refuses to run without it.
+   */
+  acquireRunLock(notePath: string): Promise<() => Promise<void>>;
 
   // Settings
   getSetting<T>(key: string): T | undefined;

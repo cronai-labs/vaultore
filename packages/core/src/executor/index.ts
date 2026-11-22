@@ -74,7 +74,41 @@ export class WorkflowExecutor {
     const platform = confinedPlatform(options.platform);
     // Before any cell runs: the output is written back into this note, which
     // is refused when its path leads out of the vault through a link.
-    await platform.resolveInVault(workflow.path);
+    const notePath = await platform.resolveInVault(workflow.path);
+
+    // One run per note, across the plugin and the CLI (#215). Taken before
+    // anything is recorded or run; a second runner is refused here, with the
+    // holder named, and nothing of this run exists yet.
+    const release = await platform.acquireRunLock(notePath);
+    try {
+      // Decided inside the lock: the caller read the note, and checked its
+      // approval, before the lock was held. Another run may have written into
+      // it since, or the user changed it; then what was checked is not what
+      // would run.
+      const current = await platform.readFile(workflow.path);
+      if (current !== options.content) {
+        throw new Error(
+          `${workflow.path} changed after it was read for this run, so nothing was run. Run it again`
+        );
+      }
+      return await this.runLocked(options, platform, workflow);
+    } finally {
+      // However the run ended. A release that fails must not replace the
+      // run's own result or error; the lock it leaves is taken over as stale
+      // once this process is gone.
+      try {
+        await release();
+      } catch (err) {
+        platform.log("warn", `The run lock of ${workflow.path} could not be released: ${errorMessage(err)}`);
+      }
+    }
+  }
+
+  private async runLocked(
+    options: ExecuteOptions,
+    platform: PlatformAdapter,
+    workflow: Workflow
+  ): Promise<Workflow> {
     const runContext = await createRunContext(platform, workflow.path);
 
     const outputs = new Map<string, CellOutput>(workflow.outputs);
@@ -309,6 +343,12 @@ function confinedPlatform(platform: PlatformAdapter): PlatformAdapter {
     throw new Error(
       "This platform cannot check where a vault path leads (it has no resolveInVault), " +
         "so VaultOre does not read or write vault files through it."
+    );
+  }
+  if (typeof (platform as Partial<PlatformAdapter>).acquireRunLock !== "function") {
+    throw new Error(
+      "This platform cannot lock a note for a run (it has no acquireRunLock), " +
+        "so VaultOre does not run notes through it: another runner could run the same note at once."
     );
   }
   const resolve = (path: string) => platform.resolveInVault(path.replace(/^[\\/]+/, ""));

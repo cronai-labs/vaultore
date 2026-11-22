@@ -16,7 +16,13 @@ import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { clearInterval, setInterval } from "node:timers";
-import { WorkflowExecutor, WorkflowScheduler, VERSION, errorMessage } from "@vaultore/core";
+import {
+	RunLockHeldError,
+	WorkflowExecutor,
+	WorkflowScheduler,
+	VERSION,
+	errorMessage,
+} from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import {
 	createApprovedRunner,
@@ -96,6 +102,7 @@ async function cmdRun(args: ParsedArgs): Promise<number> {
 		configDir: configDirFrom(args.flags),
 		assumeYes: args.flags["yes"] === true,
 		quiet: args.flags["quiet"] === true,
+		runner: "vaultore run",
 	});
 
 	const workflowPath = toVaultRelative(vaultRoot, workflowArg, {
@@ -199,6 +206,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		configDir: configDirFrom(args.flags),
 		assumeYes: args.flags["yes"] === true,
 		quiet: args.flags["quiet"] === true,
+		runner: "vaultore agent",
 	});
 	const executor = new WorkflowExecutor();
 	const warn = (line: string): void => {
@@ -216,6 +224,11 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 				await executor.runWorkflow({ platform: adapter, workflowPath: path, content });
 				process.stdout.write(`[vaultore:agent] completed ${path}\n`);
 			} catch (err) {
+				// Run elsewhere, by the plugin or another CLI: not a failure of this one.
+				if (err instanceof RunLockHeldError) {
+					warn(`skipped ${path}: ${err.message}`);
+					return;
+				}
 				process.stderr.write(
 					`[vaultore:agent] failed ${path}: ${errorMessage(err)}\n`
 				);
