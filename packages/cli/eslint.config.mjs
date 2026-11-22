@@ -42,10 +42,10 @@ export default defineConfig(
 			},
 		},
 		rules: {
-			// The CLI is a Node program and never runs in an Obsidian window:
-			// there is no `window` to take timers from, and the popout-window
-			// concern behind this rule does not arise.
-			"obsidianmd/prefer-window-timers": "off",
+			// The CLI imports its timers from `node:timers`, which the rule does
+			// not flag. The community directory's review lints this source too and
+			// counts every global timer call as a warning, so here it is an error.
+			"obsidianmd/prefer-window-timers": "error",
 		},
 	},
 	// The CLI's HTTP transport. Node has no `requestUrl`, and the recommended
