@@ -41,13 +41,15 @@ export default defineConfig(
 			},
 		},
 	},
-	// Test support runs in Node only and never ships (tsup builds only the
-	// entries in tsup.config.ts), so there is no window to take timers from.
+	// Test support runs in Node only and never ships; it imports its timers
+	// from `node:timers`. The community directory's review lints it anyway and
+	// counts every global timer call as a warning, so here it is an error.
 	{
 		basePath,
 		files: ["src/testing/**/*.ts"],
+		ignores: ["src/**/*.test.ts"],
 		rules: {
-			"obsidianmd/prefer-window-timers": "off",
+			"obsidianmd/prefer-window-timers": "error",
 		},
 	},
 	// Tests do not ship and tsconfig.json leaves them out, so the type-checked

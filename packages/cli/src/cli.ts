@@ -15,6 +15,7 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { clearInterval, setInterval } from "node:timers";
 import { WorkflowExecutor, WorkflowScheduler, VERSION, errorMessage } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import {

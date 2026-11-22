@@ -20,6 +20,7 @@
 import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
 import { DEFAULT_CONFIG_DIR, resolveInVaultRoot } from "@vaultore/core";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse, Timers } from "@vaultore/core";
 import { fetchRequest } from "./fetch-request";
@@ -51,7 +52,7 @@ export interface NodeAdapterOptions {
 export class NodeAdapter implements PlatformAdapter {
 	readonly platform = "cli" as const;
 	readonly configDir: string;
-	/** Node's own timers: the CLI has no window. */
+	/** Node's own timers (`node:timers`): the CLI has no window. */
 	readonly timers: Timers = {
 		setTimeout: (callback, ms) => setTimeout(callback, ms),
 		clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
