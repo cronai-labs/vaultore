@@ -48,7 +48,7 @@ const parser = new WorkflowParser();
  */
 export function stripTrailing(value: string, ...separators: string[]): string {
 	let end = value.length;
-	while (end > 0 && separators.includes(value[end - 1])) end -= 1;
+	while (end > 0 && separators.includes(value.charAt(end - 1))) end -= 1;
 	return value.slice(0, end);
 }
 

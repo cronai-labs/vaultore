@@ -53,13 +53,13 @@ export function isWorkflowFrontmatter(frontmatter: unknown): boolean {
  */
 export function stripTrailing(value: string, ...separators: string[]): string {
   let end = value.length;
-  while (end > 0 && separators.includes(value[end - 1])) end -= 1;
+  while (end > 0 && separators.includes(value.charAt(end - 1))) end -= 1;
   return value.slice(0, end);
 }
 
 export function stripLeading(value: string, ...separators: string[]): string {
   let start = 0;
-  while (start < value.length && separators.includes(value[start])) start += 1;
+  while (start < value.length && separators.includes(value.charAt(start))) start += 1;
   return value.slice(start);
 }
 
@@ -183,6 +183,20 @@ function foldCase(id: string): string {
 const CELL_REGEX = /```ore:(ts|shell|ai|py|go)([^\n]*)\n([\s\S]*?)```/g;
 const CELL_ATTR_REGEX = /(?:^|[ \t])(\w+)=(?:"([^"]*)"|'([^']*)'|\[([^\]]*)\]|(\S+))/g;
 
+/**
+ * Capture group `group` of `match`, for a group its pattern always fills.
+ *
+ * The type says any group may be missing; for these it cannot be, so a
+ * missing one means the pattern was changed and the parser with it is wrong.
+ */
+function captured(match: RegExpMatchArray, group: number): string {
+  const value = match[group];
+  if (value === undefined) {
+    throw new Error(`Parser bug: capture group ${group} of a match at ${match.index ?? "?"} is empty`);
+  }
+  return value;
+}
+
 /** The `key=value` attributes of a fence line, as written; a later key wins. */
 function readAttributes(attrString: string): Record<string, string> {
   const attrs: Record<string, string> = {};
@@ -191,8 +205,9 @@ function readAttributes(attrString: string): Record<string, string> {
   CELL_ATTR_REGEX.lastIndex = 0;
 
   while ((match = CELL_ATTR_REGEX.exec(attrString)) !== null) {
-    const [, key, doubleQuoted, singleQuoted, bracketed, unquoted] = match;
-    attrs[key] = doubleQuoted ?? singleQuoted ?? bracketed ?? unquoted;
+    const [, , doubleQuoted, singleQuoted, bracketed] = match;
+    // One of the four alternatives always matches, so one value is there.
+    attrs[captured(match, 1)] = doubleQuoted ?? singleQuoted ?? bracketed ?? captured(match, 5);
   }
 
   return attrs;
@@ -210,7 +225,7 @@ function findCellBlockEnd(content: string, cellId: string): number | undefined {
 
   let match: RegExpExecArray | null;
   while ((match = cellRegex.exec(content)) !== null) {
-    if (readAttributes(match[2].trim()).id === cellId) {
+    if (readAttributes(captured(match, 2).trim()).id === cellId) {
       return match.index + match[0].length;
     }
   }
@@ -247,7 +262,7 @@ export class WorkflowParser {
     const match = content.match(FRONTMATTER_REGEX);
     if (!match) return undefined;
     try {
-      return parseYaml(match[1]);
+      return parseYaml(captured(match, 1));
     } catch {
       return undefined;
     }
@@ -261,7 +276,7 @@ export class WorkflowParser {
     if (!match) return false;
 
     try {
-      return isWorkflowFrontmatter(parseYaml(match[1]));
+      return isWorkflowFrontmatter(parseYaml(captured(match, 1)));
     } catch {
       return false;
     }
@@ -274,9 +289,11 @@ export class WorkflowParser {
    */
   workflowFrontmatterError(content: string): string | undefined {
     const match = content.match(FRONTMATTER_REGEX);
-    if (!match || !/^ore:\s*true\s*(#.*)?$/m.test(match[1])) return undefined;
+    if (!match) return undefined;
+    const yaml = captured(match, 1);
+    if (!/^ore:\s*true\s*(#.*)?$/m.test(yaml)) return undefined;
     try {
-      parseYaml(match[1]);
+      parseYaml(yaml);
       return undefined;
     } catch (e) {
       return `Invalid YAML: ${errorMessage(e)}`;
@@ -294,7 +311,7 @@ export class WorkflowParser {
 
     let yaml: unknown;
     try {
-      yaml = parseYaml(match[1]);
+      yaml = parseYaml(captured(match, 1));
     } catch (e) {
       throw new ParserError(`Invalid YAML: ${String(e)}`, 0);
     }
@@ -320,8 +337,10 @@ export class WorkflowParser {
     CELL_REGEX.lastIndex = 0;
 
     while ((match = CELL_REGEX.exec(content)) !== null) {
-      const [rawBlock, typeStr, attrString, cellContent] = match;
-      const type = typeStr as CellType;
+      const rawBlock = match[0];
+      const type = captured(match, 1) as CellType;
+      const attrString = captured(match, 2);
+      const cellContent = captured(match, 3);
 
       const beforeMatch = content.slice(0, match.index);
       const startLine = beforeMatch.split("\n").length;
@@ -380,14 +399,12 @@ export class WorkflowParser {
     const cycle = findDependencyCycle(cells);
     if (cycle) {
       const [first] = cycle;
+      // Each cell depends on the next, and the last on the first.
       const message =
         cycle.length === 1
           ? `Cell ${first.attributes.id} depends on itself`
           : `Dependency cycle: ${cycle
-              .map(
-                (cell, i) =>
-                  `${cell.attributes.id} depends on ${cycle[(i + 1) % cycle.length].attributes.id}`
-              )
+              .map((cell, i) => `${cell.attributes.id} depends on ${(cycle[i + 1] ?? first).attributes.id}`)
               .join(", ")}`;
       throw new ParserError(message, first.startLine);
     }
@@ -470,8 +487,7 @@ export class WorkflowParser {
     const stubs = new Map<string, { outputPath?: string; runId?: string }>();
     const lines = content.split("\n");
 
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
+    for (const [i, line] of lines.entries()) {
       if (!line.startsWith("> [!ore-output]")) continue;
 
       const cellId = line.replace("> [!ore-output]", "").trim();
@@ -480,8 +496,7 @@ export class WorkflowParser {
       let outputPath: string | undefined;
       let runId: string | undefined;
 
-      for (let j = i + 1; j < lines.length; j += 1) {
-        const nextLine = lines[j];
+      for (const nextLine of lines.slice(i + 1)) {
         if (!nextLine.startsWith(">")) break;
 
         const trimmed = stripLeading(nextLine.slice(1), " ", "\t");
@@ -717,7 +732,7 @@ export class ParserError extends Error {
  * cell that depends on itself is a cycle of one. Every `depends` entry must
  * name a cell in `cells`.
  */
-function findDependencyCycle(cells: Cell[]): Cell[] | undefined {
+function findDependencyCycle(cells: Cell[]): [Cell, ...Cell[]] | undefined {
   const byId = new Map(cells.map((cell) => [cell.attributes.id, cell]));
   // Absent: not visited. "open": on the path being walked. "done": everything
   // reachable from it has been walked without finding a cycle.
@@ -731,8 +746,7 @@ function findDependencyCycle(cells: Cell[]): Cell[] | undefined {
     const path: Array<{ cell: Cell; nextDep: number }> = [{ cell: root, nextDep: 0 }];
     state.set(root.attributes.id, "open");
 
-    while (path.length > 0) {
-      const top = path[path.length - 1];
+    for (let top = path.at(-1); top; top = path.at(-1)) {
       const depId = (top.cell.attributes.depends ?? [])[top.nextDep];
 
       if (depId === undefined) {
@@ -747,13 +761,13 @@ function findDependencyCycle(cells: Cell[]): Cell[] | undefined {
 
       const seen = state.get(depId);
       if (seen === "open") {
+        // `dep` is on the path (it is open), so the cycle starts there and
+        // holds at least `dep` itself.
         const found = path.slice(path.findIndex((entry) => entry.cell === dep)).map((entry) => entry.cell);
         // Rotate so the report starts at the cycle's first cell in the note.
-        const start = found.reduce(
-          (best, candidate, i) => (candidate.startLine < found[best].startLine ? i : best),
-          0
-        );
-        return [...found.slice(start), ...found.slice(0, start)];
+        const earliest = found.reduce((best, candidate) => (candidate.startLine < best.startLine ? candidate : best), dep);
+        const start = found.indexOf(earliest);
+        return [earliest, ...found.slice(start + 1), ...found.slice(0, start)];
       }
       if (seen === undefined) {
         state.set(depId, "open");
@@ -826,7 +840,7 @@ function parseDuration(str: string | number | undefined): number {
   const match = str.match(/^([\d.]+)(ms|s|m)?$/);
   if (!match) return 0;
 
-  const value = parseFloat(match[1]);
+  const value = parseFloat(captured(match, 1));
   const unit = match[2] ?? "ms";
 
   switch (unit) {
