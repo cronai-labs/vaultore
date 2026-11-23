@@ -46,6 +46,7 @@ export type {
   AIProvider,
 
   // Scheduler types
+  ScheduledSlot,
   ScheduledWorkflow,
 
   // Platform types
@@ -98,7 +99,7 @@ export {
 // EXECUTOR
 // =============================================================================
 
-export { WorkflowExecutor, DEFAULT_CONFIG_DIR, grantHash } from "./executor";
+export { WorkflowExecutor, DEFAULT_CONFIG_DIR, NoteChangedError, grantHash } from "./executor";
 
 // =============================================================================
 // RUNTIME
@@ -127,7 +128,27 @@ export type { AIProviderName } from "./providers";
 
 export { WorkflowScheduler, computeNextRun, classifyScheduleApproval } from "./scheduler";
 
-export type { ScheduleApproval, ScheduleApprovalState } from "./scheduler";
+export type { DueWorkflow, Registration, ScheduleApproval, ScheduleApprovalState } from "./scheduler";
+
+export {
+  MAX_KEEP_DAYS,
+  SlotTakenError,
+  claimSlot,
+  describeSlotState,
+  keepMilliseconds,
+  pruneSlotRecord,
+  readSlotRecord,
+  slotRecordDirectory,
+} from "./scheduler/slot-record";
+
+export type {
+  ClaimSlotOptions,
+  SlotClaim,
+  SlotClaimRecord,
+  SlotEntry,
+  SlotOutcome,
+  SlotResult,
+} from "./scheduler/slot-record";
 
 // =============================================================================
 // VAULT API

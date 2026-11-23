@@ -14,14 +14,30 @@ export interface SchedulerOptions {
   /** Where the tick interval comes from: the platform's timers. */
   timers: Timers;
   tickIntervalMs?: number;
-  onTick?: (workflows: ScheduledWorkflow[]) => void;
+  onTick?: (workflows: DueWorkflow[]) => void;
+}
+
+/**
+ * A workflow that came due, with the occurrence of its schedule that did: the
+ * slot, which names this scheduled run in the schedule record (#255). It is
+ * the time the cron expression gives, not when the tick noticed it, so two
+ * runners that fire the same occurrence name the same slot.
+ */
+export interface DueWorkflow extends ScheduledWorkflow {
+  slot: Date;
+}
+
+/** A note to keep armed, as a host's rescan finds it. */
+export interface Registration {
+  path: string;
+  cronExpression: string;
 }
 
 export class WorkflowScheduler {
   private workflows = new Map<string, ScheduledWorkflow>();
   private interval: TimerHandle | null = null;
   private timers: Timers;
-  private onTick?: (workflows: ScheduledWorkflow[]) => void;
+  private onTick?: (workflows: DueWorkflow[]) => void;
   private tickIntervalMs: number;
 
   constructor(options: SchedulerOptions) {
@@ -55,6 +71,32 @@ export class WorkflowScheduler {
     this.workflows.delete(path);
   }
 
+  /**
+   * Arm exactly `registrations`: the ones armed already keep their next run,
+   * as `register` keeps it, and the others are dropped. Returns those whose
+   * cron expression is invalid, which are not armed.
+   *
+   * Unregistering everything and registering again recomputed every next run
+   * from now, so a slot that came due between two ticks was dropped whenever
+   * a rescan fell in between (#255).
+   */
+  replace(registrations: readonly Registration[]): Registration[] {
+    const wanted = new Set(registrations.map((entry) => entry.path));
+    for (const path of this.workflows.keys()) {
+      if (!wanted.has(path)) this.workflows.delete(path);
+    }
+    const invalid: Registration[] = [];
+    for (const entry of registrations) {
+      try {
+        this.register(entry.path, entry.cronExpression);
+      } catch {
+        this.workflows.delete(entry.path);
+        invalid.push(entry);
+      }
+    }
+    return invalid;
+  }
+
   list(): ScheduledWorkflow[] {
     return Array.from(this.workflows.values());
   }
@@ -70,14 +112,15 @@ export class WorkflowScheduler {
     this.interval = null;
   }
 
-  tick(): ScheduledWorkflow[] {
+  tick(): DueWorkflow[] {
     const now = new Date();
-    const due: ScheduledWorkflow[] = [];
+    const due: DueWorkflow[] = [];
 
     for (const workflow of this.workflows.values()) {
       if (!workflow.enabled) continue;
       if (workflow.nextRun <= now) {
-        due.push(workflow);
+        // A copy: the entry's nextRun moves on below, the slot does not.
+        due.push({ ...workflow, slot: workflow.nextRun });
         workflow.lastRun = now;
         workflow.nextRun = computeNextRun(workflow.cronExpression, now);
       }

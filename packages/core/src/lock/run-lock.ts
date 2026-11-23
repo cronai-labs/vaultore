@@ -51,12 +51,27 @@ export function runLockDirectory(
 	env: NodeJS.ProcessEnv = process.env,
 	accountHome: () => string = () => userInfo().homedir
 ): string {
+	return userStateDirectory("locks", "run locks", platform, env, accountHome);
+}
+
+/**
+ * `<name>` in VaultOre's directory for this user, where both runners meet:
+ * the run locks (`locks`) and the schedule record (`slots`). Found as
+ * `runLockDirectory` describes; `what` names it in an error.
+ */
+export function userStateDirectory(
+	name: string,
+	what: string,
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+	accountHome: () => string = () => userInfo().homedir
+): string {
 	if (platform === "win32") {
 		const appData = env["APPDATA"];
 		if (!appData) {
-			throw new Error("APPDATA is not set, so VaultOre cannot tell where its run locks belong");
+			throw new Error(`APPDATA is not set, so VaultOre cannot tell where its ${what} belong`);
 		}
-		return join(appData, "vaultore", "locks");
+		return join(appData, "vaultore", name);
 	}
 	let home: string;
 	try {
@@ -65,16 +80,26 @@ export function runLockDirectory(
 		// A process under a user id with no account, as a container may run
 		// one: Node's userInfo() throws.
 		throw new Error(
-			"This process's user has no account with a home directory, so VaultOre cannot tell where its run locks belong " +
+			`This process's user has no account with a home directory, so VaultOre cannot tell where its ${what} belong ` +
 				`(${errorMessage(err)}). Run it as a user that has one`
 		);
 	}
 	if (!home) {
 		throw new Error(
-			"This process's user has no home directory, so VaultOre cannot tell where its run locks belong. Run it as a user that has one"
+			`This process's user has no home directory, so VaultOre cannot tell where its ${what} belong. Run it as a user that has one`
 		);
 	}
-	return join(home, ".config", "vaultore", "locks");
+	return join(home, ".config", "vaultore", name);
+}
+
+/**
+ * The key a note's run lock and schedule record are named after: the SHA-256
+ * of its real path, the vault's real path joined with the note's, as the file
+ * system spells them. The note must exist.
+ */
+export async function noteKey(vaultRoot: string, notePath: string): Promise<string> {
+	const real = await fs.realpath(join(vaultRoot, notePath));
+	return createHash("sha256").update(real.normalize("NFC")).digest("hex");
 }
 
 /**
@@ -87,9 +112,7 @@ export async function runLockPath(
 	vaultRoot: string,
 	notePath: string
 ): Promise<string> {
-	const real = await fs.realpath(join(vaultRoot, notePath));
-	const key = createHash("sha256").update(real.normalize("NFC")).digest("hex");
-	return join(directory, `${key}.lock`);
+	return join(directory, `${await noteKey(vaultRoot, notePath)}.lock`);
 }
 
 export interface RunLockOptions extends Pick<LockOptions, "isAlive" | "host" | "bootTime"> {

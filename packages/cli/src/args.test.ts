@@ -4,6 +4,7 @@ import {
 	DEFAULT_RESCAN_SECONDS,
 	configDirFrom,
 	hasExplicitVault,
+	keepDaysFrom,
 	parseArgs,
 	rescanSecondsFrom,
 	toVaultRelative,
@@ -144,6 +145,25 @@ describe("rescanSecondsFrom", () => {
 	it.each(["-5", "0", "abc", "", "Infinity", "1e10"])("rejects --rescan=%s", (value) => {
 		expect(() => rescanSecondsFrom(parseArgs(["agent", `--rescan=${value}`]).flags)).toThrow(
 			new RegExp(`--rescan must be .*got '${value.replace("+", "\\+")}'`)
+		);
+	});
+});
+
+describe("keepDaysFrom", () => {
+	it("keeps 30 days when --keep-days is absent", () => {
+		expect(keepDaysFrom({})).toBe(30);
+	});
+
+	it("accepts a whole number of days from 0 to 30", () => {
+		expect(keepDaysFrom(parseArgs(["agent", "--keep-days", "0"]).flags)).toBe(0);
+		expect(keepDaysFrom(parseArgs(["agent", "--keep-days=7"]).flags)).toBe(7);
+		expect(keepDaysFrom(parseArgs(["agent", "--keep-days", "30"]).flags)).toBe(30);
+	});
+
+	// 30 days is the most the record keeps (#255); more is refused, not cut.
+	it.each(["31", "-1", "1.5", "abc", "", "1e3"])("rejects --keep-days=%s", (value) => {
+		expect(() => keepDaysFrom(parseArgs(["agent", `--keep-days=${value}`]).flags)).toThrow(
+			`--keep-days must be a whole number of days from 0 to 30, got '${value}'`
 		);
 	});
 });

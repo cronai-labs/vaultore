@@ -55,7 +55,7 @@ vaultore/
 │   │   │   ├── executor/     # runs a workflow (index.ts); output notes (output-note.ts)
 │   │   │   ├── runtime/      # engine detection; container command line
 │   │   │   ├── providers/    # OpenAI and Anthropic
-│   │   │   ├── scheduler/    # cron registrations and ticks
+│   │   │   ├── scheduler/    # cron registrations and ticks; the schedule record (slot-record.ts)
 │   │   │   ├── lock/         # a lock between VaultOre processes on one machine
 │   │   │   ├── vault/        # exported vault helpers (not used by the executor)
 │   │   │   ├── fixtures/     # canonical and smart-inbox tests
@@ -101,6 +101,7 @@ vaultore/
 | Timers (core calls none of its own) | The window's; the scheduler's interval is registered with the plugin | Node's |
 | `ask` permissions | Modal | Deny, or allow with `--yes` |
 | Run lock | `acquireRunLock` as `Obsidian` | `acquireRunLock` as `vaultore run` or `vaultore agent` |
+| Schedule record | `claimSlot` as `Obsidian`, pruned by the "Scheduled-run history" setting | `claimSlot` as `vaultore agent`, pruned by `--keep-days` |
 | Scheduling | Approved notes only, while Obsidian is open; an approval is a path and a schedule, in the plugin data | `vaultore agent`, approved notes only; an approval is a path and the note's content hash, in `approvals.json` outside the vault (`--state-dir`) |
 
 ## Core Modules
@@ -112,7 +113,7 @@ vaultore/
 | `executor` | A whole run: permissions, engine check, order, each cell, outputs, run records | `WorkflowExecutor`, `renderOutputMarkdown` |
 | `runtime` | Which engines answer; the `run` command line with its hardening; spawning it | `detectRuntimes`, `buildRunCommand`, `execContainer` |
 | `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` (core has no transport of its own); model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
-| `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback; whether a note still has its schedule approval | `WorkflowScheduler`, `computeNextRun`, `classifyScheduleApproval` |
+| `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback with the occurrence that came due; whether a note still has its schedule approval; the schedule record, which lets each occurrence run at most once across the plugin and the CLI, in `~/.config/vaultore/slots` | `WorkflowScheduler`, `computeNextRun`, `classifyScheduleApproval`, `claimSlot`, `readSlotRecord`, `SlotTakenError` |
 | `lock` | A lock between VaultOre processes on one machine: the approvals file's, and one run lock per note, shared by the plugin and the CLI, in `~/.config/vaultore/locks` | `acquireLock`, `acquireRunLock`, `RunLockHeldError` |
 | `vault` | `createVaultAPI`, `generateRuntimeScript`: exported, but the executor injects its own copy (`buildTypeScriptRuntime`), and the two have diverged ([#45](https://github.com/cronai-labs/vaultore/issues/45)) | |
 
@@ -121,24 +122,27 @@ vaultore/
 `WorkflowExecutor.runWorkflow` (`packages/core/src/executor/index.ts`):
 
 1. **Parse** the note: frontmatter against the schema, cells, existing outputs.
-2. **Lock the note**: the platform's `acquireRunLock`, refused while another run of the note
+2. **Claim the slot**, for a scheduled run only: the platform's `claimSlot`, refused when a
+   runner claimed this occurrence first. From here the slot is spent; its outcome is written
+   when the run ends, however it ends (schedule-record-spec).
+3. **Lock the note**: the platform's `acquireRunLock`, refused while another run of the note
    holds it. A lock left behind by a run that ended without finishing is taken over, and that
    run's record is marked `aborted`. Then read the note again, and stop if it is no longer what
    the caller read. The lock is released when the run ends (ore-implementation, "One run per
    note").
-3. **Create the run**: a run id, `<outputRoot>/runs/<workflow>/<runId>/run.json` with status
+4. **Create the run**: a run id, `<outputRoot>/runs/<workflow>/<runId>/run.json` with status
    `running`.
-4. **Resolve permissions**: defaults, then frontmatter, then a stored decision or a prompt for
+5. **Resolve permissions**: defaults, then frontmatter, then a stored decision or a prompt for
    each `ask`, bound to a hash of the frontmatter and cells (permissions-spec §5).
-5. **Choose and check the engine**: frontmatter, else setting, else `docker`; `detectRuntimes`
+6. **Choose and check the engine**: frontmatter, else setting, else `docker`; `detectRuntimes`
    probes all four engines in parallel, each with a 10-second timeout.
-6. **Order the cells** by `depends`; for a single-cell run, keep the target and what it needs.
-7. **Hydrate** earlier outputs from the JSON files the note's callouts link, so `cell()` and
+7. **Order the cells** by `depends`; for a single-cell run, keep the target and what it needs.
+8. **Hydrate** earlier outputs from the JSON files the note's callouts link, so `cell()` and
    dependency checks can use them for cells that do not run this time.
-8. **For each cell, one at a time:** check its dependencies succeeded; run it (a container for
+9. **For each cell, one at a time:** check its dependencies succeeded; run it (a container for
    `ts` and `shell`, a provider request for `ai`); write its JSON record, Markdown view and the
    run index; re-read the note and replace the cell's callout.
-9. **Finish** `run.json`: `completed`, `failed` (a cell failed) or `aborted` (the run threw).
+10. **Finish** `run.json`: `completed`, `failed` (a cell failed) or `aborted` (the run threw).
 
 A container cell is `docker run --rm …` (or `podman`, or `container` for Apple; Colima uses
 the `docker` CLI). TS cells get a generated script on stdin that defines `cell()`, `vault` and

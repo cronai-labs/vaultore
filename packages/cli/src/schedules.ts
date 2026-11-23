@@ -12,7 +12,7 @@ import {
 	errorMessage,
 	grantHash,
 } from "@vaultore/core";
-import type { ScheduleApprovalState, Workflow } from "@vaultore/core";
+import type { ScheduleApprovalState, SlotEntry, Workflow } from "@vaultore/core";
 import type { ApprovalStore, VaultApprovals } from "./approvals";
 import type { DiscoveredWorkflow } from "./scan";
 
@@ -214,4 +214,22 @@ export async function revokeSchedules(options: {
 	});
 	if (written) lines.push(`stored in ${options.store.file}`);
 	return { ok: true, lines };
+}
+
+// =============================================================================
+// LOG (#255)
+// =============================================================================
+
+/**
+ * The lines of `vaultore schedules log`: one per slot, oldest first, with what
+ * it came to, the runner that claimed it, and why when it did not complete.
+ */
+export function formatSlotLog(entries: SlotEntry[]): string[] {
+	if (entries.length === 0) return ["No scheduled run recorded."];
+	return entries.map((entry) => {
+		const by = entry.claimedBy.by ?? `process ${entry.claimedBy.pid}`;
+		const run = entry.runId ? ` run ${entry.runId}` : "";
+		const reason = entry.reason ? `: ${entry.reason}` : "";
+		return `${entry.slot.toISOString()}  ${entry.state.padEnd(9)}  ${entry.note} [${entry.schedule}] by ${by}${run}${reason}`;
+	});
 }

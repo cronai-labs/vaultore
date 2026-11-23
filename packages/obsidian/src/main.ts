@@ -15,17 +15,28 @@ import {
   DEFAULT_MODELS,
   DEFAULT_PROVIDER,
   RunLockHeldError,
+  SlotTakenError,
   WorkflowExecutor,
   WorkflowParser,
   WorkflowScheduler,
+  MAX_KEEP_DAYS,
   acquireRunLock,
+  claimSlot,
   computeNextRun,
   describeHolder,
   errorMessage,
   isWorkflowFrontmatter,
   resolveInVaultRoot,
 } from "@vaultore/core";
-import type { PlatformAdapter, PlatformRequest, PlatformResponse, RunLock, Timers } from "@vaultore/core";
+import type {
+  PlatformAdapter,
+  PlatformRequest,
+  PlatformResponse,
+  RunLock,
+  ScheduledSlot,
+  SlotClaim,
+  Timers,
+} from "@vaultore/core";
 
 interface VaultOreSettings {
   defaultProvider: "openai" | "anthropic";
@@ -47,6 +58,9 @@ interface VaultOreSettings {
   // schedule approved. A changed schedule no longer matches and needs a new
   // approval. Kept here rather than in the notes, which sync can rewrite.
   scheduleApprovals: Record<string, string>;
+  // Days of scheduled-run history kept outside the vault, 0 to 30; blank is
+  // 30. 0 keeps each run for a day only, which stops a second runner (#255).
+  scheduleHistoryDays?: number;
 }
 
 // A workflow note with a schedule, as the settings tab lists it.
@@ -225,6 +239,23 @@ class ObsidianAdapter implements PlatformAdapter {
           "warn",
           `Removed the run lock of ${notePath}: ${describeHolder(holder)}, which took it at ${holder.since}, ${why}`
         );
+      },
+    });
+  }
+
+  // The schedule record, outside the vault and shared with the CLI, so a
+  // scheduled occurrence runs once whether Obsidian or `vaultore agent` fires
+  // it (#255). Claiming prunes the record by this plugin's history setting.
+  async claimSlot(notePath: string, scheduled: ScheduledSlot): Promise<SlotClaim> {
+    return claimSlot({
+      vaultRoot: await this.getVaultRoot(),
+      notePath,
+      schedule: scheduled.schedule,
+      slot: scheduled.slot,
+      by: "Obsidian",
+      keepDays: this.plugin.settings.scheduleHistoryDays,
+      onPruneError: (path, err) => {
+        this.log("warn", `Could not prune ${path} from the schedule record: ${errorMessage(err)}`);
       },
     });
   }
@@ -474,7 +505,10 @@ export default class VaultOrePlugin extends Plugin {
           );
           continue;
         }
-        void this.runWorkflowByPath(workflow.path);
+        void this.runWorkflowByPath(workflow.path, {
+          schedule: workflow.cronExpression,
+          slot: workflow.slot,
+        });
       }
     },
   });
@@ -601,7 +635,7 @@ export default class VaultOrePlugin extends Plugin {
     return isWorkflowFrontmatter(this.app.metadataCache.getFileCache(file)?.frontmatter);
   }
 
-  private async runWorkflow(file: TFile): Promise<void> {
+  private async runWorkflow(file: TFile, scheduled?: ScheduledSlot): Promise<void> {
     if (this.runningWorkflows.has(file.path)) {
       new Notice("VaultOre: Workflow is already running");
       return;
@@ -622,6 +656,7 @@ export default class VaultOrePlugin extends Plugin {
         platform: this.adapter,
         workflowPath: file.path,
         content,
+        ...(scheduled ? { scheduled } : {}),
         emitEvent: (event, data) => {
           if (event === "cell:started") {
             const cellId = (data as { cellId?: string })?.cellId;
@@ -633,6 +668,12 @@ export default class VaultOrePlugin extends Plugin {
       });
       new Notice("VaultOre: Workflow completed");
     } catch (err) {
+      // The other runner has this occurrence: nothing to tell the user about
+      // every minute; `vaultore schedules log` shows who ran it.
+      if (err instanceof SlotTakenError) {
+        this.adapter.log("info", err.message);
+        return;
+      }
       new Notice(runFailureNotice(err));
     } finally {
       // The notice is only created once the read succeeds, so it may not exist.
@@ -641,7 +682,7 @@ export default class VaultOrePlugin extends Plugin {
     }
   }
 
-  private async runWorkflowByPath(path: string): Promise<void> {
+  private async runWorkflowByPath(path: string, scheduled: ScheduledSlot): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
       // Moved or deleted since the schedule was armed; the vault event that
@@ -651,7 +692,7 @@ export default class VaultOrePlugin extends Plugin {
       new Notice(message);
       return;
     }
-    await this.runWorkflow(file);
+    await this.runWorkflow(file, scheduled);
   }
 
   private debouncedRefreshScheduledWorkflows(): void {
@@ -846,7 +887,7 @@ function runFailureNotice(err: unknown): string {
     : `VaultOre error: ${errorMessage(err)}`;
 }
 
-type NumericSetting = "aiTemperature" | "aiMaxTokens" | "aiTimeoutSeconds";
+type NumericSetting = "aiTemperature" | "aiMaxTokens" | "aiTimeoutSeconds" | "scheduleHistoryDays";
 
 // Blank means "the default", which a number control cannot hold, so these are
 // text controls that take a number in range or nothing.
@@ -854,6 +895,10 @@ const NUMERIC_SETTINGS: Record<NumericSetting, { valid: (n: number) => boolean; 
   aiTemperature: { valid: (n) => n >= 0 && n <= 2, hint: "a number from 0 to 2" },
   aiMaxTokens: { valid: (n) => n > 0, hint: "a number above 0" },
   aiTimeoutSeconds: { valid: (n) => n > 0, hint: "a number of seconds above 0" },
+  scheduleHistoryDays: {
+    valid: (n) => Number.isInteger(n) && n >= 0 && n <= MAX_KEEP_DAYS,
+    hint: `a whole number of days from 0 to ${MAX_KEEP_DAYS}`,
+  },
 };
 
 function isNumericSetting(key: string): key is NumericSetting {
@@ -1100,6 +1145,13 @@ class VaultOreSettingsTab extends PluginSettingTab {
           "is open, but only if you approved it below.",
         control: { type: "toggle", key: "runScheduledWorkflows" },
       },
+      this.numericSetting(
+        "scheduleHistoryDays",
+        "Scheduled-run history",
+        `Days to keep what each scheduled run came to, shared with vaultore agent, from 0 to ${MAX_KEEP_DAYS}. ` +
+          "0 keeps each run for a day only. Blank keeps 30.",
+        String(MAX_KEEP_DAYS)
+      ),
     ];
 
     const notes = this.plugin.getScheduledNotes();

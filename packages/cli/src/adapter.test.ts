@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeAdapter } from "./adapter";
+import { SlotTakenError, readSlotRecord } from "@vaultore/core";
 
 /** The CLI's answer to where a vault path leads, against real symlinks. */
 
@@ -74,5 +75,46 @@ describe("NodeAdapter.acquireRunLock", () => {
 
 		await release.release();
 		await (await adapter("vaultore run").acquireRunLock("notes/wf.md")).release();
+	});
+});
+
+// One run per scheduled slot (#255): the plugin's side is tested in
+// packages/obsidian; both use core's claimSlot.
+describe("NodeAdapter.claimSlot", () => {
+	const slot = { schedule: "15 * * * *", slot: new Date("2026-11-24T10:15:00.000Z") };
+
+	function adapter(runner: string, keepDays?: number): NodeAdapter {
+		return new NodeAdapter({
+			vaultRoot: join(base, "vault"),
+			quiet: true,
+			runner,
+			slotDirectory: join(base, "slots"),
+			...(keepDays !== undefined ? { keepDays } : {}),
+		});
+	}
+
+	it("refuses a slot another runner claimed, naming it, and records the runner", async () => {
+		writeFileSync(join(base, "vault/notes/wf.md"), "---\nore: true\n---\n");
+		const claim = await adapter("vaultore agent").claimSlot("notes/wf.md", slot);
+		await claim.finish({ result: "completed" });
+
+		const second = adapter("vaultore run").claimSlot("notes/wf.md", slot);
+		await expect(second).rejects.toBeInstanceOf(SlotTakenError);
+		await expect(second).rejects.toThrow(`claimed by process ${process.pid} (vaultore agent)`);
+
+		const [entry] = await readSlotRecord({ directory: join(base, "slots"), vaultRoot: join(base, "vault") });
+		expect(entry).toMatchObject({ note: "notes/wf.md", state: "completed" });
+		expect(entry?.claimedBy.by).toBe("vaultore agent");
+	});
+
+	it("prunes by its --keep-days when it claims", async () => {
+		writeFileSync(join(base, "vault/notes/wf.md"), "---\nore: true\n---\n");
+		const old = { ...slot, slot: new Date(Date.now() - 3 * 24 * 3_600_000) };
+		await (await adapter("vaultore agent").claimSlot("notes/wf.md", old)).finish({ result: "completed" });
+
+		await adapter("vaultore agent", 1).claimSlot("notes/wf.md", { ...slot, slot: new Date() });
+
+		const slots = await readSlotRecord({ directory: join(base, "slots") });
+		expect(slots.map((entry) => entry.slot.getTime() === old.slot.getTime())).toEqual([false]);
 	});
 });

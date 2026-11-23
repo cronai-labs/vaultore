@@ -76,7 +76,9 @@ cell runs the code written in the note. See the warning above.
 the vault. Outside it, it writes one small lock file per running note, in
 `~/.config/vaultore/locks` (`%APPDATA%\vaultore\locks` on Windows), so that Obsidian and the
 command-line runner never run one note at the same time; the file is removed when the run
-ends. It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
+ends. For each scheduled run it writes a small record in `~/.config/vaultore/slots`
+(`%APPDATA%\vaultore\slots`), so that one occurrence of a schedule runs once in either runner,
+kept for 30 days at most (the "Scheduled-run history" setting shortens it). It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
 install locations (macOS: `/usr/local/bin`, `/opt/homebrew/bin`,
 `/Applications/Docker.app/Contents/Resources/bin/docker`; Linux: `/usr/bin`; Windows: the
 Docker Desktop and Podman folders under `C:\Program Files`), and starts it. The engine mounts
@@ -227,11 +229,12 @@ on npm yet; build it from source (`bun run build`) and run `node packages/cli/di
 ```
 vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
 vaultore list [--vault <dir>] [--config-dir <name>]
-vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--quiet]
+vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--quiet]
 vaultore schedules list [--vault <dir>] [--config-dir <name>] [--state-dir <dir>]
 vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
+vaultore schedules log [<workflow.md>] [--vault <dir>]
 ```
 
 - Settings come from `<vault>/.vaultore/config.json` (`defaultProvider`, `defaultModel`,
@@ -254,6 +257,10 @@ vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
   second run is refused and told who has the note
   ([one run per note](specs/ore-implementation.md)). This holds on one machine; two machines
   that sync the same vault can still run a note twice, so run scheduled notes on one of them.
+- Each occurrence of a schedule runs at most once, in the agent or in Obsidian, whichever
+  claims it first. `vaultore schedules log` shows what each one came to and who ran it; the
+  agent keeps that for `--keep-days` (default and most: 30)
+  ([schedule record](specs/schedule-record-spec.md)).
 - `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
   ([handover spec](specs/cronai-handover-spec.md)).
 

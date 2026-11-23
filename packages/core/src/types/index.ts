@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import type { RunLock } from "../lock/run-lock";
+import type { SlotClaim } from "../scheduler/slot-record";
 
 // =============================================================================
 // PERMISSION TYPES
@@ -503,6 +504,12 @@ export interface AIProvider {
 /**
  * Scheduled workflow entry
  */
+/** One occurrence of a note's schedule (#255). */
+export interface ScheduledSlot {
+  schedule: string;
+  slot: Date;
+}
+
 export interface ScheduledWorkflow {
   path: string;
   cronExpression: string;
@@ -562,6 +569,16 @@ export interface PlatformAdapter {
    * The executor holds it for a whole run and refuses to run without it.
    */
   acquireRunLock(notePath: string): Promise<RunLock>;
+  /**
+   * Claims one slot of a scheduled note, the occurrence `slot` of `schedule`,
+   * for this runner (#255). Rejects with `SlotTakenError` when a runner
+   * claimed it first; the slot then is not run here. Both desktop adapters
+   * implement it with `claimSlot` from core's scheduler module, so the plugin
+   * and the CLI meet on one record, and prune it by their history setting.
+   * A platform that runs nothing on a schedule may leave it out; the executor
+   * refuses a scheduled run without it.
+   */
+  claimSlot?(notePath: string, slot: ScheduledSlot): Promise<SlotClaim>;
 
   // Settings
   getSetting<T>(key: string): T | undefined;

@@ -240,7 +240,7 @@ describe("finalizeRunContext", () => {
 
 		await expect(
 			finalizeRunContext(platform, runContext, ["a"], new Map([["a", output("success", 1)]]))
-		).resolves.toBeUndefined();
+		).resolves.toBe("completed");
 	});
 });
 

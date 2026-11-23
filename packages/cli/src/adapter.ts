@@ -21,8 +21,16 @@ import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
-import { DEFAULT_CONFIG_DIR, acquireRunLock, describeHolder, resolveInVaultRoot } from "@vaultore/core";
-import type { PlatformAdapter, PlatformRequest, PlatformResponse, RunLock, Timers } from "@vaultore/core";
+import { DEFAULT_CONFIG_DIR, acquireRunLock, claimSlot, describeHolder, errorMessage, resolveInVaultRoot } from "@vaultore/core";
+import type {
+	PlatformAdapter,
+	PlatformRequest,
+	PlatformResponse,
+	RunLock,
+	ScheduledSlot,
+	SlotClaim,
+	Timers,
+} from "@vaultore/core";
 import { fetchRequest } from "./fetch-request";
 
 // The vault's config folders are skipped as well, see NodeAdapter.skipDirs.
@@ -58,6 +66,13 @@ export interface NodeAdapterOptions {
 	 * their own.
 	 */
 	runLockDirectory?: string;
+	/**
+	 * Days of scheduled-run history to keep, 0 to 30 (`--keep-days`); the
+	 * record keeps a slot for a day even at 0. Default 30.
+	 */
+	keepDays?: number;
+	/** Where the schedule record lives. Default: core's `slotRecordDirectory()`. Tests pass their own. */
+	slotDirectory?: string;
 }
 
 export class NodeAdapter implements PlatformAdapter {
@@ -76,6 +91,8 @@ export class NodeAdapter implements PlatformAdapter {
 	private readonly quiet: boolean;
 	private readonly runner: string;
 	private readonly runLockDirectory: string | undefined;
+	private readonly keepDays: number | undefined;
+	private readonly slotDirectory: string | undefined;
 	/** SKIP_DIRS plus the configured and the default config folder. */
 	private readonly skipDirs: ReadonlySet<string>;
 	private config: Record<string, unknown>;
@@ -89,6 +106,8 @@ export class NodeAdapter implements PlatformAdapter {
 		this.quiet = options.quiet ?? false;
 		this.runner = options.runner ?? "vaultore";
 		this.runLockDirectory = options.runLockDirectory;
+		this.keepDays = options.keepDays;
+		this.slotDirectory = options.slotDirectory;
 		this.config = this.loadConfig();
 	}
 
@@ -154,6 +173,25 @@ export class NodeAdapter implements PlatformAdapter {
 				process.stderr.write(
 					`[vaultore] removed the run lock of ${notePath}: ${describeHolder(holder)}, which took it at ${holder.since}, ${why}\n`
 				);
+			},
+		});
+	}
+
+	/**
+	 * Claims a slot of a scheduled note in the schedule record the plugin
+	 * uses too (#255), and prunes the record by `--keep-days`.
+	 */
+	claimSlot(notePath: string, scheduled: ScheduledSlot): Promise<SlotClaim> {
+		return claimSlot({
+			vaultRoot: this.vaultRoot,
+			notePath,
+			schedule: scheduled.schedule,
+			slot: scheduled.slot,
+			by: this.runner,
+			keepDays: this.keepDays,
+			directory: this.slotDirectory,
+			onPruneError: (path, err) => {
+				process.stderr.write(`[vaultore] could not prune ${path} from the schedule record: ${errorMessage(err)}\n`);
 			},
 		});
 	}
