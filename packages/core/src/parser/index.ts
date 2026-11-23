@@ -496,8 +496,9 @@ export class WorkflowParser {
       let outputPath: string | undefined;
       let runId: string | undefined;
 
-      for (const nextLine of lines.slice(i + 1)) {
-        if (!nextLine.startsWith(">")) break;
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const nextLine = lines[j];
+        if (nextLine === undefined || !nextLine.startsWith(">")) break;
 
         const trimmed = stripLeading(nextLine.slice(1), " ", "\t");
         if (trimmed.startsWith("json:")) {
