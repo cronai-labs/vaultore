@@ -221,6 +221,23 @@ describe("VaultOrePlugin", () => {
       expect(plugin.saveData).toHaveBeenCalled();
     });
 
+    // 0 switches the history off (each run kept for a day only), blank keeps
+    // 30; the two must not collapse into one (#255).
+    it("stores a history of 0 days as 0, and refuses more than 30 or a fraction", async () => {
+      const history = at(row("Scheduled-run history").texts);
+      expect(history.placeholder).toBe("30");
+
+      await history.changeHandler!("0");
+      expect(plugin.settings.scheduleHistoryDays).toBe(0);
+
+      await history.changeHandler!("31");
+      await history.changeHandler!("1.5");
+      expect(plugin.settings.scheduleHistoryDays).toBe(0);
+
+      await history.changeHandler!("");
+      expect(plugin.settings.scheduleHistoryDays).toBeUndefined();
+    });
+
     it("refuses a number out of range with a message and keeps the old value", async () => {
       const temperature = row("Temperature");
       await at(temperature.texts).changeHandler!("3");
@@ -570,7 +587,7 @@ describe("VaultOrePlugin", () => {
 
         await (plugin as any).runWorkflow(file, scheduled);
 
-        expect(Notice.shown.filter((m) => !m.startsWith("VaultOre: Running"))).toEqual([]);
+        expect(Notice.shown).toEqual([]);
         info.mockRestore();
         log.mockRestore();
       });

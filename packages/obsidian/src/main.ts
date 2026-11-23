@@ -650,7 +650,11 @@ export default class VaultOrePlugin extends Plugin {
       // path marked as running for the rest of the session — it could never be
       // run again without reloading the plugin.
       const content = await this.app.vault.read(file);
-      startNotice = new Notice(`VaultOre: Running ${file.basename}...`, 0);
+      // A scheduled run shows itself once a cell starts: before that its slot
+      // may turn out to be the other runner's, which is no news (#255).
+      if (!scheduled) {
+        startNotice = new Notice(`VaultOre: Running ${file.basename}...`, 0);
+      }
 
       await this.executor.runWorkflow({
         platform: this.adapter,
@@ -661,7 +665,8 @@ export default class VaultOrePlugin extends Plugin {
           if (event === "cell:started") {
             const cellId = (data as { cellId?: string })?.cellId;
             if (cellId) {
-              startNotice?.setMessage(`VaultOre: Running cell ${cellId}...`);
+              startNotice ??= new Notice(`VaultOre: Running ${file.basename}...`, 0);
+              startNotice.setMessage(`VaultOre: Running cell ${cellId}...`);
             }
           }
         },

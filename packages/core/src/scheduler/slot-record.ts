@@ -58,9 +58,16 @@ export function slotFromName(name: string): Date | undefined {
 	return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
-/** What a claim records: whose slot this is. */
+/**
+ * What a slot's decision file records: whose slot this is. The file is the
+ * slot's one decision, so it also carries how the slot was decided: today
+ * always `claimed`; missed slots (#269) will be decided as `missed` in the
+ * same file, which keeps a slot from being both. A reader meets kinds and
+ * versions it does not know as decided, never as open.
+ */
 export interface SlotClaimRecord extends LockHolder {
 	version: number;
+	kind: "claimed";
 	/** The vault's real path. */
 	vault: string;
 	/** The note, vault-relative. */
@@ -162,6 +169,7 @@ export async function claimSlot(options: ClaimSlotOptions): Promise<SlotClaim> {
 	const token = `${process.pid}.${randomBytes(6).toString("hex")}`;
 	const record: SlotClaimRecord = {
 		version: RECORD_VERSION,
+		kind: "claimed",
 		vault: await fs.realpath(options.vaultRoot),
 		note: options.notePath,
 		schedule: options.schedule,
@@ -259,8 +267,11 @@ export interface SlotEntry {
 	vault: string;
 	schedule: string;
 	slot: Date;
-	/** `running`: claimed, its run not ended; `abandoned`: claimed by a runner that is gone. */
-	state: SlotResult | "running" | "abandoned";
+	/**
+	 * `running`: claimed, its run not ended; `abandoned`: claimed by a runner
+	 * that is gone; `unknown`: decided by a newer VaultOre, as the reason says.
+	 */
+	state: SlotResult | "running" | "abandoned" | "unknown";
 	claimedBy: SlotClaimRecord;
 	reason?: string;
 	runId?: string;
@@ -280,7 +291,7 @@ export async function readSlotRecord(options: ReadSlotRecordOptions = {}): Promi
 	const directory = options.directory ?? slotRecordDirectory();
 	const vault = options.vaultRoot === undefined ? undefined : await fs.realpath(options.vaultRoot);
 	const entries: SlotEntry[] = [];
-	for (const noteDir of await listDirectory(directory)) {
+	for (const noteDir of await listNoteDirectories(directory)) {
 		const dir = join(directory, noteDir);
 		for (const file of await listDirectory(dir)) {
 			const name = file.endsWith(".claim.json") ? file.slice(0, -".claim.json".length) : undefined;
@@ -290,6 +301,18 @@ export async function readSlotRecord(options: ReadSlotRecordOptions = {}): Promi
 			if (!claim || typeof claim.note !== "string" || typeof claim.vault !== "string") continue;
 			if (vault !== undefined && claim.vault !== vault) continue;
 			if (options.notePath !== undefined && claim.note !== options.notePath) continue;
+			if (!isKnownClaim(claim)) {
+				entries.push({
+					note: claim.note,
+					vault: claim.vault,
+					schedule: String(claim.schedule),
+					slot,
+					state: "unknown",
+					claimedBy: claim,
+					reason: `decided by another version of VaultOre (record version ${String(claim.version)}, kind ${String((claim as { kind?: unknown }).kind)})`,
+				});
+				continue;
+			}
 			const outcome = await readJson<SlotOutcomeRecord>(join(dir, `${name}.outcome.json`));
 			const gone = outcome ? undefined : claimGoneBecause(claim, options);
 			entries.push({
@@ -309,6 +332,11 @@ export async function readSlotRecord(options: ReadSlotRecordOptions = {}): Promi
 	return entries.sort((a, b) => a.slot.getTime() - b.slot.getTime() || a.note.localeCompare(b.note));
 }
 
+/** A decision this version of the record wrote and knows. */
+function isKnownClaim(claim: SlotClaimRecord): boolean {
+	return claim.version === RECORD_VERSION && (claim as { kind?: unknown }).kind === "claimed";
+}
+
 /** Why a claim with no outcome is abandoned; undefined while its run may go on. */
 function claimGoneBecause(
 	claim: SlotClaimRecord,
@@ -321,6 +349,17 @@ function claimGoneBecause(
 async function listDirectory(path: string): Promise<string[]> {
 	try {
 		return await fs.readdir(path);
+	} catch (err) {
+		if (codeOf(err) === "ENOENT") return [];
+		throw err;
+	}
+}
+
+/** The note directories of the record; anything else there (a `.DS_Store`) is not read. */
+async function listNoteDirectories(directory: string): Promise<string[]> {
+	try {
+		const entries = await fs.readdir(directory, { withFileTypes: true });
+		return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 	} catch (err) {
 		if (codeOf(err) === "ENOENT") return [];
 		throw err;
@@ -351,7 +390,7 @@ export async function pruneSlotRecord(options: PruneOptions = {}): Promise<numbe
 	const cutoff = (options.now ?? new Date()).getTime() - keepMilliseconds(options.keepDays);
 	const report = options.onError ?? (() => {});
 	let removed = 0;
-	for (const noteDir of await listDirectory(directory)) {
+	for (const noteDir of await listNoteDirectories(directory)) {
 		const dir = join(directory, noteDir);
 		let files: string[];
 		try {
@@ -375,8 +414,9 @@ export async function pruneSlotRecord(options: PruneOptions = {}): Promise<numbe
 				const outcomePath = join(dir, `${name}.outcome.json`);
 				const hasOutcome = (await readJson<SlotOutcomeRecord>(outcomePath)) !== undefined;
 				if (!hasOutcome) {
+					// A decision this version does not know is pruned by age alone.
 					const claim = await readJson<SlotClaimRecord>(path);
-					if (claim && claimGoneBecause(claim, options) === undefined) continue;
+					if (claim && isKnownClaim(claim) && claimGoneBecause(claim, options) === undefined) continue;
 				}
 				await fs.rm(outcomePath, { force: true });
 				await fs.rm(path, { force: true });

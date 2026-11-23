@@ -253,7 +253,7 @@ describe("formatSlotLog", () => {
 		vault: "/vault",
 		schedule: "15 * * * *",
 		slot: new Date("2026-11-24T10:15:00.000Z"),
-		claimedBy: { version: 1, vault: "/vault", note: "Workflows/daily.md", schedule: "15 * * * *", slot: "", token: "t", ...claimedBy },
+		claimedBy: { version: 1, kind: "claimed" as const, vault: "/vault", note: "Workflows/daily.md", schedule: "15 * * * *", slot: "", token: "t", ...claimedBy },
 	};
 
 	it("shows each slot with what it came to, who claimed it, and why", () => {

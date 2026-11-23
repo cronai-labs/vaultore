@@ -21,9 +21,11 @@ Decided by the owner on 2026-11-23 and 2026-11-24 (#255):
 
 | File | Written by | How |
 |---|---|---|
-| `<slot>.claim.json` | the runner that claims the slot | exclusively: prepared under a name of its own, then hard-linked to this name, which fails when it exists; it appears whole or not at all |
+| `<slot>.claim.json` | the runner that claims the slot: the slot's one decision | exclusively: prepared under a name of its own, then hard-linked to this name, which fails when it exists; it appears whole or not at all |
 | `<slot>.outcome.json` | the claimer, when its run ends | written under a temporary name and renamed into place |
-| `<slot>.missed.json`, `<slot>.resolved.json` | missed slots, later (below) | exclusively, as the claim |
+| `<slot>.resolved.json` | missed slots, later (#269): a catch-up or a dismissal | exclusively, as the claim |
+
+The decision file holds `version` (1) and `kind`: `claimed` today; a missed slot (#269) will be decided as `missed` in the same file, so a slot is decided once, either way, and never both. A reader that meets a version or kind it does not know shows the slot as `unknown`, keeps it decided, and prunes it by age alone; plugin and CLI update separately, so this is the contract between their versions.
 
 The claim holds the vault's real path, the note's vault path, the schedule, the slot, the claimer as a run lock names its holder (`by`, `pid`, `host`, `since`), and a token of its own by which the claiming process knows that its run goes on. The outcome holds the result, the run's id when one started, the reason when it did not complete, and when it ended.
 
@@ -39,7 +41,7 @@ Derived from the files that exist; nothing stores a state that the files could c
 | Claimed | claim | its claimer runs the note | the run ends → Done; the claimer is gone → Abandoned |
 | Abandoned | claim, whose claimer is gone (as a run lock's holder is: process gone, or claimed before the machine started) | nothing: it is not run again | pruned |
 | Done | claim, outcome (`completed`, `failed`, `aborted` or `skipped`) | nothing (final) | pruned |
-| Pruned | none, after retention | (looks Open, but its time is long past and no runner fires it) | never |
+| Pruned | none, after retention | looks Open; see the limit on late ticks below | never |
 
 Missed slots, built after this, add three states: **Missed** (`missed`: no runner fired it), **Dismissed** (`missed` and `resolved` by a dismissal) and **Caught up** (`missed` and `resolved` by a catch-up, then running and Done as a claim).
 
@@ -60,7 +62,7 @@ Pruning removes a slot's files once the slot is older than the shorter of 30 day
 ## Invariants
 
 1. A slot has at most one claim, and a claim never changes.
-2. Only a claim starts a scheduled run, so a slot runs at most once.
+2. Only a claim starts a scheduled run, so a slot runs at most once while its record is kept.
 3. A runner claims only a slot it would run; one that may not run the note leaves it to the other.
 4. Only the claimer writes the outcome, once.
 5. Pruning never removes a slot less than a day old.
@@ -73,6 +75,8 @@ Pruning removes a slot's files once the slot is older than the shorter of 30 day
 - A runner that finds its slot claimed reports it as skipped: the agent on stderr, the plugin in its log, not as a notice every minute.
 
 ## Limits
+
+- **A tick that comes very late** (a machine asleep for longer than the history kept, at least a day) fires the one slot it held when it slept. If the other runner ran that slot and its record was pruned since, it runs again. Until missed slots (#269) give a tick a grace period, after which a late slot is recorded as missed instead of run, keep the history longer than such a sleep, or schedule the note in one runner.
 
 - Two machines that share a synced vault each have their own record, as each has its own run locks. Schedule a note on one machine.
 - The schedule's time zone is the runner's: two runners in different time zones name different slots.

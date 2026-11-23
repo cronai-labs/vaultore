@@ -57,6 +57,7 @@ async function foreignClaim(pid: number, slot: Date, since = new Date().toISOStr
 		join(noteDir, `${slotName(slot)}.claim.json`),
 		JSON.stringify({
 			version: 1,
+			kind: "claimed",
 			vault: realpathSync(vaultRoot),
 			note: "Notes/Daily.md",
 			schedule: "15 * * * *",
@@ -187,6 +188,31 @@ describe("readSlotRecord", () => {
 		expect((await readSlotRecord({ directory: slots, notePath: "Notes/Other.md" })).map((e) => e.note)).toEqual([
 			"Notes/Other.md",
 		]);
+	});
+
+	// Finder leaves .DS_Store files; nothing but note directories is read.
+	it("ignores a file that is not a note's directory", async () => {
+		await claim("Obsidian");
+		writeFileSync(join(slots, ".DS_Store"), "x");
+
+		expect(await readSlotRecord({ directory: slots })).toHaveLength(1);
+		const errors: string[] = [];
+		await pruneSlotRecord({ directory: slots, now: SLOT, onError: (path) => errors.push(path) });
+		expect(errors).toEqual([]);
+	});
+
+	// The layout is a contract between plugin and CLI versions: a decision a
+	// newer VaultOre wrote (a missed slot, #269) is shown, and stays decided.
+	it("shows a decision of a kind it does not know as unknown, and it stays taken", async () => {
+		const noteDir = await foreignClaim(4242, SLOT);
+		writeFileSync(
+			join(noteDir, `${slotName(SLOT)}.claim.json`),
+			JSON.stringify({ version: 2, kind: "missed", vault: realpathSync(vaultRoot), note: "Notes/Daily.md", schedule: "15 * * * *", slot: SLOT.toISOString() })
+		);
+
+		const [entry] = await readSlotRecord({ directory: slots });
+		expect(entry).toMatchObject({ state: "unknown", reason: expect.stringContaining("record version 2, kind missed") });
+		await expect(claim("Obsidian")).rejects.toThrow(SlotTakenError);
 	});
 
 	it("reads an empty record before anything was claimed", async () => {
