@@ -29,6 +29,12 @@ concurrency:
 permissions:
   contents: read
 
+# turbo sends anonymous usage data to Vercel unless told not to; the build
+# needs no network for it.
+env:
+  TURBO_TELEMETRY_DISABLED: "1"
+  DO_NOT_TRACK: "1"
+
 jobs:
   # One job, one checkout and one install: commit messages, the secret scan
   # and the dependency audit first (they fail fast), then build, packaging,
