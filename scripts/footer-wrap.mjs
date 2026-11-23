@@ -9,7 +9,7 @@
  *
  * The description becomes the squash commit's body, and GitHub wraps it: each
  * line on its own, greedily, at 72 characters (counted as code points), with
- * no indent on the lines it adds. Measured on 2026-11-23 against ten merged
+ * no indent on the lines it adds. Measured on 2026-11-23 against nine merged
  * pull requests of this repository, whose commit bodies this reproduces byte
  * for byte. When a line the wrapping starts happens to look like a footer,
  * git-cliff ends the note before it, and the release notes, which cannot be
