@@ -7,16 +7,10 @@
  *   node --test scripts/breaking-changes.test.mjs
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { checkBreakingFooter } from "./breaking-footer.mjs";
-
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+import { changelogFor } from "./changelog-for.mjs";
 
 // Shaped like a squash commit here: the PR description, ending with the
 // Definition of done, then the footer.
@@ -57,35 +51,6 @@ test("a breaking title fails when the footer is not the last paragraph", () => {
 	const body = `${BODY_WITH_FOOTER}\n\nOne more paragraph.`;
 	assert.equal(checkBreakingFooter("feat(obsidian)!: settings search", body).ok, false);
 });
-
-/**
- * The changelog this repository's cliff.toml renders for a throwaway repository:
- * one release 0.1.0, then `messages` as the commits of 0.2.0.
- */
-function changelogFor(t, messages) {
-	const repo = mkdtempSync(join(tmpdir(), "vaultore-cliff-"));
-	t.after(() => rmSync(repo, { recursive: true, force: true }));
-	const git = (...args) =>
-		execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], {
-			cwd: repo,
-			stdio: "pipe",
-		});
-	git("init", "-q");
-	git("commit", "-q", "--allow-empty", "-m", "fix(core): before the release");
-	git("tag", "0.1.0");
-	for (const message of messages) git("commit", "-q", "--allow-empty", "-m", message);
-
-	const changelog = execFileSync(
-		join(root, "node_modules", ".bin", "git-cliff"),
-		["--config", join(root, "cliff.toml"), "--repository", repo, "--tag", "0.2.0"],
-		{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-	);
-	return {
-		changelog,
-		release: changelog.slice(changelog.indexOf("## [0.2.0]"), changelog.indexOf("## [0.1.0]")),
-		earlier: changelog.slice(changelog.indexOf("## [0.1.0]")),
-	};
-}
 
 test("the changelog lists breaking changes first, with the footer's text", (t) => {
 	const { release, earlier } = changelogFor(t, [
