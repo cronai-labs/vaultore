@@ -5,6 +5,27 @@ All notable changes to VaultOre will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-23
+
+### Upgrading
+
+- **core:** VaultOre now keeps one lock file per running note outside the vault, in `~/.config/vaultore/locks` (`%APPDATA%\vaultore\locks` on Windows), shared by the Obsidian plugin and the CLI: a note that is running in one is refused in the other, with a message naming who runs it. A run is also refused when its note changed between being read and the run starting; run it again. A runner must be able to create that directory: under a user with no home directory, as a container may run, every run is refused with a message saying so.
+
+### Features
+
+- **core:** The process lock moves to core and knows its runner, reloads and reboots ([#252](https://github.com/cronai-labs/vaultore/issues/252))
+- **core:** One run per note across the plugin and the CLI, with a shared run lock ([#253](https://github.com/cronai-labs/vaultore/issues/253))
+
+### Bug Fixes
+
+- **release:** The release scripts refuse a private address before creating anything ([#242](https://github.com/cronai-labs/vaultore/issues/242))
+- **core:** A run cut off by a killed process is marked aborted when its lock is taken over ([#257](https://github.com/cronai-labs/vaultore/issues/257))
+
+### Dependencies
+
+- **deps:** Lift minimatch out of the advisory range in the lint tooling ([#247](https://github.com/cronai-labs/vaultore/issues/247))
+- **deps:** Bump the production-dependencies group across 1 directory with 2 updates ([#235](https://github.com/cronai-labs/vaultore/issues/235))
+
 ## [0.3.0] - 2026-11-10
 
 ### Upgrading
