@@ -120,6 +120,13 @@ describe("separator helpers", () => {
 		expect(stripTrailing("///", "/")).toBe("");
 	});
 
+	// The CLI strips an output folder and a vault path with these (scan.ts).
+	it("strip any of several separators, as for a Windows path", () => {
+		expect(stripTrailing("/vault/notes/", "/", "\\")).toBe("/vault/notes");
+		expect(stripTrailing("C:\\vault\\", "/", "\\")).toBe("C:\\vault");
+		expect(stripTrailing("_vaultore", "/")).toBe("_vaultore");
+	});
+
 	it("are linear on long separator runs", () => {
 		const value = "x" + "/".repeat(400_000);
 		expect(timed(() => stripTrailing(value, "/"))).toBeLessThan(BUDGET_MS);

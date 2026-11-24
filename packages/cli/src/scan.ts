@@ -7,7 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { WorkflowParser, errorMessage } from "@vaultore/core";
+import { WorkflowParser, errorMessage, stripTrailing } from "@vaultore/core";
 import type { Workflow } from "@vaultore/core";
 import type { NodeAdapter } from "./adapter";
 
@@ -38,19 +38,6 @@ export interface ScheduleManifest {
 }
 
 const parser = new WorkflowParser();
-
-/**
- * Drop trailing separators from a path.
- *
- * Done with a loop rather than a `/[\\/]+$/` replace: an anchored quantifier
- * backtracks across every starting position, which is quadratic on a long run
- * of separators (CodeQL js/polynomial-redos).
- */
-export function stripTrailing(value: string, ...separators: string[]): string {
-	let end = value.length;
-	while (end > 0 && separators.includes(value.charAt(end - 1))) end -= 1;
-	return value.slice(0, end);
-}
 
 /**
  * Find every workflow note in the vault. Output folders (default
