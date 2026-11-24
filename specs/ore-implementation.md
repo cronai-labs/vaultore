@@ -1,7 +1,6 @@
 # VaultOre's Implementation of Ore
 
 > **Status:** How VaultOre implements [Ore](https://github.com/cronai-labs/ore-spec/blob/main/SPEC.md) 0.2. The format is defined there; this document adds only what VaultOre decides or adds. It describes the code it is checked in with, so it names no VaultOre version.
-> **Last Updated:** 2026-11-10
 
 The [Ore specification](https://github.com/cronai-labs/ore-spec) defines what a workflow note is, what its front matter and cells mean, how cells run and in which order, and where outputs go. This document follows its sections and records, for each one, what the specification leaves to the runner: VaultOre's code symbols (`packages/core/src/…`), error texts, settings, provider details, and the extensions VaultOre adds (artifacts, the output note's fields). Where a released VaultOre deviates from the specification, the specification's Appendix B says so. Where VaultOre accepts or checks more than Ore asks for, [Beyond the specification](#beyond-the-specification) lists it.
 
@@ -143,4 +142,4 @@ Where VaultOre accepts or checks more than Ore 0.2 asks for, or decides what Ore
 
 ## Reserved features (Ore §12)
 
-VaultOre implements none of the reserved features: the parser drops the reserved front matter keys and cell attributes, and `ore:py` and `ore:go` cells fail (see Cells above). VaultOre's design work on them: conditions and structured outputs [#80](https://github.com/cronai-labs/vaultore/issues/80), note references from another cell [#71](https://github.com/cronai-labs/vaultore/issues/71), `ore:go` [go-cell-spec.md](go-cell-spec.md), parallel cells [ARCHITECTURE.md](../ARCHITECTURE.md#parallel-execution-not-built). The [roadmap](../docs/roadmap.md) lists the rest.
+VaultOre implements none of the reserved features: the parser drops the reserved front matter keys and cell attributes, and `ore:py` and `ore:go` cells fail (see Cells above). VaultOre's design work on them: conditions and structured outputs [#80](https://github.com/cronai-labs/vaultore/issues/80), note references from another cell [#71](https://github.com/cronai-labs/vaultore/issues/71), `ore:go` [go-cell-spec.md](go-cell-spec.md), parallel cells [parallel-execution.md](../docs/design/parallel-execution.md). The [roadmap](../docs/roadmap.md) lists the rest.

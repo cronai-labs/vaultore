@@ -3,7 +3,6 @@
 > **Version:** 0.1.0 (draft)
 > **Status:** Tier 1 describes the code. Tiers 2 and 3 are proposals, not built
 > ([roadmap](../docs/roadmap.md#under-consideration)).
-> **Last Updated:** 2026-10-15
 
 ## Motivation
 

@@ -145,7 +145,7 @@ in principle; the order is not fixed. Grouped:
 Not committed to; no issue yet.
 
 - **Parallel cells and a warm container pool**
-  ([architecture](../ARCHITECTURE.md#parallel-execution-not-built)).
+  ([design](design/parallel-execution.md)).
 - **`ore:go`** with build caching ([Go cell spec](../specs/go-cell-spec.md)).
 - **Other surfaces**: a Quarto engine extension; editor extensions beyond Obsidian.
 

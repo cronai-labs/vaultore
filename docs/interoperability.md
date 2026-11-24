@@ -1,7 +1,5 @@
 # Interoperability
 
-> **Last Updated:** 2026-10-15
-
 VaultOre is core-first by design: all engine logic lives in
 `@vaultore/core`, and each surface (today the Obsidian plugin and the CLI)
 is a thin adapter. This document maps

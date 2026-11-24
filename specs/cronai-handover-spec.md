@@ -3,7 +3,6 @@
 > **Version:** 0.1.0
 > **Status:** The export side is implemented (`vaultore schedules export`). The CronAI side and
 > local schedulers honouring `.vaultore/handover.json` are not built.
-> **Last Updated:** 2026-10-15
 
 ## Motivation
 

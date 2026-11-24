@@ -181,4 +181,4 @@ When the format changes, update the spec first, then the fixtures.
 
 Related: [Ore specification](https://github.com/cronai-labs/ore-spec), [Ore implementation](../specs/ore-implementation.md),
 [plugin development quickstart](quickstart-plugin-dev.md),
-[architecture](../ARCHITECTURE.md#tests).
+[contributing](../CONTRIBUTING.md#testing).

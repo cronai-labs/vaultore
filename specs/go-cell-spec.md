@@ -3,7 +3,6 @@
 > **Status:** A design; not built. The parser accepts `ore:go` fences and a `go:` frontmatter
 > block, and the executor fails every `ore:go` cell as unsupported.  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-10-15  
 > **Roadmap:** [Under consideration](../docs/roadmap.md#under-consideration)
 
 ## Overview
