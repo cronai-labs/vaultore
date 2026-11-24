@@ -58,13 +58,15 @@ describe("WorkflowScheduler", () => {
     scheduler.register("Workflows/a.md", "* * * * *").nextRun = due;
     scheduler.register("Workflows/gone.md", "* * * * *");
 
-    const invalid = scheduler.replace([
+    const { invalid, armed } = scheduler.replace([
       { path: "Workflows/a.md", cronExpression: "* * * * *" },
       { path: "Workflows/new.md", cronExpression: "0 * * * *" },
       { path: "Workflows/typo.md", cronExpression: "not a cron" },
     ]);
 
     expect(invalid.map((entry) => entry.path)).toEqual(["Workflows/typo.md"]);
+    // Newly armed: the host looks for its missed runs (#269).
+    expect(armed.map((entry) => entry.path)).toEqual(["Workflows/new.md"]);
     expect(scheduler.list().map((entry) => entry.path).sort()).toEqual(["Workflows/a.md", "Workflows/new.md"]);
     expect(scheduler.tick().map((entry) => [entry.path, entry.slot])).toEqual([["Workflows/a.md", due]]);
   });
@@ -73,8 +75,21 @@ describe("WorkflowScheduler", () => {
     const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     scheduler.register("Workflows/a.md", "* * * * *");
 
-    expect(scheduler.replace([{ path: "Workflows/a.md", cronExpression: "nope" }])).toHaveLength(1);
+    expect(scheduler.replace([{ path: "Workflows/a.md", cronExpression: "nope" }]).invalid).toHaveLength(1);
     expect(scheduler.list()).toEqual([]);
+  });
+
+  // After an arming or a late tick, several occurrences can be due at once:
+  // only the latest runs (#269, found in the app).
+  it("marks all but the latest of a note's occurrences due in one tick as superseded", () => {
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
+    const entry = scheduler.register("Workflows/fast.md", "* * * * *");
+    entry.nextRun = new Date(Date.now() - 90_000);
+
+    const due = scheduler.tick();
+
+    expect(due.length).toBeGreaterThan(1);
+    expect(due.map((w) => w.superseded === true)).toEqual([...due.slice(1).map(() => true), false]);
   });
 
   it("recomputes nextRun when the cron changes", () => {

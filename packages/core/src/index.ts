@@ -126,23 +126,54 @@ export type { AIProviderName } from "./providers";
 // SCHEDULER
 // =============================================================================
 
-export { WorkflowScheduler, computeNextRun, classifyScheduleApproval } from "./scheduler";
+export {
+  WorkflowScheduler,
+  computeNextRun,
+  classifyScheduleApproval,
+  lateAfterMs,
+  MIN_LATE_AFTER_MS,
+  MAX_LATE_AFTER_MS,
+} from "./scheduler";
 
 export type { DueWorkflow, Registration, ScheduleApproval, ScheduleApprovalState } from "./scheduler";
 
 export {
+  GAP_MARGIN_MS,
+  LATE_AFTER_MS,
   MAX_KEEP_DAYS,
+  MissedSlotError,
   SlotTakenError,
+  catchUpMissedSlot,
   claimSlot,
+  dismissMissedSlots,
+  isLateSlot,
+  occurrencesBetween,
+  recordMissedSlots,
   describeSlotState,
   keepMilliseconds,
   pruneSlotRecord,
   readSlotRecord,
   slotRecordDirectory,
 } from "./scheduler/slot-record";
+export {
+  readMachineSettings,
+  writeMachineSettings,
+  machineSettingsPath,
+  isLateAfterMinutes,
+  MIN_LATE_AFTER_MINUTES,
+  MAX_LATE_AFTER_MINUTES,
+} from "./settings/machine-settings";
+export type { MachineSettings, MachineSettingsOptions } from "./settings/machine-settings";
 
 export type {
   ClaimSlotOptions,
+  ReadSlotRecordOptions,
+  RecordMissedOptions,
+  RecordedGap,
+  ResolveMissedOptions,
+  SlotDecisionRecord,
+  SlotMissedRecord,
+  SlotResolutionRecord,
   SlotClaim,
   SlotClaimRecord,
   SlotEntry,

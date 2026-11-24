@@ -9,6 +9,7 @@ import {
 	approveSchedules,
 	formatScheduleList,
 	formatSlotLog,
+	lateAfter,
 	listSchedules,
 	readScheduledNote,
 	revokeSchedules,
@@ -249,6 +250,7 @@ describe("schedules list", () => {
 describe("formatSlotLog", () => {
 	const claimedBy = { pid: 42, host: "h", since: "2026-11-24T10:15:01.000Z", by: "Obsidian" };
 	const base = {
+		kind: "claimed" as const,
 		note: "Workflows/daily.md",
 		vault: "/vault",
 		schedule: "15 * * * *",
@@ -272,5 +274,54 @@ describe("formatSlotLog", () => {
 
 	it("says when nothing is recorded", () => {
 		expect(formatSlotLog([])).toEqual(["No scheduled run recorded."]);
+	});
+
+	// #269: a gap is one line, with its size, who found it and who resolved it.
+	it("shows a missed run with its size, who found it, and who resolved it", () => {
+		const gap = {
+			...base,
+			kind: "missed" as const,
+			slot: new Date("2026-11-24T11:15:00.000Z"),
+			until: new Date("2026-11-24T15:15:00.000Z"),
+			count: 5,
+			claimedBy: { ...base.claimedBy, by: "vaultore agent" },
+		};
+		const resolver = { version: 1, pid: 9, host: "h", since: "x", by: "vaultore", token: "t" };
+		expect(
+			formatSlotLog([
+				{ ...gap, state: "missed" },
+				{ ...gap, state: "dismissed", resolvedBy: { ...resolver, kind: "dismissed" as const } },
+				{ ...gap, state: "completed", runId: "r2", resolvedBy: { ...resolver, kind: "caught-up" as const } },
+			])
+		).toEqual([
+			"2026-11-24T11:15:00.000Z  missed     Workflows/daily.md [15 * * * *] 5 missed run(s) to 2026-11-24T15:15:00.000Z, found by vaultore agent",
+			"2026-11-24T11:15:00.000Z  dismissed  Workflows/daily.md [15 * * * *] 5 missed run(s) to 2026-11-24T15:15:00.000Z, found by vaultore agent; dismissed by vaultore",
+			"2026-11-24T11:15:00.000Z  completed  Workflows/daily.md [15 * * * *] 5 missed run(s) to 2026-11-24T15:15:00.000Z, found by vaultore agent; caught up by vaultore run r2",
+		]);
+	});
+});
+
+// One threshold per machine, in the file both runners read (#269).
+describe("lateAfter", () => {
+	let dir: string;
+	let path: string;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "vaultore-late-"));
+		path = join(dir, "vaultore", "settings.json");
+	});
+	afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+	it("shows the default, sets a value, and goes back to the default", async () => {
+		expect(await lateAfter(undefined, path)).toBe("late after 2 minutes (the default)");
+		expect(await lateAfter("15", path)).toBe(`late after 15 minutes (set in ${path})`);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ lateAfterMinutes: 15 });
+		expect(await lateAfter(undefined, path)).toBe(`late after 15 minutes (set in ${path})`);
+		expect(await lateAfter("default", path)).toBe("late after 2 minutes (the default)");
+	});
+
+	it.each(["1", "61", "2.5", "ten", ""])("refuses %j", async (value) => {
+		await expect(lateAfter(value, path)).rejects.toThrow(
+			`late after must be a whole number of minutes from 2 to 60, or default, got '${value}'`
+		);
 	});
 });

@@ -13,6 +13,7 @@ documents link to it.
 | [Ore implementation](../specs/ore-implementation.md) | What VaultOre decides and adds on top of the format: code symbols, error texts, settings, providers, output files, artifacts |
 | [Permissions spec](../specs/permissions-spec.md) | Permissions, their defaults, the vault mounts, stored decisions |
 | [Sandbox spec](../specs/sandbox-spec.md) | Container engines and hardening today; a container-free tier proposed |
+| [Schedule record spec](../specs/schedule-record-spec.md) | How each scheduled run happens at most once in either runner, missed runs, the shared late threshold |
 | [CronAI handover spec](../specs/cronai-handover-spec.md) | The schedule manifest `vaultore schedules export` writes |
 | [Go cell spec](../specs/go-cell-spec.md) | `ore:go` cells: a design, not built |
 

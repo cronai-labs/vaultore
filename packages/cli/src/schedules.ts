@@ -6,11 +6,16 @@
  */
 
 import {
+	MAX_LATE_AFTER_MINUTES,
+	MIN_LATE_AFTER_MINUTES,
 	WorkflowParser,
 	classifyScheduleApproval,
 	computeNextRun,
 	errorMessage,
 	grantHash,
+	isLateAfterMinutes,
+	readMachineSettings,
+	writeMachineSettings,
 } from "@vaultore/core";
 import type { ScheduleApprovalState, SlotEntry, Workflow } from "@vaultore/core";
 import type { ApprovalStore, VaultApprovals } from "./approvals";
@@ -230,6 +235,34 @@ export function formatSlotLog(entries: SlotEntry[]): string[] {
 		const by = entry.claimedBy.by ?? `process ${entry.claimedBy.pid}`;
 		const run = entry.runId ? ` run ${entry.runId}` : "";
 		const reason = entry.reason ? `: ${entry.reason}` : "";
-		return `${entry.slot.toISOString()}  ${entry.state.padEnd(9)}  ${entry.note} [${entry.schedule}] by ${by}${run}${reason}`;
+		const head = `${entry.slot.toISOString()}  ${entry.state.padEnd(9)}  ${entry.note} [${entry.schedule}]`;
+		if (entry.kind !== "missed") return `${head} by ${by}${run}${reason}`;
+		// A gap: how many runs it holds, who found it, and who resolved it.
+		const runs = `${entry.count ?? 1} missed run(s) to ${(entry.until ?? entry.slot).toISOString()}, found by ${by}`;
+		const resolved = entry.resolvedBy
+			? `; ${entry.resolvedBy.kind === "dismissed" ? "dismissed" : "caught up"} by ${entry.resolvedBy.by ?? `process ${entry.resolvedBy.pid}`}`
+			: "";
+		return `${head} ${runs}${resolved}${run}${reason}`;
 	});
+}
+
+/**
+ * `vaultore schedules late-after [<minutes> | default]`: shows, or sets for
+ * this machine, how many minutes late a scheduled run may start, in the file
+ * both runners read. Returns the line to print; a value out of range throws.
+ */
+export async function lateAfter(value: string | undefined, path: string): Promise<string> {
+	let minutes: number | undefined;
+	if (value !== undefined && value !== "default") {
+		minutes = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+		if (!isLateAfterMinutes(minutes)) {
+			throw new Error(
+				`late after must be a whole number of minutes from ${MIN_LATE_AFTER_MINUTES} to ${MAX_LATE_AFTER_MINUTES}, or default, got '${value}'`
+			);
+		}
+	}
+	const settings =
+		value === undefined ? await readMachineSettings({ path }) : await writeMachineSettings({ lateAfterMinutes: minutes }, { path });
+	const source = settings.lateAfterMinutes === undefined ? "the default" : `set in ${path}`;
+	return `late after ${settings.lateAfterMinutes ?? MIN_LATE_AFTER_MINUTES} minutes (${source})`;
 }

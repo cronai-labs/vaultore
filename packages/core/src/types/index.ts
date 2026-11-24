@@ -517,6 +517,8 @@ export interface ScheduledWorkflow {
   lastRun?: Date;
   lastStatus?: "success" | "error";
   enabled: boolean;
+  /** When this runner armed the note with this schedule; missed runs are not looked for before it, for a note with no record yet (#269). */
+  armedAt: Date;
 }
 
 // =============================================================================

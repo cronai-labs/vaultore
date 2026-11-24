@@ -57,6 +57,7 @@ vaultore/
 │   │   │   ├── providers/    # OpenAI and Anthropic
 │   │   │   ├── scheduler/    # cron registrations and ticks; the schedule record (slot-record.ts)
 │   │   │   ├── lock/         # a lock between VaultOre processes on one machine
+│   │   │   ├── settings/     # this machine's settings both runners share (machine-settings.ts)
 │   │   │   ├── vault/        # exported vault helpers (not used by the executor)
 │   │   │   ├── fixtures/     # canonical and smart-inbox tests
 │   │   │   └── testing/      # integration-test helpers, network guard
@@ -71,7 +72,7 @@ vaultore/
 │       ├── src/cli.ts        # the vaultore command
 │       ├── src/adapter.ts    # NodeAdapter
 │       ├── src/scan.ts       # workflow discovery, schedule manifest
-│       ├── src/schedules.ts  # schedules list, approve, revoke
+│       ├── src/schedules.ts  # schedules list, approve, revoke, log, late-after
 │       ├── src/approvals.ts  # the agent's approvals file, outside the vault
 │       ├── src/args.ts, src/agent.ts, src/index.ts, *.test.ts
 │       └── tsup.config.ts, tsconfig.json, eslint.config.mjs, vitest.config.ts
@@ -100,7 +101,7 @@ vaultore/
 | HTTP | `requestUrl` | `fetch` |
 | Timers (core calls none of its own) | The window's; the scheduler's interval is registered with the plugin | Node's |
 | `ask` permissions | Modal | Deny, or allow with `--yes` |
-| Run lock | `acquireRunLock` as `Obsidian` | `acquireRunLock` as `vaultore run` or `vaultore agent` |
+| Run lock | `acquireRunLock` as `Obsidian` | `acquireRunLock` as `vaultore run`, `vaultore agent` or `vaultore schedules catch-up` |
 | Schedule record | `claimSlot` as `Obsidian`, pruned by the "Scheduled-run history" setting | `claimSlot` as `vaultore agent`, pruned by `--keep-days` |
 | Scheduling | Approved notes only, while Obsidian is open; an approval is a path and a schedule, in the plugin data | `vaultore agent`, approved notes only; an approval is a path and the note's content hash, in `approvals.json` outside the vault (`--state-dir`) |
 
@@ -113,8 +114,9 @@ vaultore/
 | `executor` | A whole run: permissions, engine check, order, each cell, outputs, run records | `WorkflowExecutor`, `renderOutputMarkdown` |
 | `runtime` | Which engines answer; the `run` command line with its hardening; spawning it | `detectRuntimes`, `buildRunCommand`, `execContainer` |
 | `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` (core has no transport of its own); model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
-| `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback with the occurrence that came due; whether a note still has its schedule approval; the schedule record, which lets each occurrence run at most once across the plugin and the CLI, in `~/.config/vaultore/slots` | `WorkflowScheduler`, `computeNextRun`, `classifyScheduleApproval`, `claimSlot`, `readSlotRecord`, `SlotTakenError` |
+| `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback with the occurrence that came due; whether a note still has its schedule approval; the schedule record, which lets each occurrence run at most once across the plugin and the CLI, in `~/.config/vaultore/slots`, and records the occurrences no runner fired as missed runs to catch up or dismiss | `WorkflowScheduler`, `computeNextRun`, `classifyScheduleApproval`, `claimSlot`, `readSlotRecord`, `SlotTakenError`, `recordMissedSlots`, `catchUpMissedSlot`, `dismissMissedSlots` |
 | `lock` | A lock between VaultOre processes on one machine: the approvals file's, and one run lock per note, shared by the plugin and the CLI, in `~/.config/vaultore/locks` | `acquireLock`, `acquireRunLock`, `RunLockHeldError` |
+| `settings` | This machine's settings both runners must share, in `~/.config/vaultore/settings.json`: the late threshold | `readMachineSettings`, `writeMachineSettings`, `machineSettingsPath` |
 | `vault` | `createVaultAPI`, `generateRuntimeScript`: exported, but the executor injects its own copy (`buildTypeScriptRuntime`), and the two have diverged ([#45](https://github.com/cronai-labs/vaultore/issues/45)) | |
 
 ## How a Run Works
@@ -123,8 +125,9 @@ vaultore/
 
 1. **Parse** the note: frontmatter against the schema, cells, existing outputs.
 2. **Claim the slot**, for a scheduled run only: the platform's `claimSlot`, refused when a
-   runner claimed this occurrence first. From here the slot is spent; its outcome is written
-   when the run ends, however it ends (schedule-record-spec).
+   runner claimed this occurrence first. A catch-up of missed runs brings the slot it holds
+   instead (`slotClaim`). From here the slot is spent; its outcome is written when the run
+   ends, however it ends (schedule-record-spec).
 3. **Lock the note**: the platform's `acquireRunLock`, refused while another run of the note
    holds it. A lock left behind by a run that ended without finishing is taken over, and that
    run's record is marked `aborted`. Then read the note again, and stop if it is no longer what

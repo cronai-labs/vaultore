@@ -46,6 +46,7 @@ function claim(by: string, options: { slot?: Date; notePath?: string; keepDays?:
 		directory: slots,
 		keepDays: options.keepDays,
 		now: options.now ?? new Date(SLOT.getTime() + 60_000),
+		pruneIntervalMs: 0,
 	});
 }
 
@@ -271,6 +272,15 @@ describe("pruning", () => {
 
 		await pruneSlotRecord({ directory: slots, now: SLOT, isAlive: () => true });
 		expect(existsSync(stray)).toBe(false);
+	});
+
+	it("is done at most once an hour per directory by the claims of one process", async () => {
+		const claimOnce = (slot: Date, keepDays: number) =>
+			claimSlot({ vaultRoot, notePath: "Notes/Daily.md", schedule: "15 * * * *", slot, by: "Obsidian", directory: slots, keepDays, now: SLOT });
+		await (await claimOnce(new Date(SLOT.getTime() - 3 * DAY), 30)).finish({ result: "completed" });
+
+		await claimOnce(SLOT, 1);
+		expect(await readSlotRecord({ directory: slots })).toHaveLength(2);
 	});
 
 	it("is done by every claim, with the claimer's setting", async () => {

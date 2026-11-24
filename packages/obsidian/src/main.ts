@@ -15,13 +15,22 @@ import {
   DEFAULT_MODELS,
   DEFAULT_PROVIDER,
   RunLockHeldError,
+  MissedSlotError,
   SlotTakenError,
   WorkflowExecutor,
   WorkflowParser,
   WorkflowScheduler,
   MAX_KEEP_DAYS,
   acquireRunLock,
+  catchUpMissedSlot,
   claimSlot,
+  dismissMissedSlots,
+  isLateSlot,
+  lateAfterMs,
+  readMachineSettings,
+  writeMachineSettings,
+  readSlotRecord,
+  recordMissedSlots,
   computeNextRun,
   describeHolder,
   errorMessage,
@@ -35,6 +44,7 @@ import type {
   RunLock,
   ScheduledSlot,
   SlotClaim,
+  SlotEntry,
   Timers,
 } from "@vaultore/core";
 
@@ -505,6 +515,21 @@ export default class VaultOrePlugin extends Plugin {
           );
           continue;
         }
+        // A tick that comes late (the machine slept) does not run the slot
+        // it held: that slot, and any after it, are missed runs (#269).
+        if (isLateSlot(workflow.slot, new Date(), this.scheduler.lateAfterMs)) {
+          void this.lookForMissedRuns(workflow.path, workflow.cronExpression, workflow.armedAt);
+          continue;
+        }
+        // A later occurrence came due in the same tick and runs instead.
+        if (workflow.superseded) {
+          void this.recordSkippedSlot(
+            workflow.path,
+            { schedule: workflow.cronExpression, slot: workflow.slot },
+            "a later occurrence came due at the same time and ran instead"
+          );
+          continue;
+        }
         void this.runWorkflowByPath(workflow.path, {
           schedule: workflow.cronExpression,
           slot: workflow.slot,
@@ -514,12 +539,21 @@ export default class VaultOrePlugin extends Plugin {
   });
   private schedulerRefreshTimer: number | null = null;
   private runningWorkflows = new Set<string>();
+  // The vault's open missed runs, as the settings list them (#269). Read from
+  // the record outside the vault when gaps are found or resolved, and when
+  // the schedules are refreshed.
+  missedRuns: SlotEntry[] = [];
+  // Obsidian keeps a settings tab as it last drew it, also across closing and
+  // opening the settings, until the tab's update() (Obsidian 1.15.1); a list
+  // that changes on its own (missed runs) redraws it.
+  private settingsTab: VaultOreSettingsTab | undefined;
   // Invalid schedules already reported, as "path\nschedule", so a typo is
   // reported once rather than on every vault change.
   private reportedInvalidSchedules = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    await this.loadMachineSettings();
     this.adapter = new ObsidianAdapter(this);
 
     // The run commands are offered only on workflow notes, so the palette
@@ -565,14 +599,23 @@ export default class VaultOrePlugin extends Plugin {
       },
     });
 
-    this.addSettingTab(new VaultOreSettingsTab(this.app, this));
+    this.settingsTab = new VaultOreSettingsTab(this.app, this);
+    this.addSettingTab(this.settingsTab);
 
     this.scheduler.start();
+    // Each minute: missed runs the agent resolved, and a late threshold
+    // `vaultore schedules late-after` changed.
+    this.timers.setInterval(() => {
+      void this.recheckMissedRuns();
+      void this.loadMachineSettings();
+    }, 60 * 1000);
 
     // Defer the initial vault scan until the workspace layout (and metadata
     // cache) is ready, so plugin load stays fast on large vaults.
     this.app.workspace.onLayoutReady(() => {
       this.refreshScheduledWorkflows();
+      // Open missed runs found earlier, by this runner or the agent (#269).
+      void this.refreshMissedRuns();
     });
 
     this.registerEvent(
@@ -628,6 +671,38 @@ export default class VaultOrePlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
+  // How late a scheduled run may start, in minutes; undefined is the default.
+  // This machine's, shared with vaultore agent: not in data.json (#269).
+  lateAfterMinutes: number | undefined;
+  private machineSettingsError = "";
+
+  /**
+   * Reads this machine's shared settings (the late threshold). A file that
+   * cannot be used is told of once, and the last good value is kept.
+   */
+  async loadMachineSettings(): Promise<void> {
+    try {
+      const settings = await readMachineSettings();
+      this.machineSettingsError = "";
+      this.lateAfterMinutes = settings.lateAfterMinutes;
+      this.scheduler.lateAfterMs = lateAfterMs(this.lateAfterMinutes);
+    } catch (err) {
+      const message = errorMessage(err);
+      if (message !== this.machineSettingsError) {
+        this.adapter.log("warn", message);
+        new Notice(`VaultOre: ${message}. Scheduled runs keep a late threshold of ${this.scheduler.lateAfterMs / 60_000} minutes.`);
+      }
+      this.machineSettingsError = message;
+    }
+  }
+
+  /** Sets the late threshold for this machine; undefined goes back to the default. */
+  async setLateAfterMinutes(minutes: number | undefined): Promise<void> {
+    const settings = await writeMachineSettings({ lateAfterMinutes: minutes });
+    this.lateAfterMinutes = settings.lateAfterMinutes;
+    this.scheduler.lateAfterMs = lateAfterMs(this.lateAfterMinutes);
+  }
+
   // Command checks run synchronously on every palette open, so they read the
   // metadata cache's parsed frontmatter rather than the note's text.
   private isWorkflowNote(file: TFile | null): file is TFile {
@@ -635,8 +710,29 @@ export default class VaultOrePlugin extends Plugin {
     return isWorkflowFrontmatter(this.app.metadataCache.getFileCache(file)?.frontmatter);
   }
 
-  private async runWorkflow(file: TFile, scheduled?: ScheduledSlot): Promise<void> {
+  /**
+   * A slot not run is still decided: claimed and recorded as skipped, so it is
+   * neither run later nor lost between the record's slots (#269).
+   */
+  private async recordSkippedSlot(path: string, scheduled: ScheduledSlot, reason: string): Promise<void> {
+    try {
+      const claim = await this.adapter.claimSlot(path, scheduled);
+      await claim.finish({ result: "skipped", reason });
+      this.adapter.log("info", `Skipped the ${scheduled.slot.toISOString()} run of ${path}: ${reason}`);
+    } catch (err) {
+      if (!(err instanceof SlotTakenError)) this.adapter.log("warn", `Could not record the skipped run of ${path}: ${errorMessage(err)}`);
+    }
+  }
+
+  private async runWorkflow(file: TFile, scheduled?: ScheduledSlot, slotClaim?: SlotClaim): Promise<void> {
     if (this.runningWorkflows.has(file.path)) {
+      // A held catch-up is finished as skipped too.
+      const reason = "the note was still running";
+      if (scheduled) {
+        await this.recordSkippedSlot(file.path, scheduled, reason);
+        return;
+      }
+      await slotClaim?.finish({ result: "skipped", reason }).catch(() => undefined);
       new Notice("VaultOre: Workflow is already running");
       return;
     }
@@ -661,6 +757,7 @@ export default class VaultOrePlugin extends Plugin {
         workflowPath: file.path,
         content,
         ...(scheduled ? { scheduled } : {}),
+        ...(slotClaim ? { slotClaim } : {}),
         emitEvent: (event, data) => {
           if (event === "cell:started") {
             const cellId = (data as { cellId?: string })?.cellId;
@@ -679,6 +776,10 @@ export default class VaultOrePlugin extends Plugin {
         this.adapter.log("info", err.message);
         return;
       }
+      // A catch-up that failed before the run began (the note could not be
+      // read): its gap is finished as failed, not left taken. Finishing again
+      // after the executor did changes nothing.
+      await slotClaim?.finish({ result: "failed", reason: errorMessage(err) }).catch(() => undefined);
       new Notice(runFailureNotice(err));
     } finally {
       // The notice is only created once the read succeeds, so it may not exist.
@@ -804,11 +905,120 @@ export default class VaultOrePlugin extends Plugin {
       }
     }
     const registered = new Set(this.scheduler.list().map((entry) => entry.path));
+    let armed = false;
     for (const [path, schedule] of wanted) {
       if (!registered.has(path)) {
-        this.scheduler.register(path, schedule);
+        const entry = this.scheduler.register(path, schedule);
+        armed = true;
+        // Armed now: what it missed while it was not (#269).
+        void this.lookForMissedRuns(path, schedule, entry.armedAt);
       }
     }
+    // An occurrence of the last two minutes fires now, in time, rather than
+    // at the next tick, when it would be late.
+    if (armed) this.scheduler.tick();
+  }
+
+  /**
+   * Records the runs of a scheduled note that no runner fired, and says so
+   * once, for the gaps this runner recorded. Never fails the caller.
+   */
+  async lookForMissedRuns(path: string, schedule: string, armedAt?: Date): Promise<void> {
+    try {
+      await recordMissedSlots({
+        vaultRoot: await this.adapter.getVaultRoot(),
+        notePath: path,
+        schedule,
+        by: "Obsidian",
+        keepDays: this.settings.scheduleHistoryDays,
+        lateAfterMs: this.scheduler.lateAfterMs,
+        ...(armedAt ? { armedAt } : {}),
+      });
+    } catch (err) {
+      this.adapter.log("warn", `Could not look for missed runs of ${path}: ${errorMessage(err)}`);
+    }
+    // Also when the agent recorded the gap first: the user hears of it here.
+    await this.refreshMissedRuns();
+  }
+
+  /**
+   * A gap listed here may have been resolved by the other runner. Obsidian
+   * draws the settings tab again only on update() (1.15.1), so the list is
+   * re-read each minute while it holds a gap; quiet, as load told of errors.
+   */
+  async recheckMissedRuns(): Promise<void> {
+    if (this.missedRuns.length > 0) await this.refreshMissedRuns(true);
+  }
+
+  // Open gaps this load of the plugin has told the user of, as "note slot".
+  private announcedMissedRuns = new Set<string>();
+
+  /** Reads the vault's open missed runs, and tells of each new one once. */
+  async refreshMissedRuns(quiet = false): Promise<void> {
+    try {
+      const entries = await readSlotRecord({ vaultRoot: await this.adapter.getVaultRoot() });
+      const before = this.missedRuns.map((gap) => `${gap.note} ${gap.slot.toISOString()}`).join("\n");
+      this.missedRuns = entries.filter((entry) => entry.kind === "missed" && entry.state === "missed");
+      const after = this.missedRuns.map((gap) => `${gap.note} ${gap.slot.toISOString()}`).join("\n");
+      if (after !== before) this.settingsTab?.update();
+    } catch (err) {
+      if (!quiet) this.adapter.log("warn", `Could not read the schedule record: ${errorMessage(err)}`);
+      return;
+    }
+    for (const gap of this.missedRuns) {
+      const key = `${gap.note} ${gap.slot.toISOString()}`;
+      if (this.announcedMissedRuns.has(key)) continue;
+      this.announcedMissedRuns.add(key);
+      new Notice(
+        `VaultOre: ${gap.note} missed ${gap.count ?? 1} scheduled run(s) since ${gap.slot.toLocaleString()}. ` +
+          "Catch up or dismiss them in VaultOre's settings."
+      );
+    }
+  }
+
+  /** Runs a note once for a gap of missed runs, as a run by hand. */
+  async catchUpMissedRun(gap: SlotEntry): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(gap.note);
+    if (!(file instanceof TFile)) {
+      new Notice(`VaultOre: ${gap.note} no longer exists; dismiss its missed runs instead`);
+      return;
+    }
+    // Before the gap is taken: a catch-up that could not start would leave it
+    // taken and not run.
+    if (this.runningWorkflows.has(file.path)) {
+      new Notice("VaultOre: Workflow is already running; catch up once it ends");
+      return;
+    }
+    let claim: SlotClaim;
+    try {
+      claim = await catchUpMissedSlot({
+        vaultRoot: await this.adapter.getVaultRoot(),
+        notePath: gap.note,
+        slot: gap.slot,
+        by: "Obsidian",
+      });
+    } catch (err) {
+      new Notice(err instanceof MissedSlotError ? `VaultOre: ${err.message}` : `VaultOre error: ${errorMessage(err)}`);
+      await this.refreshMissedRuns();
+      return;
+    }
+    await this.refreshMissedRuns();
+    await this.runWorkflow(file, undefined, claim);
+  }
+
+  /** Closes a gap of missed runs without running the note. */
+  async dismissMissedRun(gap: SlotEntry): Promise<void> {
+    try {
+      await dismissMissedSlots({
+        vaultRoot: await this.adapter.getVaultRoot(),
+        notePath: gap.note,
+        slot: gap.slot,
+        by: "Obsidian",
+      });
+    } catch (err) {
+      new Notice(err instanceof MissedSlotError ? `VaultOre: ${err.message}` : `VaultOre error: ${errorMessage(err)}`);
+    }
+    await this.refreshMissedRuns();
   }
 
   private reportInvalidSchedule(path: string, schedule: string, error: string): void {
@@ -892,7 +1102,7 @@ function runFailureNotice(err: unknown): string {
     : `VaultOre error: ${errorMessage(err)}`;
 }
 
-type NumericSetting = "aiTemperature" | "aiMaxTokens" | "aiTimeoutSeconds" | "scheduleHistoryDays";
+type NumericSetting = "aiTemperature" | "aiMaxTokens" | "aiTimeoutSeconds" | "scheduleHistoryDays" | "lateAfterMinutes";
 
 // Blank means "the default", which a number control cannot hold, so these are
 // text controls that take a number in range or nothing.
@@ -904,10 +1114,21 @@ const NUMERIC_SETTINGS: Record<NumericSetting, { valid: (n: number) => boolean; 
     valid: (n) => Number.isInteger(n) && n >= 0 && n <= MAX_KEEP_DAYS,
     hint: `a whole number of days from 0 to ${MAX_KEEP_DAYS}`,
   },
+  lateAfterMinutes: {
+    valid: (n) => Number.isInteger(n) && n >= 2 && n <= 60,
+    hint: "a whole number of minutes from 2 to 60",
+  },
 };
 
 function isNumericSetting(key: string): key is NumericSetting {
   return Object.prototype.hasOwnProperty.call(NUMERIC_SETTINGS, key);
+}
+
+// The numeric settings kept in data.json; Late after is this machine's (#269).
+type StoredNumericSetting = Exclude<NumericSetting, "lateAfterMinutes">;
+
+function isStoredNumericSetting(key: string): key is StoredNumericSetting {
+  return isNumericSetting(key) && key !== "lateAfterMinutes";
 }
 
 /** The number a numeric field holds: undefined when blank, null when invalid. */
@@ -1013,11 +1234,18 @@ class VaultOreSettingsTab extends PluginSettingTab {
         heading: "Scheduled workflows",
         items: this.scheduleSettings(),
       },
+      ...(this.plugin.missedRuns.length > 0
+        ? [{ type: "group" as const, heading: "Missed runs", items: this.missedRunSettings() }]
+        : []),
     ];
   }
 
   getControlValue(key: string): unknown {
-    if (isNumericSetting(key)) {
+    if (key === "lateAfterMinutes") {
+      const value = this.plugin.lateAfterMinutes;
+      return value === undefined ? "" : String(value);
+    }
+    if (isStoredNumericSetting(key)) {
       const value = this.plugin.settings[key];
       return value === undefined ? "" : String(value);
     }
@@ -1056,8 +1284,16 @@ class VaultOreSettingsTab extends PluginSettingTab {
         settings.outputRoot = trimmed || "_vaultore";
         break;
       }
+      case "lateAfterMinutes":
+        try {
+          // validate() has refused an invalid value before it gets here.
+          await this.plugin.setLateAfterMinutes(parseNumericSetting(key, String(value)) ?? undefined);
+        } catch (err) {
+          new Notice(`VaultOre: could not save Late after: ${errorMessage(err)}`);
+        }
+        return;
       default:
-        if (!isNumericSetting(key)) {
+        if (!isStoredNumericSetting(key)) {
           throw new Error(`VaultOre has no setting "${key}"`);
         }
         // validate() has refused an invalid value before it gets here.
@@ -1157,6 +1393,13 @@ class VaultOreSettingsTab extends PluginSettingTab {
           "0 keeps each run for a day only. Blank keeps 30.",
         String(MAX_KEEP_DAYS)
       ),
+      this.numericSetting(
+        "lateAfterMinutes",
+        "Late after",
+        "Minutes a scheduled run may start late and still run, from 2 to 60; later, it is listed as missed. " +
+          "For this computer, shared with vaultore agent (vaultore schedules late-after). Blank is 2.",
+        "2"
+      ),
     ];
 
     const notes = this.plugin.getScheduledNotes();
@@ -1202,6 +1445,37 @@ class VaultOreSettingsTab extends PluginSettingTab {
       });
     }
     return items;
+  }
+
+  // Scheduled runs no runner fired, one row per gap, with what to do (#269).
+  private missedRunSettings(): SettingGroupItem[] {
+    return this.plugin.missedRuns.map((gap) => {
+      const count = gap.count ?? 1;
+      const from = gap.slot.toLocaleString();
+      const to = (gap.until ?? gap.slot).toLocaleString();
+      return {
+        name: gap.note,
+        desc:
+          count === 1
+            ? `The run of ${from} was missed.`
+            : `${count} scheduled runs from ${from} to ${to} were missed. Catching up runs the note once.`,
+        searchable: false,
+        render: (setting: Setting) => {
+          setting.addButton((button) =>
+            button.setButtonText("Catch up").onClick(async () => {
+              await this.plugin.catchUpMissedRun(gap);
+              this.update();
+            })
+          );
+          setting.addButton((button) =>
+            button.setButtonText("Dismiss").onClick(async () => {
+              await this.plugin.dismissMissedRun(gap);
+              this.update();
+            })
+          );
+        },
+      };
+    });
   }
 
   private describeSchedule(note: ScheduledNote): string {

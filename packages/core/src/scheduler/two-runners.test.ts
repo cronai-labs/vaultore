@@ -43,9 +43,10 @@ it("two runners that armed a note at different moments claim one slot, and only 
 	vi.setSystemTime(new Date("2026-11-24T10:15:38.020Z"));
 	due.agent = agent.tick();
 
-	const [a] = due.obsidian;
-	const [b] = due.agent;
-	expect(a?.slot.toISOString()).toBe("2026-11-24T10:15:00.000Z");
+	// Each fires the 10:15 occurrence (with what came due since it armed).
+	const a = due.obsidian.find((w) => w.slot.toISOString() === "2026-11-24T10:15:00.000Z");
+	const b = due.agent.find((w) => w.slot.toISOString() === "2026-11-24T10:15:00.000Z");
+	expect(a).toBeDefined();
 	expect(b?.slot.getTime()).toBe(a?.slot.getTime());
 
 	vi.useRealTimers();

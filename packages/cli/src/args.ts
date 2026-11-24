@@ -153,3 +153,21 @@ export function toVaultRelative(
 
 	return rel.split(sep).join("/");
 }
+
+/**
+ * The slot a catch-up or a dismissal names: its second argument, the first
+ * slot of a missed run as `vaultore schedules log` prints it. Undefined when
+ * none is given. Anything that is not such a time, or a third argument, is a
+ * usage error (#269).
+ */
+export function slotFrom(positional: string[]): Date | undefined {
+	if (positional.length > 2) throw new Error("name one note and at most one slot");
+	const raw = positional[1];
+	if (raw === undefined) return undefined;
+	const slot = new Date(raw);
+	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw) || Number.isNaN(slot.getTime())) {
+		throw new Error(`'${raw}' is not a slot; give it as schedules log prints it, such as 2026-11-24T10:15:00.000Z`);
+	}
+	return slot;
+}
+

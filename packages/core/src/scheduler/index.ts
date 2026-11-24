@@ -7,6 +7,7 @@
 import { CronExpressionParser } from "cron-parser";
 import { ScheduledWorkflow, TimerHandle, Timers } from "../types";
 
+import { MAX_LATE_AFTER_MINUTES, MIN_LATE_AFTER_MINUTES } from "../settings/machine-settings";
 export { classifyScheduleApproval } from "./approvals";
 export type { ScheduleApproval, ScheduleApprovalState } from "./approvals";
 
@@ -15,6 +16,26 @@ export interface SchedulerOptions {
   timers: Timers;
   tickIntervalMs?: number;
   onTick?: (workflows: DueWorkflow[]) => void;
+  /** How late a slot may fire and still run (#269). Default LATE_AFTER_MS. */
+  lateAfterMs?: number;
+}
+
+/**
+ * A tick that fires a slot later than this does not run it: the slot is a
+ * missed run (#269). The scheduler never lets a slot younger than this pass
+ * unfired, so every occurrence is either fired in time or older than this,
+ * and then part of a gap. A runner's setting may set it from MIN to MAX
+ * (`lateAfterMs`); both runners read it from this machine's settings (`readMachineSettings`).
+ */
+export const LATE_AFTER_MS = 2 * 60 * 1000;
+/** Two ticks of the 60-second scheduler: any less and a tick on time could find its slot late. */
+export const MIN_LATE_AFTER_MS = MIN_LATE_AFTER_MINUTES * 60 * 1000;
+export const MAX_LATE_AFTER_MS = MAX_LATE_AFTER_MINUTES * 60 * 1000;
+
+/** `minutes` as the late threshold in ms, kept within its bounds; undefined is the default. */
+export function lateAfterMs(minutes?: number): number {
+  if (minutes === undefined || !Number.isFinite(minutes)) return LATE_AFTER_MS;
+  return Math.min(Math.max(minutes * 60 * 1000, MIN_LATE_AFTER_MS), MAX_LATE_AFTER_MS);
 }
 
 /**
@@ -25,6 +46,12 @@ export interface SchedulerOptions {
  */
 export interface DueWorkflow extends ScheduledWorkflow {
   slot: Date;
+  /**
+   * A later occurrence of the same note came due in this tick too (after an
+   * arming or a late tick): only the latest runs, and the host records this
+   * one as skipped rather than starting runs that would wait on each other.
+   */
+  superseded?: boolean;
 }
 
 /** A note to keep armed, as a host's rescan finds it. */
@@ -39,11 +66,22 @@ export class WorkflowScheduler {
   private timers: Timers;
   private onTick?: (workflows: DueWorkflow[]) => void;
   private tickIntervalMs: number;
+  private lateAfter: number;
 
   constructor(options: SchedulerOptions) {
     this.timers = options.timers;
     this.tickIntervalMs = options.tickIntervalMs ?? 60 * 1000;
     this.onTick = options.onTick;
+    this.lateAfter = options.lateAfterMs ?? LATE_AFTER_MS;
+  }
+
+  /** How late a slot may fire and still run; a runner's setting changes it at run time. */
+  get lateAfterMs(): number {
+    return this.lateAfter;
+  }
+
+  set lateAfterMs(ms: number) {
+    this.lateAfter = ms;
   }
 
   /**
@@ -56,12 +94,17 @@ export class WorkflowScheduler {
     if (existing && existing.cronExpression === cronExpression) {
       return existing;
     }
-    const nextRun = computeNextRun(cronExpression);
+    // From two minutes back: an occurrence that came due just before the note
+    // was armed (a laptop opened at 09:01 for a 09:00 schedule) still fires,
+    // in time; an older one is a missed run, which the host looks for.
+    const now = Date.now();
+    const nextRun = computeNextRun(cronExpression, new Date(now - this.lateAfter));
     const entry: ScheduledWorkflow = {
       path,
       cronExpression,
       nextRun,
       enabled: true,
+      armedAt: new Date(now),
     };
     this.workflows.set(path, entry);
     return entry;
@@ -74,27 +117,32 @@ export class WorkflowScheduler {
   /**
    * Arm exactly `registrations`: the ones armed already keep their next run,
    * as `register` keeps it, and the others are dropped. Returns those whose
-   * cron expression is invalid, which are not armed.
+   * cron expression is invalid, which are not armed, and those armed now that
+   * were not before (or with another schedule), for the host to look for
+   * missed runs of (#269).
    *
    * Unregistering everything and registering again recomputed every next run
    * from now, so a slot that came due between two ticks was dropped whenever
    * a rescan fell in between (#255).
    */
-  replace(registrations: readonly Registration[]): Registration[] {
+  replace(registrations: readonly Registration[]): { invalid: Registration[]; armed: Registration[] } {
     const wanted = new Set(registrations.map((entry) => entry.path));
     for (const path of this.workflows.keys()) {
       if (!wanted.has(path)) this.workflows.delete(path);
     }
     const invalid: Registration[] = [];
+    const armed: Registration[] = [];
     for (const entry of registrations) {
+      const before = this.workflows.get(entry.path);
       try {
-        this.register(entry.path, entry.cronExpression);
+        const now = this.register(entry.path, entry.cronExpression);
+        if (now !== before) armed.push(entry);
       } catch {
         this.workflows.delete(entry.path);
         invalid.push(entry);
       }
     }
-    return invalid;
+    return { invalid, armed };
   }
 
   list(): ScheduledWorkflow[] {
@@ -118,11 +166,20 @@ export class WorkflowScheduler {
 
     for (const workflow of this.workflows.values()) {
       if (!workflow.enabled) continue;
-      if (workflow.nextRun <= now) {
+      // Every occurrence that is due, each its own slot: after a late tick or
+      // an arming, those of the last two minutes fire together, and what lies
+      // before them is a missed run. Bounded: a slot is never fired twice.
+      let previous: DueWorkflow | undefined;
+      while (workflow.nextRun <= now) {
+        if (previous) previous.superseded = true;
         // A copy: the entry's nextRun moves on below, the slot does not.
-        due.push({ ...workflow, slot: workflow.nextRun });
+        previous = { ...workflow, slot: workflow.nextRun };
+        due.push(previous);
         workflow.lastRun = now;
-        workflow.nextRun = computeNextRun(workflow.cronExpression, now);
+        // The next occurrence after this slot, or after two minutes back when
+        // the tick came late: nothing younger is skipped.
+        const from = Math.max(workflow.nextRun.getTime(), now.getTime() - this.lateAfter);
+        workflow.nextRun = computeNextRun(workflow.cronExpression, new Date(from));
       }
     }
 

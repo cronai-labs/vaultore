@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,14 @@ import { join } from "node:path";
 // The run lock is the real one, in a directory of the test's own: a test never
 // touches the user's ~/.config/vaultore/locks.
 const runLocks = vi.hoisted(() => ({ directory: "", slots: "" }));
+// This machine's shared settings likewise: a file of the test's own, never
+// ~/.config/vaultore/settings.json; removed before each test.
+const machineSettings = vi.hoisted(() => {
+  const { mkdtempSync } = require("node:fs") as typeof import("node:fs");
+  const { tmpdir } = require("node:os") as typeof import("node:os");
+  const { join } = require("node:path") as typeof import("node:path");
+  return { path: join(mkdtempSync(join(tmpdir(), "vaultore-plugin-settings-")), "settings.json") };
+});
 vi.mock("@vaultore/core", async () => {
   const actual = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
   return {
@@ -25,7 +33,21 @@ vi.mock("@vaultore/core", async () => {
     SlotTakenError: actual.SlotTakenError,
     // The schedule record is the real one too, in the test's own directory.
     claimSlot: (options: import("@vaultore/core").ClaimSlotOptions) =>
-      actual.claimSlot({ ...options, directory: runLocks.slots }),
+      actual.claimSlot({ ...options, directory: runLocks.slots, pruneIntervalMs: 0 }),
+    MissedSlotError: actual.MissedSlotError,
+    isLateSlot: actual.isLateSlot,
+    lateAfterMs: actual.lateAfterMs,
+    readMachineSettings: () => actual.readMachineSettings({ path: machineSettings.path }),
+    writeMachineSettings: (changes: import("@vaultore/core").MachineSettings) =>
+      actual.writeMachineSettings(changes, { path: machineSettings.path }),
+    recordMissedSlots: (options: import("@vaultore/core").RecordMissedOptions) =>
+      actual.recordMissedSlots({ ...options, directory: runLocks.slots }),
+    readSlotRecord: (options: import("@vaultore/core").ReadSlotRecordOptions) =>
+      actual.readSlotRecord({ ...options, directory: runLocks.slots }),
+    catchUpMissedSlot: (options: import("@vaultore/core").ResolveMissedOptions) =>
+      actual.catchUpMissedSlot({ ...options, directory: runLocks.slots }),
+    dismissMissedSlots: (options: import("@vaultore/core").ResolveMissedOptions) =>
+      actual.dismissMissedSlots({ ...options, directory: runLocks.slots }),
     WorkflowExecutor: class {
       runWorkflow = vi.fn().mockResolvedValue({});
     },
@@ -54,6 +76,7 @@ describe("VaultOrePlugin", () => {
   let plugin: InstanceType<typeof VaultOrePlugin>;
 
   beforeEach(async () => {
+    rmSync(machineSettings.path, { force: true });
     vi.useFakeTimers();
     // Core's timers come from window; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
@@ -219,6 +242,43 @@ describe("VaultOrePlugin", () => {
       await at(row("Temperature").texts).changeHandler!(" ");
       expect(plugin.settings.aiTemperature).toBeUndefined();
       expect(plugin.saveData).toHaveBeenCalled();
+    });
+
+    // How late a scheduled run may start (#269): 2 to 60 minutes, blank 2.
+    // This machine's, in the file vaultore agent reads, not in data.json.
+    it("stores Late after from 2 to 60 minutes in the machine's file, and the scheduler uses it", async () => {
+      const lateRow = row("Late after");
+      const late = at(lateRow.texts);
+      const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+      expect(scheduler.lateAfterMs).toBe(2 * 60_000);
+
+      await late.changeHandler!("15");
+      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({ lateAfterMinutes: 15 });
+      expect(scheduler.lateAfterMs).toBe(15 * 60_000);
+      expect((plugin.settings as unknown as Record<string, unknown>)["lateAfterMinutes"]).toBeUndefined();
+
+      await late.changeHandler!("1");
+      expect(lateRow.error).toMatch(/from 2 to 60/);
+      await late.changeHandler!("61");
+      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({ lateAfterMinutes: 15 });
+
+      await late.changeHandler!("");
+      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({});
+      expect(scheduler.lateAfterMs).toBe(2 * 60_000);
+    });
+
+    // vaultore schedules late-after changed it: Obsidian follows within a minute.
+    it("follows a change of the machine's file, and keeps the last good value when it turns unusable", async () => {
+      const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+      writeFileSync(machineSettings.path, JSON.stringify({ lateAfterMinutes: 30 }));
+      await plugin.loadMachineSettings();
+      expect(scheduler.lateAfterMs).toBe(30 * 60_000);
+
+      writeFileSync(machineSettings.path, "{broken");
+      await plugin.loadMachineSettings();
+      await plugin.loadMachineSettings();
+      expect(scheduler.lateAfterMs).toBe(30 * 60_000);
+      expect(Notice.shown.filter((m) => m.includes("is not valid JSON"))).toHaveLength(1);
     });
 
     // 0 switches the history off (each run kept for a day only), blank keeps
@@ -572,6 +632,137 @@ describe("VaultOrePlugin", () => {
         expect(executor.runWorkflow).toHaveBeenCalledWith(expect.objectContaining({ workflowPath: "notes/daily.md", scheduled }));
       });
 
+      // #269: runs no runner fired are recorded once, shown, and resolved.
+      describe("missed runs", () => {
+        const HOURLY = "15 * * * *";
+        const lastRun = new Date(Date.now() - 6 * 3_600_000);
+
+        beforeEach(async () => {
+          // A run the note had, so there is a last decided slot to look after.
+          await (await adapter().claimSlot!("notes/daily.md", { schedule: HOURLY, slot: lastRun })).finish({ result: "completed" });
+          const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
+          plugin.app.vault.getAbstractFileByPath = vi.fn().mockReturnValue(file) as never;
+          plugin.app.vault.read = vi.fn().mockResolvedValue("---\nore: true\n---\n") as never;
+          Notice.shown.length = 0;
+        });
+
+        it("are recorded once, said once, and listed with Catch up and Dismiss", async () => {
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+
+          expect(Notice.shown.filter((m) => m.includes("missed"))).toHaveLength(1);
+          expect(Notice.shown[0]).toMatch(/^VaultOre: notes\/daily\.md missed \d+ scheduled run\(s\) since /);
+          expect(plugin.missedRuns).toHaveLength(1);
+          const row = renderSettings().find((s) => s.name === "notes/daily.md" && s.buttons.length === 2);
+          expect(row?.buttons.map((b) => b.text)).toEqual(["Catch up", "Dismiss"]);
+        });
+
+        // Found in the app: Obsidian keeps a settings tab as it last drew it,
+        // also across reopening, so a change of the list redraws it.
+        // Found in the app: a gap dismissed with the CLI stayed listed.
+        it("are re-read each minute while listed, so one resolved elsewhere leaves the list", async () => {
+          const { dismissMissedSlots } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          expect(plugin.missedRuns).toHaveLength(1);
+          await dismissMissedSlots({ vaultRoot: join(base, "vault"), notePath: "notes/daily.md", by: "vaultore", directory: runLocks.slots });
+
+          await plugin.recheckMissedRuns();
+          expect(plugin.missedRuns).toHaveLength(0);
+        });
+
+        it("redraw the settings tab when the list changes, and only then", async () => {
+          const tab = (plugin as unknown as { settingsTab: { update: () => void } }).settingsTab;
+          const update = vi.spyOn(tab, "update");
+
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          expect(update).toHaveBeenCalledTimes(1);
+
+          await plugin.refreshMissedRuns();
+          expect(update).toHaveBeenCalledTimes(1);
+        });
+
+        it("are dismissed from the settings, and leave the list", async () => {
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          const row = renderSettings().find((s) => s.name === "notes/daily.md" && s.buttons.length === 2);
+
+          await row!.buttons[1]!.clickHandler!();
+
+          expect(plugin.missedRuns).toEqual([]);
+          const { readSlotRecord } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          expect((await readSlotRecord({ directory: runLocks.slots })).find((e) => e.kind === "missed")?.state).toBe("dismissed");
+        });
+
+        it("are caught up with one run that holds the gap", async () => {
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
+          executor.runWorkflow.mockClear();
+
+          await plugin.catchUpMissedRun(plugin.missedRuns[0]!);
+
+          expect(executor.runWorkflow).toHaveBeenCalledTimes(1);
+          expect(executor.runWorkflow.mock.calls[0]?.[0]).toMatchObject({ workflowPath: "notes/daily.md", slotClaim: expect.anything() });
+          expect(plugin.missedRuns).toEqual([]);
+        });
+
+        // After a sleep both runners look; the user hears of the gap in
+        // Obsidian also when the agent recorded it first.
+        it("are told of when the agent recorded them first", async () => {
+          const { recordMissedSlots } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          await recordMissedSlots({ vaultRoot: join(base, "vault"), notePath: "notes/daily.md", schedule: HOURLY, by: "vaultore agent", directory: runLocks.slots });
+
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+
+          expect(Notice.shown.filter((m) => m.includes("missed"))).toHaveLength(1);
+          expect(plugin.missedRuns).toHaveLength(1);
+          expect(plugin.missedRuns[0]?.claimedBy.by).toBe("vaultore agent");
+        });
+
+        // A slot fired while the note still runs is decided, not dropped.
+        it("record a slot fired while the note runs as skipped", async () => {
+          const { readSlotRecord } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
+          (plugin as unknown as { runningWorkflows: Set<string> }).runningWorkflows.add("notes/daily.md");
+          const slot = new Date(Date.now() - 1000);
+
+          await (plugin as any).runWorkflow(file, { schedule: HOURLY, slot });
+
+          (plugin as unknown as { runningWorkflows: Set<string> }).runningWorkflows.delete("notes/daily.md");
+          const entry = (await readSlotRecord({ directory: runLocks.slots })).find((e) => e.slot.getTime() === slot.getTime());
+          expect(entry).toMatchObject({ state: "skipped", reason: "the note was still running" });
+          expect(Notice.shown).toEqual([]);
+        });
+
+        // Found in the app: arming fired two occurrences at once, and the
+        // older one ran. Now only the latest runs; the others are skipped.
+        it("run only the latest of occurrences due at once; the others are recorded as skipped", async () => {
+          const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
+          const skip = vi.spyOn(plugin as any, "recordSkippedSlot").mockResolvedValue(undefined);
+          vi.spyOn(plugin as any, "isApprovedSchedule").mockReturnValue(true);
+          const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+          scheduler.register("notes/daily.md", "* * * * *").nextRun = new Date(Date.now() - 90_000);
+
+          scheduler.tick();
+
+          expect(run).toHaveBeenCalledTimes(1);
+          expect(skip).toHaveBeenCalled();
+          const ran = (run.mock.calls[0]?.[1] as { slot: Date }).slot;
+          for (const call of skip.mock.calls) expect((call[1] as { slot: Date }).slot.getTime()).toBeLessThan(ran.getTime());
+        });
+
+        it("are what a late tick finds, instead of a run", async () => {
+          const look = vi.spyOn(plugin, "lookForMissedRuns").mockResolvedValue(undefined);
+          const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
+          const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+          scheduler.register("notes/daily.md", HOURLY).nextRun = new Date(Date.now() - 3 * 60_000);
+          vi.spyOn(plugin as any, "isApprovedSchedule").mockReturnValue(true);
+
+          scheduler.tick();
+
+          expect(look).toHaveBeenCalledWith("notes/daily.md", HOURLY, expect.any(Date));
+          expect(run).not.toHaveBeenCalled();
+        });
+      });
+
       // The agent ran this occurrence: not worth a notice every minute.
       it("shows no notice when the other runner had the slot", async () => {
         const { SlotTakenError } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
@@ -596,8 +787,9 @@ describe("VaultOrePlugin", () => {
 
   describe("scheduler", () => {
     // Registered, the interval is cleared on unload even if stop() never runs.
-    it("registers its tick interval with the plugin", () => {
-      expect(plugin.registerInterval).toHaveBeenCalledTimes(1);
+    // The scheduler's tick, and the minute's re-check of listed missed runs.
+    it("registers its intervals with the plugin", () => {
+      expect(plugin.registerInterval).toHaveBeenCalledTimes(2);
     });
 
     it("hands core the same timers through the adapter", () => {
@@ -716,6 +908,7 @@ describe("scheduled workflows", () => {
   }
 
   beforeEach(async () => {
+    rmSync(machineSettings.path, { force: true });
     vi.useFakeTimers();
     // The plugin debounces with window.setTimeout; tests run without a DOM.
     vi.stubGlobal("window", globalThis);

@@ -89,6 +89,7 @@ describe("NodeAdapter.claimSlot", () => {
 			quiet: true,
 			runner,
 			slotDirectory: join(base, "slots"),
+			slotPruneIntervalMs: 0,
 			...(keepDays !== undefined ? { keepDays } : {}),
 		});
 	}

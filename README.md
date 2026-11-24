@@ -78,7 +78,9 @@ the vault. Outside it, it writes one small lock file per running note, in
 command-line runner never run one note at the same time; the file is removed when the run
 ends. For each scheduled run it writes a small record in `~/.config/vaultore/slots`
 (`%APPDATA%\vaultore\slots`), so that one occurrence of a schedule runs once in either runner,
-kept for 30 days at most (the "Scheduled-run history" setting shortens it). It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
+kept for 30 days at most (the "Scheduled-run history" setting shortens it). The "Late after"
+setting, shared by both runners, is kept in `~/.config/vaultore/settings.json`
+(`%APPDATA%\vaultore\settings.json`). It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
 install locations (macOS: `/usr/local/bin`, `/opt/homebrew/bin`,
 `/Applications/Docker.app/Contents/Resources/bin/docker`; Linux: `/usr/bin`; Windows: the
 Docker Desktop and Podman folders under `C:\Program Files`), and starts it. The engine mounts
@@ -149,6 +151,8 @@ top of it.
 | Default runtime engine | Docker | A workflow's `runtime.engine` overrides it |
 | Output folder | `_vaultore` | Where run outputs are written |
 | OpenAI API key, Anthropic API key | none | The name of a secret in Obsidian's secret storage |
+| Scheduled-run history | 30 days | How long what each scheduled run came to is kept, 0 to 30 days; 0 keeps each for a day only |
+| Late after | 2 minutes | How late a scheduled run may start and still run, 2 to 60 minutes; later, it is listed under "Missed runs". One value for the computer, shared with `vaultore agent`, not stored in the vault |
 | Run scheduled workflows | off | See [Scheduling](#scheduling) |
 
 ### Scheduling
@@ -235,6 +239,9 @@ vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
 vaultore schedules log [<workflow.md>] [--vault <dir>]
+vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--yes]
+vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
+vaultore schedules late-after [<minutes> | default]
 ```
 
 - Settings come from `<vault>/.vaultore/config.json` (`defaultProvider`, `defaultModel`,
@@ -261,6 +268,15 @@ vaultore schedules log [<workflow.md>] [--vault <dir>]
   claims it first. `vaultore schedules log` shows what each one came to and who ran it; the
   agent keeps that for `--keep-days` (default and most: 30)
   ([schedule record](specs/schedule-record-spec.md)).
+- Occurrences that no runner fired, because the machine slept or nothing was running, are
+  recorded as missed runs once a runner looks again, and said once (the agent on stderr,
+  Obsidian as a notice). `vaultore schedules catch-up <note.md>` runs the note once for them,
+  `vaultore schedules dismiss <note.md>` closes them; in Obsidian, the settings list them with
+  "Catch up" and "Dismiss". A machine that wakes from sleep no longer runs the one occurrence
+  it held: that one is missed too. An occurrence counts as missed once it is more than two
+  minutes late. That is one setting per computer, 2 to 60 minutes, kept in
+  `~/.config/vaultore/settings.json` and shared by both runners: `vaultore schedules late-after`
+  and the plugin's "Late after" show and change it.
 - `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
   ([handover spec](specs/cronai-handover-spec.md)).
 

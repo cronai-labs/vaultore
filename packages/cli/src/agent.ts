@@ -17,12 +17,12 @@ import type { ScheduledNote } from "./schedules";
  */
 export function createSingleFlightRunner<A = void>(
 	run: (path: string, arg: A) => Promise<void>,
-	onSkip: (path: string) => void
+	onSkip: (path: string, arg: A) => unknown
 ): (path: string, arg: A) => Promise<void> {
 	const inFlight = new Set<string>();
 	return async (path, arg) => {
 		if (inFlight.has(path)) {
-			onSkip(path);
+			await onSkip(path, arg);
 			return;
 		}
 		inFlight.add(path);

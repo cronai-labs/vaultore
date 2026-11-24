@@ -15,6 +15,7 @@
  * writes the outcome, through a temporary file and a rename.
  */
 
+import { CronExpressionParser } from "cron-parser";
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { hostname } from "node:os";
@@ -22,6 +23,7 @@ import { join } from "node:path";
 import { describeHolder, holderGoneBecause } from "../lock";
 import type { LockHolder, LockOptions } from "../lock";
 import { noteKey, userStateDirectory } from "../lock/run-lock";
+import { LATE_AFTER_MS } from "./index";
 
 /** History is kept at most this long, whatever a runner's setting says. */
 export const MAX_KEEP_DAYS = 30;
@@ -33,6 +35,18 @@ export const MAX_KEEP_DAYS = 30;
 export const MIN_KEEP_MS = 24 * 60 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+export { LATE_AFTER_MS };
+/**
+ * A gap covers only slots older than the late threshold: those no runner may
+ * claim any more, as a tick that reaches them is late. The scheduler fires
+ * every younger one, so between the two nothing is left undecided. Default.
+ */
+export const GAP_MARGIN_MS = LATE_AFTER_MS;
+/** The most slots one gap records; a longer run of missed slots becomes several gaps. */
+const MAX_GAP_SLOTS = 50_000;
+/** How often a runner prunes the record, at most, when it claims. */
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 const RECORD_VERSION = 1;
 
 /** The directory of the schedule record for this user on this system. */
@@ -79,6 +93,25 @@ export interface SlotClaimRecord extends LockHolder {
 	token: string;
 }
 
+/** A gap: slots of a note that no runner fired, decided at once (#269). */
+export interface SlotMissedRecord extends Omit<SlotClaimRecord, "kind"> {
+	kind: "missed";
+	/** The gap's last slot, ISO 8601; `slot` is its first. */
+	until: string;
+	/** How many slots the gap holds. */
+	count: number;
+}
+
+/** A slot's one decision: claimed by a runner, or missed. */
+export type SlotDecisionRecord = SlotClaimRecord | SlotMissedRecord;
+
+/** How the user resolved a gap; a catch-up then writes the outcome. */
+export interface SlotResolutionRecord extends LockHolder {
+	version: number;
+	kind: "dismissed" | "caught-up";
+	token: string;
+}
+
 /** What a scheduled run came to. `skipped`: nothing ran (the note was locked, or changed). */
 export type SlotResult = "completed" | "failed" | "aborted" | "skipped";
 
@@ -103,12 +136,12 @@ export interface SlotClaim {
 	finish(outcome: SlotOutcome): Promise<void>;
 }
 
-/** Another runner claimed the slot first; this one must not run it. */
+/** Another runner decided the slot first, claimed or missed; this one must not run it. */
 export class SlotTakenError extends Error {
 	constructor(
 		readonly notePath: string,
 		readonly slot: Date,
-		readonly claim: SlotClaimRecord | undefined,
+		readonly claim: SlotDecisionRecord | undefined,
 		message: string
 	) {
 		super(message);
@@ -132,6 +165,21 @@ export interface ClaimSlotOptions extends Pick<LockOptions, "host"> {
 	now?: Date;
 	/** Told about a file pruning could not remove; pruning never fails a claim. */
 	onPruneError?: (path: string, error: unknown) => void;
+	/** Prune at most this often per directory in this process. Default an hour; tests pass 0. */
+	pruneIntervalMs?: number;
+}
+
+/** When this process last pruned each record directory. Kept on `process`, as the open claims are. */
+const PRUNED = Symbol.for("vaultore.slots.pruned");
+
+function lastPruned(): Map<string, number> {
+	const slot = process as unknown as Record<symbol, Map<string, number> | undefined>;
+	let pruned = slot[PRUNED];
+	if (!pruned) {
+		pruned = new Map<string, number>();
+		slot[PRUNED] = pruned;
+	}
+	return pruned;
 }
 
 /**
@@ -181,6 +229,20 @@ export async function claimSlot(options: ClaimSlotOptions): Promise<SlotClaim> {
 		token,
 	};
 
+	// A slot inside a recorded gap is decided already, as missed: a runner whose
+	// late threshold differs, or a version without this check, must not run it
+	// and have it caught up as well (#269).
+	const gap = await gapCovering(noteDir, options.slot);
+	if (gap) {
+		throw new SlotTakenError(
+			options.notePath,
+			options.slot,
+			gap,
+			`The ${options.slot.toISOString()} run of ${options.notePath} is one of ${gap.count} missed runs ` +
+				`from ${gap.slot} to ${gap.until}, recorded by ${describeHolder(gap)}, at ${gap.since}. Nothing was run`
+		);
+	}
+
 	const open = openClaims();
 	// Recorded before the link can make it visible: pruning in this process
 	// would otherwise judge it left behind.
@@ -200,17 +262,30 @@ export async function claimSlot(options: ClaimSlotOptions): Promise<SlotClaim> {
 		);
 	}
 
-	await pruneSlotRecord({
-		directory,
-		keepDays: options.keepDays,
-		now: options.now,
-		host: options.host,
-		onError: options.onPruneError,
-	});
+	// Every claim would read the whole record; once an hour is enough to keep
+	// it within the history.
+	const pruned = lastPruned();
+	const now = Date.now();
+	if (now - (pruned.get(directory) ?? 0) >= (options.pruneIntervalMs ?? PRUNE_INTERVAL_MS)) {
+		pruned.set(directory, now);
+		await pruneSlotRecord({
+			directory,
+			keepDays: options.keepDays,
+			now: options.now,
+			host: options.host,
+			onError: options.onPruneError,
+		});
+	}
 
+	return outcomeWriter(noteDir, name, options.slot, token);
+}
+
+/** The claim a run finishes: it writes the slot's outcome once and unmarks the token. */
+function outcomeWriter(noteDir: string, name: string, slot: Date, token: string): SlotClaim {
+	const open = openClaims();
 	let finished = false;
 	return {
-		slot: options.slot,
+		slot,
 		async finish(outcome) {
 			if (finished) return;
 			finished = true;
@@ -268,11 +343,20 @@ export interface SlotEntry {
 	schedule: string;
 	slot: Date;
 	/**
-	 * `running`: claimed, its run not ended; `abandoned`: claimed by a runner
-	 * that is gone; `unknown`: decided by a newer VaultOre, as the reason says.
+	 * `running`: claimed (or caught up), its run not ended; `abandoned`: its
+	 * runner is gone; `missed`: a gap not resolved yet; `dismissed`: a gap the
+	 * user dismissed; `unknown`: decided by a newer VaultOre, as the reason says.
 	 */
-	state: SlotResult | "running" | "abandoned" | "unknown";
-	claimedBy: SlotClaimRecord;
+	state: SlotResult | "running" | "abandoned" | "missed" | "dismissed" | "unknown";
+	/** How the slot was decided: claimed by a runner, or missed (a gap). */
+	kind: "claimed" | "missed" | "unknown";
+	/** Who decided it: the claimer, or the runner that found the gap. */
+	claimedBy: SlotDecisionRecord;
+	/** A gap's last slot and size. */
+	until?: Date;
+	count?: number;
+	/** Who dismissed or caught up a gap. */
+	resolvedBy?: SlotResolutionRecord;
 	reason?: string;
 	runId?: string;
 	finishedAt?: string;
@@ -297,53 +381,76 @@ export async function readSlotRecord(options: ReadSlotRecordOptions = {}): Promi
 			const name = file.endsWith(".claim.json") ? file.slice(0, -".claim.json".length) : undefined;
 			const slot = name === undefined ? undefined : slotFromName(name);
 			if (name === undefined || slot === undefined) continue;
-			const claim = await readJson<SlotClaimRecord>(join(dir, file));
-			if (!claim || typeof claim.note !== "string" || typeof claim.vault !== "string") continue;
-			if (vault !== undefined && claim.vault !== vault) continue;
-			if (options.notePath !== undefined && claim.note !== options.notePath) continue;
-			if (!isKnownClaim(claim)) {
-				entries.push({
-					note: claim.note,
-					vault: claim.vault,
-					schedule: String(claim.schedule),
-					slot,
-					state: "unknown",
-					claimedBy: claim,
-					reason: `decided by another version of VaultOre (record version ${String(claim.version)}, kind ${String((claim as { kind?: unknown }).kind)})`,
-				});
-				continue;
-			}
-			const outcome = await readJson<SlotOutcomeRecord>(join(dir, `${name}.outcome.json`));
-			const gone = outcome ? undefined : claimGoneBecause(claim, options);
-			entries.push({
-				note: claim.note,
-				vault: claim.vault,
-				schedule: claim.schedule,
-				slot,
-				state: outcome ? outcome.result : gone ? "abandoned" : "running",
-				claimedBy: claim,
-				...(outcome?.reason !== undefined ? { reason: outcome.reason } : {}),
-				...(gone !== undefined ? { reason: `the runner ${gone}` } : {}),
-				...(outcome?.runId !== undefined ? { runId: outcome.runId } : {}),
-				...(outcome?.finishedAt !== undefined ? { finishedAt: outcome.finishedAt } : {}),
-			});
+			const decision = await readJson<SlotDecisionRecord>(join(dir, file));
+			if (!decision || typeof decision.note !== "string" || typeof decision.vault !== "string") continue;
+			if (vault !== undefined && decision.vault !== vault) continue;
+			if (options.notePath !== undefined && decision.note !== options.notePath) continue;
+			entries.push(await entryOf(dir, name, slot, decision, options));
 		}
 	}
 	return entries.sort((a, b) => a.slot.getTime() - b.slot.getTime() || a.note.localeCompare(b.note));
 }
 
-/** A decision this version of the record wrote and knows. */
-function isKnownClaim(claim: SlotClaimRecord): boolean {
-	return claim.version === RECORD_VERSION && (claim as { kind?: unknown }).kind === "claimed";
+/** One slot's entry, from its decision and what followed it. */
+async function entryOf(
+	dir: string,
+	name: string,
+	slot: Date,
+	decision: SlotDecisionRecord,
+	options: Pick<LockOptions, "isAlive" | "host" | "bootTime">
+): Promise<SlotEntry> {
+	const base = { note: decision.note, vault: decision.vault, schedule: String(decision.schedule), slot, claimedBy: decision };
+	if (!isKnownDecision(decision)) {
+		return {
+			...base,
+			state: "unknown",
+			kind: "unknown",
+			reason: `decided by another version of VaultOre (record version ${String(decision.version)}, kind ${String((decision as { kind?: unknown }).kind)})`,
+		};
+	}
+	const outcome = await readJson<SlotOutcomeRecord>(join(dir, `${name}.outcome.json`));
+	const ran = {
+		...(outcome?.reason !== undefined ? { reason: outcome.reason } : {}),
+		...(outcome?.runId !== undefined ? { runId: outcome.runId } : {}),
+		...(outcome?.finishedAt !== undefined ? { finishedAt: outcome.finishedAt } : {}),
+	};
+	if (decision.kind === "claimed") {
+		const gone = outcome ? undefined : runnerGoneBecause(decision, options);
+		return {
+			...base,
+			kind: "claimed",
+			state: outcome ? outcome.result : gone ? "abandoned" : "running",
+			...ran,
+			...(gone !== undefined ? { reason: `the runner ${gone}` } : {}),
+		};
+	}
+	const gap = { ...base, kind: "missed" as const, until: new Date(decision.until), count: decision.count };
+	const resolution = await readJson<SlotResolutionRecord>(join(dir, `${name}.resolved.json`));
+	if (!resolution) return { ...gap, state: "missed" };
+	if (resolution.kind === "dismissed") return { ...gap, state: "dismissed", resolvedBy: resolution };
+	const gone = outcome ? undefined : runnerGoneBecause(resolution, options);
+	return {
+		...gap,
+		resolvedBy: resolution,
+		state: outcome ? outcome.result : gone ? "abandoned" : "running",
+		...ran,
+		...(gone !== undefined ? { reason: `the catch-up's runner ${gone}` } : {}),
+	};
 }
 
-/** Why a claim with no outcome is abandoned; undefined while its run may go on. */
-function claimGoneBecause(
-	claim: SlotClaimRecord,
+/** A decision this version of the record wrote and knows. */
+function isKnownDecision(decision: SlotDecisionRecord): boolean {
+	const kind = (decision as { kind?: unknown }).kind;
+	return decision.version === RECORD_VERSION && (kind === "claimed" || kind === "missed");
+}
+
+/** Why the runner of a claim or a catch-up is gone; undefined while its run may go on. */
+function runnerGoneBecause(
+	holder: LockHolder & { token: string },
 	options: Pick<LockOptions, "isAlive" | "host" | "bootTime">
 ): string | undefined {
-	if (claim.pid === process.pid && openClaims().has(claim.token)) return undefined;
-	return holderGoneBecause(claim, options);
+	if (holder.pid === process.pid && openClaims().has(holder.token)) return undefined;
+	return holderGoneBecause(holder, options);
 }
 
 async function listDirectory(path: string): Promise<string[]> {
@@ -412,13 +519,11 @@ export async function pruneSlotRecord(options: PruneOptions = {}): Promise<numbe
 				const slot = slotFromName(name);
 				if (slot === undefined || slot.getTime() >= cutoff) continue;
 				const outcomePath = join(dir, `${name}.outcome.json`);
+				const resolvedPath = join(dir, `${name}.resolved.json`);
 				const hasOutcome = (await readJson<SlotOutcomeRecord>(outcomePath)) !== undefined;
-				if (!hasOutcome) {
-					// A decision this version does not know is pruned by age alone.
-					const claim = await readJson<SlotClaimRecord>(path);
-					if (claim && isKnownClaim(claim) && claimGoneBecause(claim, options) === undefined) continue;
-				}
+				if (!hasOutcome && (await runGoesOn(path, resolvedPath, options))) continue;
 				await fs.rm(outcomePath, { force: true });
+				await fs.rm(resolvedPath, { force: true });
 				await fs.rm(path, { force: true });
 				removed += 1;
 			} catch (err) {
@@ -434,8 +539,310 @@ export async function pruneSlotRecord(options: PruneOptions = {}): Promise<numbe
 	return removed;
 }
 
+/**
+ * Whether a slot with no outcome has a run that may go on: a claim, or a
+ * gap's catch-up, whose runner lives. A decision this version does not know,
+ * and a gap not caught up, are pruned by age alone.
+ */
+async function runGoesOn(
+	decisionPath: string,
+	resolvedPath: string,
+	options: Pick<LockOptions, "isAlive" | "host" | "bootTime">
+): Promise<boolean> {
+	const decision = await readJson<SlotDecisionRecord>(decisionPath);
+	if (!decision || !isKnownDecision(decision)) return false;
+	if (decision.kind === "claimed") return runnerGoneBecause(decision, options) === undefined;
+	const resolution = await readJson<SlotResolutionRecord>(resolvedPath);
+	return resolution?.kind === "caught-up" && runnerGoneBecause(resolution, options) === undefined;
+}
+
 /** "completed", "skipped: …", for a line of the log. */
 export function describeSlotState(entry: SlotEntry): string {
 	return entry.reason ? `${entry.state}: ${entry.reason}` : entry.state;
 }
 
+
+// =============================================================================
+// MISSED SLOTS (#269)
+// =============================================================================
+
+/** Whether a tick that fires `slot` at `now` is too late to run it. */
+export function isLateSlot(slot: Date, now: Date = new Date(), lateAfterMs: number = LATE_AFTER_MS): boolean {
+	return now.getTime() - slot.getTime() > lateAfterMs;
+}
+
+/** The occurrences of `schedule` after `after` up to and including `until`, at most `limit`. */
+export function occurrencesBetween(schedule: string, after: Date, until: Date, limit = MAX_GAP_SLOTS): Date[] {
+	const found: Date[] = [];
+	const interval = CronExpressionParser.parse(schedule, { currentDate: after });
+	while (found.length < limit) {
+		const next = interval.next().toDate();
+		if (next.getTime() > until.getTime()) break;
+		found.push(next);
+	}
+	return found;
+}
+
+/** A gap a runner recorded. */
+export interface RecordedGap {
+	slot: Date;
+	until: Date;
+	count: number;
+}
+
+export interface RecordMissedOptions extends Pick<LockOptions, "host"> {
+	vaultRoot: string;
+	/** Vault-relative. The note must exist. */
+	notePath: string;
+	schedule: string;
+	/** Which runner looks: "Obsidian", "vaultore agent". */
+	by: string;
+	/** Days of history to keep, 0 to 30; gaps are not looked for further back. Default 30. */
+	keepDays?: number;
+	/**
+	 * When this runner armed the note with this schedule. For a note whose
+	 * record has no slot of this schedule yet, gaps are looked for after it
+	 * (less two minutes, which the scheduler still fires); without it, such a
+	 * note has none, since nothing is backfilled.
+	 */
+	armedAt?: Date;
+	/** The runner's late threshold (`lateAfterMs`); a gap covers only slots older. Default LATE_AFTER_MS. */
+	lateAfterMs?: number;
+	directory?: string;
+	now?: Date;
+}
+
+/**
+ * Looks for slots of a note that no runner fired, after its last decided slot,
+ * and records each run of them as a gap. Resolves to the gaps this call
+ * recorded (another runner may record one first; then it is not reported
+ * here). A note with no decided slot yet has none: nothing is backfilled.
+ */
+export async function recordMissedSlots(options: RecordMissedOptions): Promise<RecordedGap[]> {
+	const directory = options.directory ?? slotRecordDirectory();
+	const noteDir = join(directory, await noteKey(options.vaultRoot, options.notePath));
+	const now = options.now ?? new Date();
+	// Strictly older than the margin: a slot exactly that old is still a tick's.
+	const margin = options.lateAfterMs ?? GAP_MARGIN_MS;
+	const until = new Date(now.getTime() - margin - 1);
+	const earliest = new Date(now.getTime() - keepMilliseconds(options.keepDays));
+	const recorded: RecordedGap[] = [];
+
+	// Each pass records one gap or finds the slots decided; a lost race or a
+	// gap capped at MAX_GAP_SLOTS needs another. Bounded, so a record that
+	// keeps changing cannot hold a runner here.
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		// Decisions after the bound say nothing about the slots before it: a late
+		// tick claims its in-time slot while this looks, in either order.
+		const last = await lastDecidedSlot(noteDir, until);
+		// A record of another schedule says nothing about this one: after a
+		// change from daily to every minute, the minutes before it were never
+		// scheduled.
+		const since =
+			last !== undefined && last.schedule === options.schedule
+				? last.slot
+				: options.armedAt !== undefined
+					? new Date(options.armedAt.getTime() - margin)
+					: undefined;
+		if (since === undefined) return recorded;
+		const after = since.getTime() > earliest.getTime() ? since : earliest;
+		const slots = occurrencesBetween(options.schedule, after, until);
+		const first = slots[0];
+		const lastMissed = slots.at(-1);
+		if (first === undefined || lastMissed === undefined) return recorded;
+
+		// A note with no record yet has no directory either.
+		await fs.mkdir(noteDir, { recursive: true, mode: 0o700 });
+		const token = `${process.pid}.${randomBytes(6).toString("hex")}`;
+		const record: SlotMissedRecord = {
+			version: RECORD_VERSION,
+			kind: "missed",
+			vault: await fs.realpath(options.vaultRoot),
+			note: options.notePath,
+			schedule: options.schedule,
+			slot: first.toISOString(),
+			until: lastMissed.toISOString(),
+			count: slots.length,
+			pid: process.pid,
+			host: options.host ?? hostname(),
+			since: new Date().toISOString(),
+			by: options.by,
+			token,
+		};
+		try {
+			await writeExclusive(join(noteDir, `${slotName(first)}.claim.json`), JSON.stringify(record) + "\n");
+			recorded.push({ slot: first, until: lastMissed, count: slots.length });
+		} catch (err) {
+			// Another runner decided this slot first, as a claim or a gap: look again after it.
+			if (codeOf(err) !== "EEXIST") throw err;
+		}
+	}
+	return recorded;
+}
+
+/**
+ * The recorded gap that holds `slot` after its first slot, if any. A gap
+ * starts right after the note's last decided slot, so only the latest
+ * decision before `slot` can hold it: one listing and one read, whatever the
+ * history's length. (A gap's first slot is its file name, which a claim
+ * cannot take anyway.)
+ */
+async function gapCovering(noteDir: string, slot: Date): Promise<SlotMissedRecord | undefined> {
+	let before: { name: string; time: number } | undefined;
+	for (const file of await listDirectory(noteDir)) {
+		if (!file.endsWith(".claim.json")) continue;
+		const name = file.slice(0, -".claim.json".length);
+		const time = slotFromName(name)?.getTime();
+		if (time === undefined || time >= slot.getTime()) continue;
+		if (before === undefined || time > before.time) before = { name, time };
+	}
+	if (before === undefined) return undefined;
+	const decision = await readJson<SlotDecisionRecord>(join(noteDir, `${before.name}.claim.json`));
+	if (decision?.kind !== "missed") return undefined;
+	const until = new Date(decision.until).getTime();
+	return Number.isNaN(until) || until < slot.getTime() ? undefined : decision;
+}
+
+/** The note's last decided slot up to `notAfter`, and its schedule: the latest claim's slot, or the latest gap's last slot. */
+async function lastDecidedSlot(noteDir: string, notAfter: Date): Promise<{ slot: Date; schedule: string } | undefined> {
+	let latest: { name: string; slot: Date } | undefined;
+	for (const file of await listDirectory(noteDir)) {
+		if (!file.endsWith(".claim.json")) continue;
+		const name = file.slice(0, -".claim.json".length);
+		const slot = slotFromName(name);
+		if (slot === undefined || slot.getTime() > notAfter.getTime()) continue;
+		if (latest === undefined || slot.getTime() > latest.slot.getTime()) latest = { name, slot };
+	}
+	if (latest === undefined) return undefined;
+	const decision = await readJson<SlotDecisionRecord>(join(noteDir, `${latest.name}.claim.json`));
+	const schedule = typeof decision?.schedule === "string" ? decision.schedule : "";
+	if (decision?.kind === "missed") {
+		const until = new Date(decision.until);
+		if (!Number.isNaN(until.getTime()) && until.getTime() > latest.slot.getTime()) return { slot: until, schedule };
+	}
+	return { slot: latest.slot, schedule };
+}
+
+/** A gap cannot be resolved as asked; the message says why and what to do. */
+export class MissedSlotError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "MissedSlotError";
+	}
+}
+
+export interface ResolveMissedOptions extends Pick<LockOptions, "host" | "isAlive" | "bootTime"> {
+	vaultRoot: string;
+	notePath: string;
+	/** The gap's first slot; without one, the note's open gap (all of them, to dismiss). */
+	slot?: Date;
+	/** Who resolves it: "Obsidian", "vaultore". */
+	by: string;
+	directory?: string;
+}
+
+/**
+ * Dismisses the note's open gap, or the one at `slot`; without a slot, all
+ * its open gaps. Resolves to the gaps dismissed. Rejects with
+ * MissedSlotError when there is none, or the one named is not open.
+ */
+export async function dismissMissedSlots(options: ResolveMissedOptions): Promise<SlotEntry[]> {
+	const gaps = await openGapsFor(options, "dismiss");
+	const directory = options.directory ?? slotRecordDirectory();
+	const noteDir = join(directory, await noteKey(options.vaultRoot, options.notePath));
+	const dismissed: SlotEntry[] = [];
+	for (const gap of gaps) {
+		const done = await writeResolution(noteDir, gap, "dismissed", options);
+		if (done) dismissed.push(gap);
+	}
+	if (dismissed.length === 0) {
+		throw new MissedSlotError(`The missed runs of ${options.notePath} were resolved by another runner meanwhile`);
+	}
+	return dismissed;
+}
+
+/**
+ * Takes the note's open gap, or the one at `slot`, for a catch-up: the
+ * resolution is written, and the claim returned is what the run finishes, as
+ * a scheduled run finishes its claim. Rejects with MissedSlotError when there
+ * is no open gap, several and none named, or the one named is not open.
+ */
+export async function catchUpMissedSlot(options: ResolveMissedOptions): Promise<SlotClaim & { gap: SlotEntry }> {
+	const gaps = await openGapsFor(options, "catch-up");
+	const [gap] = gaps;
+	if (gap === undefined || gaps.length > 1) {
+		throw new MissedSlotError(
+			`${options.notePath} has ${gaps.length} missed runs; name the one to catch up by its first slot: ` +
+				gaps.map((g) => g.slot.toISOString()).join(", ")
+		);
+	}
+	const directory = options.directory ?? slotRecordDirectory();
+	const noteDir = join(directory, await noteKey(options.vaultRoot, options.notePath));
+	const token = await writeResolution(noteDir, gap, "caught-up", options);
+	if (token === undefined) {
+		throw new MissedSlotError(
+			`The missed runs of ${options.notePath} from ${gap.slot.toISOString()} were resolved by another runner meanwhile`
+		);
+	}
+	return { ...outcomeWriter(noteDir, slotName(gap.slot), gap.slot, token), gap };
+}
+
+/** The note's open gaps, or the one at `options.slot`; refuses when there is none to act on. */
+async function openGapsFor(options: ResolveMissedOptions, action: "dismiss" | "catch-up"): Promise<SlotEntry[]> {
+	const entries = await readSlotRecord({
+		vaultRoot: options.vaultRoot,
+		notePath: options.notePath,
+		...(options.directory !== undefined ? { directory: options.directory } : {}),
+		...(options.isAlive !== undefined ? { isAlive: options.isAlive } : {}),
+		...(options.host !== undefined ? { host: options.host } : {}),
+		...(options.bootTime !== undefined ? { bootTime: options.bootTime } : {}),
+	});
+	const gaps = entries.filter((entry) => entry.kind === "missed");
+	if (options.slot !== undefined) {
+		const at = options.slot.getTime();
+		const gap = gaps.find((entry) => entry.slot.getTime() === at);
+		if (!gap) {
+			throw new MissedSlotError(`${options.notePath} has no missed runs from ${options.slot.toISOString()}`);
+		}
+		if (gap.state !== "missed") {
+			const by = gap.resolvedBy ? ` by ${describeHolder(gap.resolvedBy)}` : "";
+			const what = gap.state === "dismissed" ? "dismissed" : "caught up";
+			throw new MissedSlotError(
+				`The missed runs of ${options.notePath} from ${gap.slot.toISOString()} were ${what} already${by}, so they cannot be ${action === "dismiss" ? "dismissed" : "caught up"}`
+			);
+		}
+		return [gap];
+	}
+	const open = gaps.filter((entry) => entry.state === "missed");
+	if (open.length === 0) throw new MissedSlotError(`${options.notePath} has no missed runs to ${action}`);
+	return open;
+}
+
+/** Writes a gap's resolution exclusively; resolves to its token, or undefined when one was there. */
+async function writeResolution(
+	noteDir: string,
+	gap: SlotEntry,
+	kind: SlotResolutionRecord["kind"],
+	options: Pick<ResolveMissedOptions, "by" | "host">
+): Promise<string | undefined> {
+	const token = `${process.pid}.${randomBytes(6).toString("hex")}`;
+	const record: SlotResolutionRecord = {
+		version: RECORD_VERSION,
+		kind,
+		pid: process.pid,
+		host: options.host ?? hostname(),
+		since: new Date().toISOString(),
+		by: options.by,
+		token,
+	};
+	const open = openClaims();
+	if (kind === "caught-up") open.add(token);
+	try {
+		await writeExclusive(join(noteDir, `${slotName(gap.slot)}.resolved.json`), JSON.stringify(record) + "\n");
+		return token;
+	} catch (err) {
+		open.delete(token);
+		if (codeOf(err) === "EEXIST") return undefined;
+		throw err;
+	}
+}
