@@ -73,6 +73,34 @@ export function checkFooterWrap(body) {
 	return { ok: true, message: `the ${token} footer survives wrapping` };
 }
 
+// A breaking change without a footer shows its subject, which ends with the
+// link git-cliff makes of "(#123)"; that is complete as it is.
+const SUBJECT_LINK = /\(\[#\d+\]\([^)\s]*\)\)$/;
+// The end of a sentence, before any closing quote, bracket or backtick.
+const SENTENCE_END = /[.!?]["'`)\]]*$/;
+
+/**
+ * The second defence: the entries of a release's "Breaking changes" and
+ * "Upgrading" sections (lines of the changelog section) that do not end a
+ * sentence, as a note cut off by a wrapped footer line does. By then the
+ * commit is on main, so the fix is a `cliff.toml` preprocessor (#262), made
+ * before the release is committed and tagged.
+ */
+export function unfinishedNotes(lines) {
+	const found = [];
+	let checked = false;
+	for (const line of lines) {
+		if (line.startsWith("### ")) {
+			checked = line === "### Breaking changes" || line === "### Upgrading";
+			continue;
+		}
+		if (!checked || !/^[-*] /.test(line)) continue;
+		const entry = line.trimEnd();
+		if (!SENTENCE_END.test(entry) && !SUBJECT_LINK.test(entry)) found.push(entry);
+	}
+	return found;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const result = checkFooterWrap(process.env.BODY ?? "");
 	if (!result.ok) {

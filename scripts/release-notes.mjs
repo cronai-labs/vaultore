@@ -16,6 +16,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { unfinishedNotes } from "./footer-wrap.mjs";
+
 const SEMVER = /^\d+\.\d+\.\d+$/;
 
 function die(message, code = 1) {
@@ -60,5 +62,17 @@ while (section.length > 0 && section.at(-1).trim() === "") section.pop();
 // Both bullet styles count, so a template change cannot zero this guard.
 const entries = section.filter((line) => /^[-*] /.test(line)).length;
 if (entries === 0) die(`the ${version} section has no entries`);
+
+// A breaking or upgrading note cut off by GitHub's wrapping (#261): stopped
+// here, before the release is committed or tagged, since a published release
+// cannot be corrected.
+const unfinished = unfinishedNotes(section);
+if (unfinished.length > 0) {
+	die(
+		`these notes of ${version} do not end a sentence, as a footer cut off by GitHub's wrapping does. ` +
+			`Repair each in cliff.toml (commit_preprocessors, as for #253) and run the release again:\n` +
+			unfinished.map((entry) => `  ${entry}`).join("\n")
+	);
+}
 
 process.stdout.write(`${section.join("\n")}\n`);

@@ -6,10 +6,15 @@
  *   node --test scripts/footer-wrap.test.mjs
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { changelogFor } from "./changelog-for.mjs";
-import { checkFooterWrap, startsFooter, wrapLine } from "./footer-wrap.mjs";
+import { checkFooterWrap, startsFooter, unfinishedNotes, wrapLine } from "./footer-wrap.mjs";
 
 // #253's footer, one line in its description.
 const NOTE_253 =
@@ -111,4 +116,59 @@ test("end to end: the wrapped note is cut in the release notes, the reworded one
 	assert.equal(entries.length, 2);
 	assert.match(entries[0], /must be able to create that$/);
 	assert.match(entries[1], /create that directory\. Under a user .* with a message saying so\.$/);
+});
+
+// The second defence (#261): a note that reached main cut off stops the
+// release before it is committed or tagged.
+
+const scripts = dirname(fileURLToPath(import.meta.url));
+
+test("a release note that does not end a sentence is found; whole notes and subject links pass", () => {
+	assert.deepEqual(
+		unfinishedNotes([
+			"### Breaking changes",
+			"",
+			"- **cli:** A breaking change without a footer ([#191](https://github.com/cronai-labs/vaultore/issues/191))",
+			"- **obsidian:** Requires Obsidian 1.13.0 or later.",
+			"",
+			"### Upgrading",
+			"",
+			"- **core:** A runner must be able to create that",
+			"- Read it with `vaultore schedules log`.",
+			"- Rename the cell the error names (also in `depends`).",
+			"",
+			"### Features",
+			"",
+			"- **core:** Features need no full stop ([#1](https://x/1))",
+			"- **core:** nor this",
+		]),
+		["- **core:** A runner must be able to create that"]
+	);
+});
+
+test("end to end: #253's note, wrapped and not repaired, stops the release notes; reworded it passes", (t) => {
+	// Another subject than #253's, so cliff.toml's repair for #253 does not apply.
+	const squash = (footer) =>
+		`feat(core): another lock (#300)\n\n${description(footer).split("\n").flatMap((l) => wrapLine(l)).join("\n")}`;
+	const dir = mkdtempSync(join(tmpdir(), "vaultore-notes-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+	const notes = (footer) => {
+		const { changelog } = changelogFor(t, [squash(footer)]);
+		const file = join(dir, "CHANGELOG.md");
+		// git-cliff renders the release under test as 0.2.0, dated.
+		writeFileSync(file, changelog);
+		try {
+			execFileSync("node", [join(scripts, "release-notes.mjs"), "0.2.0", file], { encoding: "utf8", stdio: "pipe" });
+			return { ok: true, stderr: "" };
+		} catch (err) {
+			return { ok: false, stderr: String(err.stderr) };
+		}
+	};
+
+	const cut = notes(NOTE_253);
+	assert.equal(cut.ok, false);
+	assert.match(cut.stderr, /do not end a sentence/);
+	assert.match(cut.stderr, /must be able to create that\n/);
+	assert.equal(notes(REWORDED_253).ok, true);
 });
