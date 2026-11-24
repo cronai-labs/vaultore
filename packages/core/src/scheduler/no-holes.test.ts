@@ -53,6 +53,15 @@ function host(by: string, late = lateAfterMs()) {
 			await look(workflow);
 			return;
 		}
+		if (workflow.superseded) {
+			try {
+				const claim = await claimSlot({ vaultRoot, notePath: workflow.path, schedule: workflow.cronExpression, slot: workflow.slot, by, directory: slots, pruneIntervalMs: 0 });
+				await claim.finish({ result: "skipped", reason: "superseded" });
+			} catch (err) {
+				if (!(err instanceof SlotTakenError)) throw err;
+			}
+			return;
+		}
 		try {
 			const claim = await claimSlot({ vaultRoot, notePath: workflow.path, schedule: workflow.cronExpression, slot: workflow.slot, by, directory: slots, pruneIntervalMs: 0 });
 			await claim.finish({ result: "completed" });

@@ -79,6 +79,19 @@ describe("WorkflowScheduler", () => {
     expect(scheduler.list()).toEqual([]);
   });
 
+  // After an arming or a late tick, several occurrences can be due at once:
+  // only the latest runs (#269, found in the app).
+  it("marks all but the latest of a note's occurrences due in one tick as superseded", () => {
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
+    const entry = scheduler.register("Workflows/fast.md", "* * * * *");
+    entry.nextRun = new Date(Date.now() - 90_000);
+
+    const due = scheduler.tick();
+
+    expect(due.length).toBeGreaterThan(1);
+    expect(due.map((w) => w.superseded === true)).toEqual([...due.slice(1).map(() => true), false]);
+  });
+
   it("recomputes nextRun when the cron changes", () => {
     const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     const entry = scheduler.register("Workflows/test.md", "0 * * * *");

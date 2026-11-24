@@ -523,6 +523,15 @@ export default class VaultOrePlugin extends Plugin {
           void this.lookForMissedRuns(workflow.path, workflow.cronExpression, workflow.armedAt);
           continue;
         }
+        // A later occurrence came due in the same tick and runs instead.
+        if (workflow.superseded) {
+          void this.recordSkippedSlot(
+            workflow.path,
+            { schedule: workflow.cronExpression, slot: workflow.slot },
+            "a later occurrence came due at the same time and ran instead"
+          );
+          continue;
+        }
         void this.runWorkflowByPath(workflow.path, {
           schedule: workflow.cronExpression,
           slot: workflow.slot,
@@ -661,20 +670,26 @@ export default class VaultOrePlugin extends Plugin {
     return isWorkflowFrontmatter(this.app.metadataCache.getFileCache(file)?.frontmatter);
   }
 
+  /**
+   * A slot not run is still decided: claimed and recorded as skipped, so it is
+   * neither run later nor lost between the record's slots (#269).
+   */
+  private async recordSkippedSlot(path: string, scheduled: ScheduledSlot, reason: string): Promise<void> {
+    try {
+      const claim = await this.adapter.claimSlot(path, scheduled);
+      await claim.finish({ result: "skipped", reason });
+      this.adapter.log("info", `Skipped the ${scheduled.slot.toISOString()} run of ${path}: ${reason}`);
+    } catch (err) {
+      if (!(err instanceof SlotTakenError)) this.adapter.log("warn", `Could not record the skipped run of ${path}: ${errorMessage(err)}`);
+    }
+  }
+
   private async runWorkflow(file: TFile, scheduled?: ScheduledSlot, slotClaim?: SlotClaim): Promise<void> {
     if (this.runningWorkflows.has(file.path)) {
-      // A scheduled slot is still decided: it is claimed and recorded as
-      // skipped, so it is neither run later nor lost (#269). A held catch-up
-      // is finished the same way.
+      // A held catch-up is finished as skipped too.
       const reason = "the note was still running";
       if (scheduled) {
-        try {
-          const claim = await this.adapter.claimSlot(file.path, scheduled);
-          await claim.finish({ result: "skipped", reason });
-        } catch (err) {
-          if (!(err instanceof SlotTakenError)) this.adapter.log("warn", `Could not record the skipped run of ${file.path}: ${errorMessage(err)}`);
-        }
-        this.adapter.log("info", `Skipped the scheduled run of ${file.path}: ${reason}`);
+        await this.recordSkippedSlot(file.path, scheduled, reason);
         return;
       }
       await slotClaim?.finish({ result: "skipped", reason }).catch(() => undefined);

@@ -45,6 +45,12 @@ export function lateAfterMs(minutes?: number): number {
  */
 export interface DueWorkflow extends ScheduledWorkflow {
   slot: Date;
+  /**
+   * A later occurrence of the same note came due in this tick too (after an
+   * arming or a late tick): only the latest runs, and the host records this
+   * one as skipped rather than starting runs that would wait on each other.
+   */
+  superseded?: boolean;
 }
 
 /** A note to keep armed, as a host's rescan finds it. */
@@ -162,9 +168,12 @@ export class WorkflowScheduler {
       // Every occurrence that is due, each its own slot: after a late tick or
       // an arming, those of the last two minutes fire together, and what lies
       // before them is a missed run. Bounded: a slot is never fired twice.
+      let previous: DueWorkflow | undefined;
       while (workflow.nextRun <= now) {
+        if (previous) previous.superseded = true;
         // A copy: the entry's nextRun moves on below, the slot does not.
-        due.push({ ...workflow, slot: workflow.nextRun });
+        previous = { ...workflow, slot: workflow.nextRun };
+        due.push(previous);
         workflow.lastRun = now;
         // The next occurrence after this slot, or after two minutes back when
         // the tick came late: nothing younger is skipped.

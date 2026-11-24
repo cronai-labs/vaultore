@@ -232,6 +232,9 @@ async function cmdList(args: ParsedArgs): Promise<number> {
 	return 0;
 }
 
+/** Why an occurrence was not run when a later one came due in the same tick. */
+const SUPERSEDED = "a later occurrence came due at the same time and ran instead";
+
 async function cmdAgent(args: ParsedArgs): Promise<number> {
 	let rescanSeconds: number;
 	let keepDays: number;
@@ -291,20 +294,20 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		onRefuse: (path, reason) => warn(`not running ${path}: ${reason}`),
 	});
 
-	const runByPath = createSingleFlightRunner(
-		runApproved,
-		// Still decided: the slot is claimed and recorded as skipped, so it is
-		// neither run later nor lost between the record's slots (#269).
-		async (path, scheduled) => {
-			const reason = "the previous run is still in progress";
-			process.stderr.write(`[vaultore:agent] skipped ${path}: ${reason}\n`);
-			try {
-				const claim = await adapter.claimSlot(path, scheduled);
-				await claim.finish({ result: "skipped", reason });
-			} catch (err) {
-				if (!(err instanceof SlotTakenError)) warn(`could not record the skipped run of ${path}: ${errorMessage(err)}`);
-			}
+	// A slot not run is still decided: claimed and recorded as skipped, so it
+	// is neither run later nor lost between the record's slots (#269).
+	const recordSkipped = async (path: string, scheduled: ScheduledSlot, reason: string): Promise<void> => {
+		try {
+			const claim = await adapter.claimSlot(path, scheduled);
+			await claim.finish({ result: "skipped", reason });
+			process.stderr.write(`[vaultore:agent] skipped ${path} at ${scheduled.slot.toISOString()}: ${reason}\n`);
+		} catch (err) {
+			if (!(err instanceof SlotTakenError)) warn(`could not record the skipped run of ${path}: ${errorMessage(err)}`);
 		}
+	};
+
+	const runByPath = createSingleFlightRunner(runApproved, (path, scheduled) =>
+		recordSkipped(path, scheduled, "the previous run is still in progress")
 	);
 
 	// Occurrences no runner fired are recorded as missed runs, said once
@@ -341,6 +344,11 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 				// slot it held: that slot, and any after it, are missed runs.
 				if (isLateSlot(workflow.slot, new Date(), late)) {
 					void lookForMissed(workflow.path, workflow.cronExpression, workflow.armedAt);
+					return;
+				}
+				// A later occurrence came due in the same tick and runs instead.
+				if (workflow.superseded) {
+					void recordSkipped(workflow.path, { schedule: workflow.cronExpression, slot: workflow.slot }, SUPERSEDED);
 					return;
 				}
 				void runByPath(workflow.path, { schedule: workflow.cronExpression, slot: workflow.slot });

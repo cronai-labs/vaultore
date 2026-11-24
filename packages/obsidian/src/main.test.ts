@@ -678,6 +678,23 @@ describe("VaultOrePlugin", () => {
           expect(Notice.shown).toEqual([]);
         });
 
+        // Found in the app: arming fired two occurrences at once, and the
+        // older one ran. Now only the latest runs; the others are skipped.
+        it("run only the latest of occurrences due at once; the others are recorded as skipped", async () => {
+          const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
+          const skip = vi.spyOn(plugin as any, "recordSkippedSlot").mockResolvedValue(undefined);
+          vi.spyOn(plugin as any, "isApprovedSchedule").mockReturnValue(true);
+          const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+          scheduler.register("notes/daily.md", "* * * * *").nextRun = new Date(Date.now() - 90_000);
+
+          scheduler.tick();
+
+          expect(run).toHaveBeenCalledTimes(1);
+          expect(skip).toHaveBeenCalled();
+          const ran = (run.mock.calls[0]?.[1] as { slot: Date }).slot;
+          for (const call of skip.mock.calls) expect((call[1] as { slot: Date }).slot.getTime()).toBeLessThan(ran.getTime());
+        });
+
         it("are what a late tick finds, instead of a run", async () => {
           const look = vi.spyOn(plugin, "lookForMissedRuns").mockResolvedValue(undefined);
           const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
