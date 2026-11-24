@@ -59,6 +59,7 @@ Each occurrence of an armed note's schedule ends up either claimed (in time) or 
 
 - **In time is two minutes, by default.** Each runner has a setting for it, from 2 to 60 minutes (owner, 2026-11-24): the plugin's "Late after" and `vaultore agent --late-after`. Less than two would let a tick on time find its slot late. Set both runners alike: with different settings, a slot can be in time for one and missed for the other, and then both run it, once claimed and once caught up. The scheduler never lets an occurrence younger than the setting pass unfired: a note armed at 09:01 fires its 09:00 occurrence at once (the host ticks right after arming), and a tick fires every occurrence that is due, not only the next one. A tick that fires a slot more than two minutes old does not run it: the slot is missed. A machine that wakes from sleep therefore runs no slot it held while asleep, but does run one of the last two minutes.
 - **A gap covers what is older.** A runner looks for a gap when it arms a note (Obsidian or the agent starts, a note is approved) and when a tick comes late. It covers the slots after the note's last decided slot (a claim's slot, or a gap's `until`) that are more than two minutes old, never further back than the history kept. Between the two rules nothing is left; a slot exactly at the boundary is the tick's.
+- **Of occurrences due at once,** after an arming or a late tick, only the latest runs; the others are claimed and recorded as `skipped` ("a later occurrence came due at the same time and ran instead"). Found in the app: arming a minute schedule fired two at once, and the older one ran while the newer was skipped as "still running".
 - **A slot fired while its note still runs** is claimed and recorded as `skipped` (the agent: "the previous run is still in progress"; the plugin: "the note was still running"), not dropped before its claim.
 
 What a gap looks back to:
@@ -110,7 +111,7 @@ Pruning removes a slot's files once the slot is older than the shorter of 30 day
 
 - `vaultore schedules log [<note.md>] [--vault <dir>]`: one line per slot or gap of the vault, oldest first, with its state, the runner that claimed it, the run's id and the reason.
 - `vaultore schedules catch-up <note.md> [<slot>]` and `vaultore schedules dismiss <note.md> [<slot>]`: act on the note's open gap, named by its first slot when it has more than one; `dismiss` without a slot dismisses all of the note's open gaps.
-- The plugin's settings list the open gaps under "Missed runs", each with "Catch up" and "Dismiss".
+- The plugin's settings list the open gaps under "Missed runs", each with "Catch up" and "Dismiss". While the list holds a gap, the plugin re-reads the record each minute, so a gap the agent resolved leaves it.
 - `vaultore agent --late-after <2-60>` and the plugin's "Late after" setting: how many minutes late a slot may still run. Use the same in both.
 - `vaultore agent --keep-days <0-30>` and the plugin's "Scheduled-run history" setting: how long each runner's pruning keeps history. Each prunes with its own setting when it claims, so the shorter one wins over time.
 - A runner that finds its slot claimed reports it as skipped: the agent on stderr, the plugin in its log, not as a notice every minute.
