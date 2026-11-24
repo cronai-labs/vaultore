@@ -5,6 +5,7 @@ import {
 	configDirFrom,
 	hasExplicitVault,
 	keepDaysFrom,
+	lateAfterFrom,
 	parseArgs,
 	slotFrom,
 	rescanSecondsFrom,
@@ -181,5 +182,20 @@ describe("slotFrom", () => {
 
 	it("refuses a third argument", () => {
 		expect(() => slotFrom(["a.md", "2026-11-24T11:15:00Z", "b.md"])).toThrow("at most one slot");
+	});
+});
+
+describe("lateAfterFrom", () => {
+	it("is 2 minutes when --late-after is absent, and takes 2 to 60", () => {
+		expect(lateAfterFrom({})).toBe(2);
+		expect(lateAfterFrom(parseArgs(["agent", "--late-after", "15"]).flags)).toBe(15);
+		expect(lateAfterFrom(parseArgs(["agent", "--late-after=60"]).flags)).toBe(60);
+	});
+
+	// Under 2, a tick on time could find its slot late.
+	it.each(["1", "0", "61", "2.5", "abc", ""])("rejects --late-after=%s", (value) => {
+		expect(() => lateAfterFrom(parseArgs(["agent", `--late-after=${value}`]).flags)).toThrow(
+			`--late-after must be a whole number of minutes from 2 to 60, got '${value}'`
+		);
 	});
 });

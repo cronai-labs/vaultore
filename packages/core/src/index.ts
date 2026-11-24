@@ -126,7 +126,14 @@ export type { AIProviderName } from "./providers";
 // SCHEDULER
 // =============================================================================
 
-export { WorkflowScheduler, computeNextRun, classifyScheduleApproval } from "./scheduler";
+export {
+  WorkflowScheduler,
+  computeNextRun,
+  classifyScheduleApproval,
+  lateAfterMs,
+  MIN_LATE_AFTER_MS,
+  MAX_LATE_AFTER_MS,
+} from "./scheduler";
 
 export type { DueWorkflow, Registration, ScheduleApproval, ScheduleApprovalState } from "./scheduler";
 

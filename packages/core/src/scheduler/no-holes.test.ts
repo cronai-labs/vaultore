@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nodeTimers } from "../testing/timers";
-import { WorkflowScheduler } from "./index";
+import { WorkflowScheduler, lateAfterMs } from "./index";
 import type { DueWorkflow } from "./index";
 import { SlotTakenError, claimSlot, isLateSlot, readSlotRecord, recordMissedSlots } from "./slot-record";
 
@@ -36,19 +36,20 @@ afterEach(() => {
 
 const at = (iso: string) => new Date(iso);
 
-/** A runner as the hosts are, on one record. */
-function host(by: string) {
+/** A runner as the hosts are, on one record, with its late threshold. */
+function host(by: string, late = lateAfterMs()) {
 	const handled: Promise<unknown>[] = [];
 	const scheduler = new WorkflowScheduler({
 		timers: nodeTimers,
+		lateAfterMs: late,
 		onTick: (due) => {
 			for (const workflow of due) handled.push(handle(workflow));
 		},
 	});
 	const look = (workflow: { path: string; cronExpression: string; armedAt: Date }) =>
-		recordMissedSlots({ vaultRoot, notePath: workflow.path, schedule: workflow.cronExpression, by, directory: slots, armedAt: workflow.armedAt });
+		recordMissedSlots({ vaultRoot, notePath: workflow.path, schedule: workflow.cronExpression, by, directory: slots, armedAt: workflow.armedAt, lateAfterMs: late });
 	const handle = async (workflow: DueWorkflow): Promise<void> => {
-		if (isLateSlot(workflow.slot)) {
+		if (isLateSlot(workflow.slot, new Date(), late)) {
 			await look(workflow);
 			return;
 		}
@@ -178,5 +179,31 @@ describe("two runners", () => {
 		const { claimed, gaps } = await decided();
 		expect(claimed).toEqual(["2026-11-24T10:13:00.000Z", "2026-11-24T10:14:00.000Z", "2026-11-24T10:15:00.000Z"]);
 		expect(gaps).toEqual([]);
+	});
+});
+
+describe("the late threshold, a runner's setting", () => {
+	it("is 2 to 60 minutes; 2 by default", () => {
+		expect(lateAfterMs()).toBe(2 * 60_000);
+		expect(lateAfterMs(10)).toBe(10 * 60_000);
+		expect(lateAfterMs(1)).toBe(2 * 60_000);
+		expect(lateAfterMs(600)).toBe(60 * 60_000);
+	});
+
+	// A runner set to ten minutes still runs a slot five minutes late, and
+	// records as missed only what is older than ten.
+	it("set longer, fires a slot five minutes late, and misses only what is older", async () => {
+		const hourly = "15 * * * *";
+		vi.setSystemTime(at("2026-11-24T10:15:10Z"));
+		const runner = host("Obsidian", lateAfterMs(10));
+		await runner.arm(hourly);
+
+		vi.setSystemTime(at("2026-11-24T15:20:00Z"));
+		await runner.tick();
+
+		expect(await decided()).toEqual({
+			claimed: ["2026-11-24T10:15:00.000Z", "2026-11-24T15:15:00.000Z"],
+			gaps: [["2026-11-24T11:15:00.000Z", "2026-11-24T14:15:00.000Z", 4]],
+		});
 	});
 });

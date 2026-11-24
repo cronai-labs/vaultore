@@ -28,6 +28,7 @@ vi.mock("@vaultore/core", async () => {
       actual.claimSlot({ ...options, directory: runLocks.slots, pruneIntervalMs: 0 }),
     MissedSlotError: actual.MissedSlotError,
     isLateSlot: actual.isLateSlot,
+    lateAfterMs: actual.lateAfterMs,
     recordMissedSlots: (options: import("@vaultore/core").RecordMissedOptions) =>
       actual.recordMissedSlots({ ...options, directory: runLocks.slots }),
     readSlotRecord: (options: import("@vaultore/core").ReadSlotRecordOptions) =>
@@ -229,6 +230,25 @@ describe("VaultOrePlugin", () => {
       await at(row("Temperature").texts).changeHandler!(" ");
       expect(plugin.settings.aiTemperature).toBeUndefined();
       expect(plugin.saveData).toHaveBeenCalled();
+    });
+
+    // How late a scheduled run may start (#269): 2 to 60 minutes, blank 2,
+    // and the scheduler follows the setting.
+    it("stores Late after from 2 to 60 minutes, and the scheduler uses it", async () => {
+      const late = at(row("Late after").texts);
+      const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+      expect(scheduler.lateAfterMs).toBe(2 * 60_000);
+
+      await late.changeHandler!("15");
+      expect(plugin.settings.lateAfterMinutes).toBe(15);
+      expect(scheduler.lateAfterMs).toBe(15 * 60_000);
+
+      await late.changeHandler!("1");
+      await late.changeHandler!("61");
+      expect(plugin.settings.lateAfterMinutes).toBe(15);
+
+      await late.changeHandler!("");
+      expect(scheduler.lateAfterMs).toBe(2 * 60_000);
     });
 
     // 0 switches the history off (each run kept for a day only), blank keeps

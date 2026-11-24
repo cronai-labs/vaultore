@@ -17,7 +17,7 @@ export interface ParsedArgs {
  * `--yes workflow.md` swallows the workflow path, and a value flag missing from
  * it loses its value to the positionals.
  */
-const VALUE_FLAGS = new Set(["vault", "config-dir", "state-dir", "cell", "rescan", "out", "keep-days"]);
+const VALUE_FLAGS = new Set(["vault", "config-dir", "state-dir", "cell", "rescan", "out", "keep-days", "late-after"]);
 
 /** Flags that take no value. */
 const BOOLEAN_FLAGS = new Set(["skip-deps", "yes", "quiet", "help", "version"]);
@@ -169,4 +169,19 @@ export function slotFrom(positional: string[]): Date | undefined {
 		throw new Error(`'${raw}' is not a slot; give it as schedules log prints it, such as 2026-11-24T10:15:00.000Z`);
 	}
 	return slot;
+}
+
+/**
+ * How many minutes late a scheduled run may start and still run, `--late-after`:
+ * a whole number from 2 (two ticks of the scheduler) to 60. Default 2. Later
+ * than this, the occurrence is a missed run (#269). Use the same in Obsidian.
+ */
+export function lateAfterFrom(flags: Record<string, string | boolean>): number {
+	const flag = flags["late-after"];
+	if (flag === undefined) return 2;
+	const minutes = typeof flag === "string" && /^\d+$/.test(flag.trim()) ? Number(flag) : Number.NaN;
+	if (!Number.isInteger(minutes) || minutes < 2 || minutes > 60) {
+		throw new Error(`--late-after must be a whole number of minutes from 2 to 60, got '${String(flag)}'`);
+	}
+	return minutes;
 }

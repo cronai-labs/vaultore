@@ -25,6 +25,7 @@ import {
 	catchUpMissedSlot,
 	dismissMissedSlots,
 	isLateSlot,
+	lateAfterMs,
 	readSlotRecord,
 	recordMissedSlots,
 	WorkflowExecutor,
@@ -55,6 +56,7 @@ import {
 	configDirFrom,
 	hasExplicitVault,
 	keepDaysFrom,
+	lateAfterFrom,
 	parseArgs,
 	slotFrom,
 	rescanSecondsFrom,
@@ -69,7 +71,7 @@ function usage(): string {
 Usage:
   vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
   vaultore list [--vault <dir>] [--config-dir <name>]
-  vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--quiet]
+  vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--late-after <minutes>] [--quiet]
   vaultore schedules list [--vault <dir>] [--config-dir <name>] [--state-dir <dir>]
   vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
   vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
@@ -95,6 +97,9 @@ Options:
   --rescan <seconds>  Agent rescan interval (default: 300)
   --keep-days <n>     Days of scheduled-run history to keep, 0 to 30
                       (default: 30). 0 keeps each run for a day only.
+  --late-after <min>  How late a scheduled run may start and still run, 2 to 60
+                      minutes (default: 2); later, it is a missed run. Set
+                      Obsidian's "Late after" to the same.
   --out <file>        Write manifest to a file instead of stdout
   --quiet             Suppress info/debug output
 
@@ -230,9 +235,11 @@ async function cmdList(args: ParsedArgs): Promise<number> {
 async function cmdAgent(args: ParsedArgs): Promise<number> {
 	let rescanSeconds: number;
 	let keepDays: number;
+	let late: number;
 	try {
 		rescanSeconds = rescanSecondsFrom(args.flags);
 		keepDays = keepDaysFrom(args.flags);
+		late = lateAfterMs(lateAfterFrom(args.flags));
 	} catch (err) {
 		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
 		return 2;
@@ -310,6 +317,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 				schedule,
 				by: "vaultore agent",
 				keepDays,
+				lateAfterMs: late,
 				...(armedAt ? { armedAt } : {}),
 			});
 			for (const gap of gaps) {
@@ -326,11 +334,12 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	const scheduler = new WorkflowScheduler({
 		timers: adapter.timers,
 		tickIntervalMs: 60 * 1000,
+		lateAfterMs: late,
 		onTick: (workflows) => {
 			workflows.forEach((workflow) => {
 				// A tick that comes late (the machine slept) does not run the
 				// slot it held: that slot, and any after it, are missed runs.
-				if (isLateSlot(workflow.slot)) {
+				if (isLateSlot(workflow.slot, new Date(), late)) {
 					void lookForMissed(workflow.path, workflow.cronExpression, workflow.armedAt);
 					return;
 				}

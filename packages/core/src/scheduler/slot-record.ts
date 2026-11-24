@@ -38,9 +38,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export { LATE_AFTER_MS };
 /**
- * A gap covers only slots older than this: those no runner may claim any
- * more, as a tick that reaches them is late. The scheduler fires every
- * younger one (`LATE_AFTER_MS`), so between the two nothing is left undecided.
+ * A gap covers only slots older than the late threshold: those no runner may
+ * claim any more, as a tick that reaches them is late. The scheduler fires
+ * every younger one, so between the two nothing is left undecided. Default.
  */
 export const GAP_MARGIN_MS = LATE_AFTER_MS;
 /** The most slots one gap records; a longer run of missed slots becomes several gaps. */
@@ -553,8 +553,8 @@ export function describeSlotState(entry: SlotEntry): string {
 // =============================================================================
 
 /** Whether a tick that fires `slot` at `now` is too late to run it. */
-export function isLateSlot(slot: Date, now: Date = new Date()): boolean {
-	return now.getTime() - slot.getTime() > LATE_AFTER_MS;
+export function isLateSlot(slot: Date, now: Date = new Date(), lateAfterMs: number = LATE_AFTER_MS): boolean {
+	return now.getTime() - slot.getTime() > lateAfterMs;
 }
 
 /** The occurrences of `schedule` after `after` up to and including `until`, at most `limit`. */
@@ -592,6 +592,8 @@ export interface RecordMissedOptions extends Pick<LockOptions, "host"> {
 	 * note has none, since nothing is backfilled.
 	 */
 	armedAt?: Date;
+	/** The runner's late threshold (`lateAfterMs`); a gap covers only slots older. Default LATE_AFTER_MS. */
+	lateAfterMs?: number;
 	directory?: string;
 	now?: Date;
 }
@@ -607,7 +609,8 @@ export async function recordMissedSlots(options: RecordMissedOptions): Promise<R
 	const noteDir = join(directory, await noteKey(options.vaultRoot, options.notePath));
 	const now = options.now ?? new Date();
 	// Strictly older than the margin: a slot exactly that old is still a tick's.
-	const until = new Date(now.getTime() - GAP_MARGIN_MS - 1);
+	const margin = options.lateAfterMs ?? GAP_MARGIN_MS;
+	const until = new Date(now.getTime() - margin - 1);
 	const earliest = new Date(now.getTime() - keepMilliseconds(options.keepDays));
 	const recorded: RecordedGap[] = [];
 
@@ -623,7 +626,7 @@ export async function recordMissedSlots(options: RecordMissedOptions): Promise<R
 			last !== undefined && last.schedule === options.schedule
 				? last.slot
 				: options.armedAt !== undefined
-					? new Date(options.armedAt.getTime() - LATE_AFTER_MS)
+					? new Date(options.armedAt.getTime() - margin)
 					: undefined;
 		if (since === undefined) return recorded;
 		const after = since.getTime() > earliest.getTime() ? since : earliest;

@@ -15,15 +15,27 @@ export interface SchedulerOptions {
   timers: Timers;
   tickIntervalMs?: number;
   onTick?: (workflows: DueWorkflow[]) => void;
+  /** How late a slot may fire and still run (#269). Default LATE_AFTER_MS. */
+  lateAfterMs?: number;
 }
 
 /**
  * A tick that fires a slot later than this does not run it: the slot is a
- * missed run (#269). Two ticks of the 60-second scheduler. The scheduler
- * never lets a slot younger than this pass unfired, so every occurrence is
- * either fired in time or older than this, and then part of a gap.
+ * missed run (#269). The scheduler never lets a slot younger than this pass
+ * unfired, so every occurrence is either fired in time or older than this,
+ * and then part of a gap. A runner's setting may set it from MIN to MAX
+ * (`lateAfterMs`); both runners should use the same.
  */
 export const LATE_AFTER_MS = 2 * 60 * 1000;
+/** Two ticks of the 60-second scheduler: any less and a tick on time could find its slot late. */
+export const MIN_LATE_AFTER_MS = 2 * 60 * 1000;
+export const MAX_LATE_AFTER_MS = 60 * 60 * 1000;
+
+/** `minutes` as the late threshold in ms, kept within its bounds; undefined is the default. */
+export function lateAfterMs(minutes?: number): number {
+  if (minutes === undefined || !Number.isFinite(minutes)) return LATE_AFTER_MS;
+  return Math.min(Math.max(minutes * 60 * 1000, MIN_LATE_AFTER_MS), MAX_LATE_AFTER_MS);
+}
 
 /**
  * A workflow that came due, with the occurrence of its schedule that did: the
@@ -47,11 +59,22 @@ export class WorkflowScheduler {
   private timers: Timers;
   private onTick?: (workflows: DueWorkflow[]) => void;
   private tickIntervalMs: number;
+  private lateAfter: number;
 
   constructor(options: SchedulerOptions) {
     this.timers = options.timers;
     this.tickIntervalMs = options.tickIntervalMs ?? 60 * 1000;
     this.onTick = options.onTick;
+    this.lateAfter = options.lateAfterMs ?? LATE_AFTER_MS;
+  }
+
+  /** How late a slot may fire and still run; a runner's setting changes it at run time. */
+  get lateAfterMs(): number {
+    return this.lateAfter;
+  }
+
+  set lateAfterMs(ms: number) {
+    this.lateAfter = ms;
   }
 
   /**
@@ -68,7 +91,7 @@ export class WorkflowScheduler {
     // was armed (a laptop opened at 09:01 for a 09:00 schedule) still fires,
     // in time; an older one is a missed run, which the host looks for.
     const now = Date.now();
-    const nextRun = computeNextRun(cronExpression, new Date(now - LATE_AFTER_MS));
+    const nextRun = computeNextRun(cronExpression, new Date(now - this.lateAfter));
     const entry: ScheduledWorkflow = {
       path,
       cronExpression,
@@ -145,7 +168,7 @@ export class WorkflowScheduler {
         workflow.lastRun = now;
         // The next occurrence after this slot, or after two minutes back when
         // the tick came late: nothing younger is skipped.
-        const from = Math.max(workflow.nextRun.getTime(), now.getTime() - LATE_AFTER_MS);
+        const from = Math.max(workflow.nextRun.getTime(), now.getTime() - this.lateAfter);
         workflow.nextRun = computeNextRun(workflow.cronExpression, new Date(from));
       }
     }

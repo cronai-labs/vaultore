@@ -229,7 +229,7 @@ on npm yet; build it from source (`bun run build`) and run `node packages/cli/di
 ```
 vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
 vaultore list [--vault <dir>] [--config-dir <name>]
-vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--quiet]
+vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--late-after <minutes>] [--quiet]
 vaultore schedules list [--vault <dir>] [--config-dir <name>] [--state-dir <dir>]
 vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
@@ -268,7 +268,9 @@ vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
   Obsidian as a notice). `vaultore schedules catch-up <note.md>` runs the note once for them,
   `vaultore schedules dismiss <note.md>` closes them; in Obsidian, the settings list them with
   "Catch up" and "Dismiss". A machine that wakes from sleep no longer runs the one occurrence
-  it held: that one is missed too.
+  it held: that one is missed too. An occurrence counts as missed once it is more than two
+  minutes late; `--late-after <minutes>` and the plugin's "Late after" setting change that
+  (2 to 60), and should say the same.
 - `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
   ([handover spec](specs/cronai-handover-spec.md)).
 

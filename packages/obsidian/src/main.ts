@@ -26,6 +26,7 @@ import {
   claimSlot,
   dismissMissedSlots,
   isLateSlot,
+  lateAfterMs,
   readSlotRecord,
   recordMissedSlots,
   computeNextRun,
@@ -68,6 +69,10 @@ interface VaultOreSettings {
   // Days of scheduled-run history kept outside the vault, 0 to 30; blank is
   // 30. 0 keeps each run for a day only, which stops a second runner (#255).
   scheduleHistoryDays?: number;
+  // How many minutes late a scheduled run may start and still run, 2 to 60;
+  // blank is 2. Later, it is a missed run (#269). The agent's --late-after
+  // should say the same.
+  lateAfterMinutes?: number;
 }
 
 // A workflow note with a schedule, as the settings tab lists it.
@@ -514,7 +519,7 @@ export default class VaultOrePlugin extends Plugin {
         }
         // A tick that comes late (the machine slept) does not run the slot
         // it held: that slot, and any after it, are missed runs (#269).
-        if (isLateSlot(workflow.slot)) {
+        if (isLateSlot(workflow.slot, new Date(), this.scheduler.lateAfterMs)) {
           void this.lookForMissedRuns(workflow.path, workflow.cronExpression, workflow.armedAt);
           continue;
         }
@@ -641,10 +646,12 @@ export default class VaultOrePlugin extends Plugin {
       delete (settings as Record<string, unknown>)[key];
     }
     this.settings = settings;
+    this.scheduler.lateAfterMs = lateAfterMs(this.settings.lateAfterMinutes);
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+    this.scheduler.lateAfterMs = lateAfterMs(this.settings.lateAfterMinutes);
   }
 
   // Command checks run synchronously on every palette open, so they read the
@@ -869,6 +876,7 @@ export default class VaultOrePlugin extends Plugin {
         schedule,
         by: "Obsidian",
         keepDays: this.settings.scheduleHistoryDays,
+        lateAfterMs: this.scheduler.lateAfterMs,
         ...(armedAt ? { armedAt } : {}),
       });
     } catch (err) {
@@ -1027,7 +1035,7 @@ function runFailureNotice(err: unknown): string {
     : `VaultOre error: ${errorMessage(err)}`;
 }
 
-type NumericSetting = "aiTemperature" | "aiMaxTokens" | "aiTimeoutSeconds" | "scheduleHistoryDays";
+type NumericSetting = "aiTemperature" | "aiMaxTokens" | "aiTimeoutSeconds" | "scheduleHistoryDays" | "lateAfterMinutes";
 
 // Blank means "the default", which a number control cannot hold, so these are
 // text controls that take a number in range or nothing.
@@ -1038,6 +1046,10 @@ const NUMERIC_SETTINGS: Record<NumericSetting, { valid: (n: number) => boolean; 
   scheduleHistoryDays: {
     valid: (n) => Number.isInteger(n) && n >= 0 && n <= MAX_KEEP_DAYS,
     hint: `a whole number of days from 0 to ${MAX_KEEP_DAYS}`,
+  },
+  lateAfterMinutes: {
+    valid: (n) => Number.isInteger(n) && n >= 2 && n <= 60,
+    hint: "a whole number of minutes from 2 to 60",
   },
 };
 
@@ -1294,6 +1306,13 @@ class VaultOreSettingsTab extends PluginSettingTab {
         `Days to keep what each scheduled run came to, shared with vaultore agent, from 0 to ${MAX_KEEP_DAYS}. ` +
           "0 keeps each run for a day only. Blank keeps 30.",
         String(MAX_KEEP_DAYS)
+      ),
+      this.numericSetting(
+        "lateAfterMinutes",
+        "Late after",
+        "Minutes a scheduled run may start late and still run, from 2 to 60; later, it is listed as missed. " +
+          "Set vaultore agent's --late-after to the same. Blank is 2.",
+        "2"
       ),
     ];
 
