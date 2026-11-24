@@ -59,7 +59,7 @@ Each occurrence of an armed note's schedule ends up either claimed (in time) or 
 
 - **In time is two minutes.** The scheduler never lets an occurrence younger than two minutes pass unfired: a note armed at 09:01 fires its 09:00 occurrence at once (the host ticks right after arming), and a tick fires every occurrence that is due, not only the next one. A tick that fires a slot more than two minutes old does not run it: the slot is missed. A machine that wakes from sleep therefore runs no slot it held while asleep, but does run one of the last two minutes.
 - **A gap covers what is older.** A runner looks for a gap when it arms a note (Obsidian or the agent starts, a note is approved) and when a tick comes late. It covers the slots after the note's last decided slot (a claim's slot, or a gap's `until`) that are more than two minutes old, never further back than the history kept. Between the two rules nothing is left; a slot exactly at the boundary is the tick's.
-- **A slot fired while its note still runs** is claimed and recorded as `skipped` ("the previous run is still in progress"), not dropped before its claim.
+- **A slot fired while its note still runs** is claimed and recorded as `skipped` (the agent: "the previous run is still in progress"; the plugin: "the note was still running"), not dropped before its claim.
 
 What a gap looks back to:
 
