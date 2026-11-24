@@ -72,8 +72,9 @@ access, and your own API key; the provider bills you for each request. Everythin
 (`docker`, `podman`, `colima` or `container`) to detect it and to run each code cell, and the
 cell runs the code written in the note. See the warning above.
 
-**Files outside the vault.** VaultOre reads and writes your notes and its outputs only inside
-the vault. Outside it, it writes one small lock file per running note, in
+**Files outside the vault.** VaultOre reads and writes your notes, its outputs and its
+`.vaultore/` folder inside the vault; [Where VaultOre keeps things](#where-vaultore-keeps-things)
+lists all of it. Outside the vault, it writes one small lock file per running note, in
 `~/.config/vaultore/locks` (`%APPDATA%\vaultore\locks` on Windows), so that Obsidian and the
 command-line runner never run one note at the same time; the file is removed when the run
 ends. For each scheduled run it writes a small record in `~/.config/vaultore/slots`
@@ -170,7 +171,46 @@ lists every note with a schedule, with its next run or why the schedule is inval
 **Run scheduled workflows**, then approve each note you want to run. An approval covers that
 note's path and exact schedule: a changed schedule, a renamed note, or a note that arrives
 through sync is listed but does not run until you approve it. Scheduled runs happen only while
-Obsidian is open.
+Obsidian is open; `vaultore agent` runs them without Obsidian ([Command-Line
+Interface](#command-line-interface)).
+
+What holds for both runners:
+
+- **Each occurrence runs at most once**, in Obsidian or in `vaultore agent`, whichever claims
+  it first; the other names who did. What each one came to is kept for 30 days at most
+  ("Scheduled-run history", `vaultore agent --keep-days`); `vaultore schedules log` shows it.
+- **An occurrence no runner fired is a missed run**: the computer slept, or nothing was running.
+  It is recorded when a runner looks again and said once (Obsidian as a notice, the agent on
+  stderr). Catch it up, one run for all the missed occurrences, or dismiss it: "Catch up" and
+  "Dismiss" under **Missed runs** in the settings, or `vaultore schedules catch-up | dismiss
+  <note.md>`. A failed catch-up is not retried.
+- **Late is more than two minutes**: an occurrence that would start later than that, because the
+  computer was asleep at its time, is not run but listed as missed. "Late after" (2 to 60
+  minutes) changes that for the computer, for both runners; `vaultore schedules late-after`
+  is the same setting.
+
+The model, its states and its limits: [schedule record spec](specs/schedule-record-spec.md).
+
+#### Several computers, one synced vault
+
+Each computer schedules on its own: the record that lets an occurrence run once, the run locks
+and "Late after" are kept per computer, outside the vault. Two computers that both run a note's
+schedule each run it.
+
+What sync carries depends on your sync. iCloud, Nextcloud, Syncthing and Obsidian Sync with
+plugin settings on carry `.obsidian/plugins/vaultore/data.json`, and with it **Run scheduled
+workflows**, the plugin's approvals and its permission decisions: approving a note on one
+computer then approves it on every computer that has the vault open in Obsidian
+([#276](https://github.com/cronai-labs/vaultore/issues/276)). The agent's approvals never travel:
+they are kept outside the vault. Run records and the result callouts in notes travel with the
+vault, so two computers write into the same notes.
+
+**Let one computer schedule.** On every other one, turn off **Run scheduled workflows** after
+each sync that may have turned it on, and do not run `vaultore agent` with approvals there.
+Sync cannot keep two computers from both running a note: each would take a lock or a lease in
+its own copy and learn of the other only after both had run. That needs one service all
+computers ask, which is what [CronAI](specs/cronai-handover-spec.md) is for. A warning when a
+note runs on two computers: [#274](https://github.com/cronai-labs/vaultore/issues/274).
 
 ## Security Model
 
@@ -186,8 +226,9 @@ The defaults ([permissions spec](specs/permissions-spec.md), the single source):
 
 **The mount enforces them.** A container cell sees the whole vault read-only, the whole vault
 read-write, only its own run directory, or nothing, depending on `vaultRead` and `vaultWrite`.
-`.obsidian/`, which holds the plugin and its settings, and `.vaultore/`, which holds the CLI's
-settings and stored permission decisions, are hidden from every cell.
+Obsidian's config folder (`.obsidian/`, or the folder Obsidian is set to use instead), which
+holds the plugin and its settings, and `.vaultore/`, which holds the CLI's settings and stored
+permission decisions, are hidden from every cell.
 
 **Containers are hardened** on every engine: read-only root filesystem, a `noexec` `/tmp`, no
 Linux capabilities, a non-root user, no network unless granted, and memory and CPU limits.
@@ -208,7 +249,7 @@ are used for the provider request only, not passed to containers.
 ## Known Limitations
 
 - **Colima with sshfs file sharing** can show a container a stale, cut-off copy of a file
-  written a moment earlier ([#83](https://github.com/cronai-labs/vaultore/issues/83)).
+  written a moment earlier ([#124](https://github.com/cronai-labs/vaultore/issues/124)).
   `vault.write` cannot save such a copy: the host applies it only if the note is still what
   the cell read, and otherwise fails the cell and writes nothing, so run it again. A cell that
   only reads still sees the stale copy, and shell cells and raw writes to `/workspace`
@@ -218,8 +259,8 @@ are used for the provider request only, not passed to containers.
   the host (`vault.write`, `{{note:}}`, output files, the workflow note), and a link as the last
   component of a path is refused wherever it points. A workflow in a folder linked from outside
   the vault therefore cannot run.
-- **Only `.obsidian/` and `.vaultore/` are hidden** from cells. Obsidian's "Override config
-  folder" setting is not followed.
+- **Several computers on one synced vault** each run a scheduled note; let one schedule
+  ([above](#several-computers-one-synced-vault)).
 - **Switching the provider keeps the default model** of the other provider; AI cells then fail
   with a message saying so, until you change the model.
 - **The Apple `container` engine** is covered by unit tests only, not yet by runs against a
@@ -239,15 +280,19 @@ vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
 vaultore schedules log [<workflow.md>] [--vault <dir>]
-vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--yes]
+vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--yes] [--quiet]
 vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
 vaultore schedules late-after [<minutes> | default]
+vaultore --version | --help
 ```
 
-- Settings come from `<vault>/.vaultore/config.json` (`defaultProvider`, `defaultModel`,
-  `runtimeEngine`, `outputRoot`, `aiTimeoutSeconds`, …), API keys from the environment
+- Settings come from `<vault>/.vaultore/config.json`: `defaultProvider`, `defaultModel`,
+  `aiTemperature`, `aiMaxTokens`, `aiTimeoutSeconds`, `runtimeEngine`, `outputRoot`, and the
+  stored `permissionDecisions`. API keys come from the environment
   (`VAULTORE_OPENAI_APIKEY` or `OPENAI_API_KEY`, `VAULTORE_ANTHROPIC_APIKEY` or
   `ANTHROPIC_API_KEY`).
+- `--config-dir <name>`: when Obsidian is set to use another config folder than `.obsidian`,
+  name it, so that it is skipped when looking for workflows and hidden from cells.
 - Permissions at `ask` are denied unless you pass `--yes`, and the decision is stored in the
   config file. A `deny` stored that way sticks until the note changes
   ([#28](https://github.com/cronai-labs/vaultore/issues/28)).
@@ -256,31 +301,73 @@ vaultore schedules late-after [<minutes> | default]
   what you approved: an edit to either, including one that arrives through sync, stops it until
   you approve again. `vaultore schedules list` shows where each note stands, and the agent
   names what it does not run. `--yes` does not approve a schedule.
-- The agent's approvals are kept outside the vault, in `approvals.json` under
-  `$XDG_CONFIG_HOME/vaultore` or `~/.config/vaultore` (`%APPDATA%\vaultore` on Windows;
-  `--state-dir <dir>` for another place), so that sync cannot deliver one. They are separate
-  from the approvals in the plugin's settings.
+- The agent's approvals are kept outside the vault, so that sync cannot deliver one, and apart
+  from the plugin's ([where](#where-vaultore-keeps-things)).
 - A note runs once at a time, whether Obsidian, `vaultore run` or `vaultore agent` starts it: a
   second run is refused and told who has the note
-  ([one run per note](specs/ore-implementation.md)). This holds on one machine; two machines
-  that sync the same vault can still run a note twice, so run scheduled notes on one of them.
-- Each occurrence of a schedule runs at most once, in the agent or in Obsidian, whichever
-  claims it first. `vaultore schedules log` shows what each one came to and who ran it; the
-  agent keeps that for `--keep-days` (default and most: 30)
-  ([schedule record](specs/schedule-record-spec.md)).
-- Occurrences that no runner fired, because the machine slept or nothing was running, are
-  recorded as missed runs once a runner looks again, and said once (the agent on stderr,
-  Obsidian as a notice). `vaultore schedules catch-up <note.md>` runs the note once for them,
-  `vaultore schedules dismiss <note.md>` closes them; in Obsidian, the settings list them with
-  "Catch up" and "Dismiss". A machine that wakes from sleep no longer runs the one occurrence
-  it held: that one is missed too. An occurrence counts as missed once it is more than two
-  minutes late. That is one setting per computer, 2 to 60 minutes, kept in
-  `~/.config/vaultore/settings.json` and shared by both runners: `vaultore schedules late-after`
-  and the plugin's "Late after" show and change it.
+  ([one run per note](specs/ore-implementation.md)). This holds on one computer
+  ([several computers](#several-computers-one-synced-vault)).
+- Scheduled runs, missed runs and "Late after" work as in Obsidian
+  ([Scheduling](#scheduling)).
 - `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
   ([handover spec](specs/cronai-handover-spec.md)).
 
 More in [docs/interoperability.md](docs/interoperability.md).
+
+## Where VaultOre keeps things
+
+| Where | What | Written by |
+|---|---|---|
+| **In the vault** | | |
+| `.obsidian/plugins/vaultore/` | The plugin; `data.json` holds its settings, **Run scheduled workflows**, schedule approvals and permission decisions | Obsidian, the plugin |
+| `_vaultore/` (the output folder setting) | `runs/<workflow>/<run id>/`: each run's record, each cell's JSON and Markdown; `runs/<workflow>/index.json` | both runners |
+| Your workflow notes | The `ore-output` callout under each cell that ran | both runners |
+| Wherever a workflow writes | What its cells write with `vault.write` or into the mounted vault | your workflows |
+| `.vaultore/` | Created by every run that may read the vault, so a cell cannot plant it; `config.json` holds the CLI's settings and permission decisions | both runners |
+| **Outside the vault** (`~/.config/vaultore/`; `%APPDATA%\vaultore\` on Windows) | | |
+| `locks/` | One lock file per running note, removed when the run ends | both runners |
+| `slots/` | What each scheduled occurrence came to, and missed runs; 30 days at most | both runners |
+| `settings.json` | "Late after", for this computer | both runners |
+| `approvals.json`, `approvals.json.lock` | The agent's schedule approvals | `vaultore schedules approve` |
+| **Elsewhere** | | |
+| Obsidian's secret storage | The API keys you stored there; VaultOre only reads them | you |
+| Your container engine | The images cells ran in (`oven/bun:1-alpine`, and any `runtime.image` a note names) | your engine |
+
+The agent's approvals follow `--state-dir`, then `$XDG_CONFIG_HOME/vaultore`; locks, the record
+and `settings.json` always use `~/.config/vaultore` of your account, so that no environment can
+separate the two runners. With `XDG_CONFIG_HOME` set, or `--state-dir` given, the state is in
+two folders ([#277](https://github.com/cronai-labs/vaultore/issues/277)).
+
+## Upgrading
+
+Each release's notes, and the [changelog](CHANGELOG.md), say under **Upgrading** what a release
+asks of you. Update the plugin and the CLI together where you use both: they read each other's
+files in `~/.config/vaultore/`. An older runner treats a scheduled occurrence it cannot read as
+taken, so it never runs one twice, but it may not show it; versioned formats and a warning about
+a newer runner are planned ([#278](https://github.com/cronai-labs/vaultore/issues/278)).
+
+The CLI built from source is updated with `git pull`, `bun install` and `bun run build`.
+
+## Uninstalling
+
+**Uninstall** in **Settings → Community plugins** removes `.obsidian/plugins/vaultore/` with
+the plugin's settings and approvals; disabling it only stops it. What stays, to remove by hand
+if you want it gone:
+
+1. **The output folder** (`_vaultore/` by default) in each vault: your run records. Keep it if
+   you need them.
+2. **The result callouts** in your workflow notes: they are part of the notes. Delete them in
+   the notes, or keep them.
+3. **`.vaultore/`** in each vault.
+4. **`~/.config/vaultore/`** (`%APPDATA%\vaultore\` on Windows): shared by the plugin and the
+   CLI, so remove it once you use neither, after stopping `vaultore agent`. With
+   `XDG_CONFIG_HOME` or `--state-dir`, also the agent's `approvals.json` there.
+5. **API keys** you stored in Obsidian's secret storage for VaultOre.
+6. **Container images** VaultOre ran, if nothing else uses them: `docker image rm
+   oven/bun:1-alpine`, or your engine's equivalent.
+
+The CLI from source is removed with its checkout. A command that lists and removes all of this:
+[#275](https://github.com/cronai-labs/vaultore/issues/275).
 
 ## Documentation
 
@@ -288,6 +375,7 @@ More in [docs/interoperability.md](docs/interoperability.md).
 - [Ore implementation](specs/ore-implementation.md): what VaultOre decides and adds on top of the format
 - [Permissions spec](specs/permissions-spec.md): permissions, mounts, stored decisions
 - [Sandbox spec](specs/sandbox-spec.md): container engines and hardening
+- [Schedule record spec](specs/schedule-record-spec.md): one run per scheduled occurrence, missed runs
 - [Roadmap](docs/roadmap.md): what exists, what is next
 - [All documentation](docs/index.md)
 

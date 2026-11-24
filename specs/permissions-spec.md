@@ -174,7 +174,7 @@ docker run --rm \
 | User | `--user=<uid>:<gid>` (§4.2) | `--user <uid>:<gid>` | Never root |
 | Memory / CPU | `--memory` / `--cpus` from `runtime.memoryLimit` / `runtime.cpuLimit` | same | §4.3 |
 | Vault | §3.3, §3.4: no mount, the run directory only, or the vault read-only or read-write | same | |
-| `.obsidian/` | `--tmpfs /workspace/.obsidian:ro,noexec,nosuid,nodev` | same | Under the full vault mount, an empty read-only tmpfs hides the plugin's own code and settings, so a cell can neither read nor rewrite them. Applied only when `.obsidian/` exists in the vault: masking a missing directory would make the engine create it. Obsidian's per-device "Override config folder" setting is not honoured; only `.obsidian` is masked |
+| `.obsidian/` | `--tmpfs /workspace/.obsidian:ro,noexec,nosuid,nodev` | same | Under the full vault mount, an empty read-only tmpfs hides the plugin's own code and settings, so a cell can neither read nor rewrite them. Applied only when `.obsidian/` exists in the vault: masking a missing directory would make the engine create it. The config folder the platform reports is masked as well, when it is another one (Obsidian's per-device "Override config folder", the CLI's `--config-dir`; #147) |
 | `.vaultore/` | `--tmpfs /workspace/.vaultore:ro,noexec,nosuid,nodev` | same | Under the full vault mount, hides the CLI's settings and stored permission decisions, so a cell cannot forge a grant for another workflow (#94). Always applied: the host creates `.vaultore/` before the run, so a cell cannot create the config in a vault that has none yet |
 
 On Apple `container` each container is its own micro-VM, which is the isolation boundary for

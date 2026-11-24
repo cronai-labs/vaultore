@@ -53,10 +53,9 @@ only after `vaultore schedules approve <note.md>`**, and only while its
 frontmatter and cells are what was approved; the agent reads the note and
 the approvals again when a run is due, and names every scheduled note it
 does not run. Its approvals are separate from the plugin's and are kept
-outside the vault, in `approvals.json` under `$XDG_CONFIG_HOME/vaultore` or
-`~/.config/vaultore` (`--state-dir <dir>` for another place): on a server
-that syncs the vault, an approval cannot arrive with it
-([permissions spec](../specs/permissions-spec.md) §6.2). It skips a
+outside the vault, so on a server that syncs the vault an approval cannot
+arrive with it ([permissions spec](../specs/permissions-spec.md) §6.2; where
+exactly: [README](../README.md#where-vaultore-keeps-things)). It skips a
 scheduled run while the previous run of the same note is still going. Run
 it under systemd or launchd to keep it alive, with the same user and the
 same `--state-dir` you approved with.

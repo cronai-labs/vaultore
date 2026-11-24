@@ -15,7 +15,7 @@ Build the plugin, load it into a test vault, and run a canonical fixture.
   [Podman](https://podman.io/), [Colima](https://github.com/abiosoft/colima) (macOS), or
   [Apple container](https://github.com/apple/container) (macOS 26+, Apple silicon). On Colima,
   use virtiofs file sharing (`colima start --vm-type vz --mount-type virtiofs`); sshfs can serve
-  stale file contents ([#83](https://github.com/cronai-labs/vaultore/issues/83)).
+  stale file contents ([#124](https://github.com/cronai-labs/vaultore/issues/124)).
 
 Check that the engine answers. VaultOre treats an engine as available only when this exits 0:
 
