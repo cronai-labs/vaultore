@@ -78,7 +78,9 @@ the vault. Outside it, it writes one small lock file per running note, in
 command-line runner never run one note at the same time; the file is removed when the run
 ends. For each scheduled run it writes a small record in `~/.config/vaultore/slots`
 (`%APPDATA%\vaultore\slots`), so that one occurrence of a schedule runs once in either runner,
-kept for 30 days at most (the "Scheduled-run history" setting shortens it). It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
+kept for 30 days at most (the "Scheduled-run history" setting shortens it). The "Late after"
+setting, shared by both runners, is kept in `~/.config/vaultore/settings.json`
+(`%APPDATA%\vaultore\settings.json`). It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
 install locations (macOS: `/usr/local/bin`, `/opt/homebrew/bin`,
 `/Applications/Docker.app/Contents/Resources/bin/docker`; Linux: `/usr/bin`; Windows: the
 Docker Desktop and Podman folders under `C:\Program Files`), and starts it. The engine mounts
