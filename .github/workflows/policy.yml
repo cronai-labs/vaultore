@@ -96,6 +96,15 @@ jobs:
           BODY: ${{ github.event.pull_request.body }}
         run: node scripts/breaking-footer.mjs
 
+      - name: A footer survives GitHub's wrapping
+        # GitHub wraps the description at 72 columns into the squash body; a
+        # wrapped line that looks like a footer cuts the Upgrade-Note or
+        # BREAKING CHANGE short in the release notes (#261).
+        if: github.event_name == 'pull_request'
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/footer-wrap.mjs
+
       - name: Branch was rebased, not merged into
         if: github.event_name == 'pull_request'
         env:
