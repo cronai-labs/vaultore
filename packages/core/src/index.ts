@@ -155,6 +155,15 @@ export {
   readSlotRecord,
   slotRecordDirectory,
 } from "./scheduler/slot-record";
+export {
+  readMachineSettings,
+  writeMachineSettings,
+  machineSettingsPath,
+  isLateAfterMinutes,
+  MIN_LATE_AFTER_MINUTES,
+  MAX_LATE_AFTER_MINUTES,
+} from "./settings/machine-settings";
+export type { MachineSettings, MachineSettingsOptions } from "./settings/machine-settings";
 
 export type {
   ClaimSlotOptions,

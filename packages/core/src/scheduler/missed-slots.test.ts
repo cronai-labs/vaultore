@@ -6,6 +6,7 @@ import {
 	GAP_MARGIN_MS,
 	LATE_AFTER_MS,
 	MissedSlotError,
+	SlotTakenError,
 	catchUpMissedSlot,
 	claimSlot,
 	dismissMissedSlots,
@@ -101,6 +102,17 @@ describe("finding gaps", () => {
 
 		const [next] = await look(at("2026-11-24T15:20:00Z"));
 		expect(next).toEqual({ slot: at("2026-11-24T13:15:00Z"), until: at("2026-11-24T15:15:00Z"), count: 3 });
+	});
+
+	// A late tick claims its in-time slot while it looks for gaps; the claim
+	// landing first must not hide the slots before it.
+	it("records the slots before an in-time claim that landed first", async () => {
+		await ran(at("2026-11-24T10:15:00Z"));
+		await ran(at("2026-11-24T15:15:00Z"));
+
+		const [gap] = await look(at("2026-11-24T15:16:00Z"));
+
+		expect(gap).toEqual({ slot: at("2026-11-24T11:15:00Z"), until: at("2026-11-24T14:15:00Z"), count: 4 });
 	});
 
 	it("records one gap when two runners look at once", async () => {
@@ -212,6 +224,23 @@ describe("a gap", () => {
 });
 
 describe("a claim and a gap", () => {
+	// A runner with a longer late threshold, or an older version, could claim
+	// a slot the other recorded as missed; it would run, and be caught up too.
+	it("are one decision also inside a gap: a slot the gap holds cannot be claimed", async () => {
+		await ran(at("2026-11-24T10:15:00Z"));
+		await look(at("2026-11-24T15:20:00Z"));
+
+		const claim = claimSlot({ vaultRoot, notePath: NOTE, schedule: HOURLY, slot: at("2026-11-24T13:15:00Z"), by: "Obsidian", directory: slots, pruneIntervalMs: 0 });
+		await expect(claim).rejects.toThrow(SlotTakenError);
+		await expect(
+			claimSlot({ vaultRoot, notePath: NOTE, schedule: HOURLY, slot: at("2026-11-24T15:15:00Z"), by: "Obsidian", directory: slots, pruneIntervalMs: 0 })
+		).rejects.toThrow(
+			/The 2026-11-24T15:15:00.000Z run of Notes\/Daily.md is one of 5 missed runs from 2026-11-24T11:15:00.000Z to 2026-11-24T15:15:00.000Z, recorded by process \d+ \(vaultore agent\)/
+		);
+		// After the gap, a slot is claimed as ever.
+		await ran(at("2026-11-24T16:15:00Z"));
+	});
+
 	it("are one decision: a slot claimed in time is not part of a gap found later", async () => {
 		await ran(at("2026-11-24T10:15:00Z"));
 		await ran(at("2026-11-24T11:15:00Z"));

@@ -136,12 +136,12 @@ export interface SlotClaim {
 	finish(outcome: SlotOutcome): Promise<void>;
 }
 
-/** Another runner claimed the slot first; this one must not run it. */
+/** Another runner decided the slot first, claimed or missed; this one must not run it. */
 export class SlotTakenError extends Error {
 	constructor(
 		readonly notePath: string,
 		readonly slot: Date,
-		readonly claim: SlotClaimRecord | undefined,
+		readonly claim: SlotDecisionRecord | undefined,
 		message: string
 	) {
 		super(message);
@@ -228,6 +228,20 @@ export async function claimSlot(options: ClaimSlotOptions): Promise<SlotClaim> {
 		by: options.by,
 		token,
 	};
+
+	// A slot inside a recorded gap is decided already, as missed: a runner whose
+	// late threshold differs, or a version without this check, must not run it
+	// and have it caught up as well (#269).
+	const gap = await gapCovering(noteDir, options.slot);
+	if (gap) {
+		throw new SlotTakenError(
+			options.notePath,
+			options.slot,
+			gap,
+			`The ${options.slot.toISOString()} run of ${options.notePath} is one of ${gap.count} missed runs ` +
+				`from ${gap.slot} to ${gap.until}, recorded by ${describeHolder(gap)}, at ${gap.since}. Nothing was run`
+		);
+	}
 
 	const open = openClaims();
 	// Recorded before the link can make it visible: pruning in this process
@@ -618,7 +632,9 @@ export async function recordMissedSlots(options: RecordMissedOptions): Promise<R
 	// gap capped at MAX_GAP_SLOTS needs another. Bounded, so a record that
 	// keeps changing cannot hold a runner here.
 	for (let attempt = 0; attempt < 5; attempt += 1) {
-		const last = await lastDecidedSlot(noteDir);
+		// Decisions after the bound say nothing about the slots before it: a late
+		// tick claims its in-time slot while this looks, in either order.
+		const last = await lastDecidedSlot(noteDir, until);
 		// A record of another schedule says nothing about this one: after a
 		// change from daily to every minute, the minutes before it were never
 		// scheduled.
@@ -664,14 +680,38 @@ export async function recordMissedSlots(options: RecordMissedOptions): Promise<R
 	return recorded;
 }
 
-/** The note's last decided slot, and its schedule: the latest claim's slot, or the latest gap's last slot. */
-async function lastDecidedSlot(noteDir: string): Promise<{ slot: Date; schedule: string } | undefined> {
+/**
+ * The recorded gap that holds `slot` after its first slot, if any. A gap
+ * starts right after the note's last decided slot, so only the latest
+ * decision before `slot` can hold it: one listing and one read, whatever the
+ * history's length. (A gap's first slot is its file name, which a claim
+ * cannot take anyway.)
+ */
+async function gapCovering(noteDir: string, slot: Date): Promise<SlotMissedRecord | undefined> {
+	let before: { name: string; time: number } | undefined;
+	for (const file of await listDirectory(noteDir)) {
+		if (!file.endsWith(".claim.json")) continue;
+		const name = file.slice(0, -".claim.json".length);
+		const time = slotFromName(name)?.getTime();
+		if (time === undefined || time >= slot.getTime()) continue;
+		if (before === undefined || time > before.time) before = { name, time };
+	}
+	if (before === undefined) return undefined;
+	const decision = await readJson<SlotDecisionRecord>(join(noteDir, `${before.name}.claim.json`));
+	if (decision?.kind !== "missed") return undefined;
+	const until = new Date(decision.until).getTime();
+	return Number.isNaN(until) || until < slot.getTime() ? undefined : decision;
+}
+
+/** The note's last decided slot up to `notAfter`, and its schedule: the latest claim's slot, or the latest gap's last slot. */
+async function lastDecidedSlot(noteDir: string, notAfter: Date): Promise<{ slot: Date; schedule: string } | undefined> {
 	let latest: { name: string; slot: Date } | undefined;
 	for (const file of await listDirectory(noteDir)) {
 		if (!file.endsWith(".claim.json")) continue;
 		const name = file.slice(0, -".claim.json".length);
 		const slot = slotFromName(name);
-		if (slot !== undefined && (latest === undefined || slot.getTime() > latest.slot.getTime())) latest = { name, slot };
+		if (slot === undefined || slot.getTime() > notAfter.getTime()) continue;
+		if (latest === undefined || slot.getTime() > latest.slot.getTime()) latest = { name, slot };
 	}
 	if (latest === undefined) return undefined;
 	const decision = await readJson<SlotDecisionRecord>(join(noteDir, `${latest.name}.claim.json`));

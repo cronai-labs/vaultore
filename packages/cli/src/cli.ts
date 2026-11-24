@@ -13,6 +13,7 @@
  *   vaultore schedules log           what each scheduled run came to
  *   vaultore schedules catch-up      run a note's missed scheduled runs once now
  *   vaultore schedules dismiss       close a note's missed scheduled runs
+ *   vaultore schedules late-after    how late a scheduled run may start, for this machine
  */
 
 import { promises as fs } from "node:fs";
@@ -26,6 +27,8 @@ import {
 	dismissMissedSlots,
 	isLateSlot,
 	lateAfterMs,
+	readMachineSettings,
+	machineSettingsPath,
 	readSlotRecord,
 	recordMissedSlots,
 	WorkflowExecutor,
@@ -47,6 +50,7 @@ import {
 	approveSchedules,
 	formatScheduleList,
 	formatSlotLog,
+	lateAfter,
 	listSchedules,
 	readScheduledNote,
 	revokeSchedules,
@@ -56,7 +60,6 @@ import {
 	configDirFrom,
 	hasExplicitVault,
 	keepDaysFrom,
-	lateAfterFrom,
 	parseArgs,
 	slotFrom,
 	rescanSecondsFrom,
@@ -71,7 +74,7 @@ function usage(): string {
 Usage:
   vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
   vaultore list [--vault <dir>] [--config-dir <name>]
-  vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--late-after <minutes>] [--quiet]
+  vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--quiet]
   vaultore schedules list [--vault <dir>] [--config-dir <name>] [--state-dir <dir>]
   vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
   vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
@@ -79,6 +82,7 @@ Usage:
   vaultore schedules log [<workflow.md>] [--vault <dir>]
   vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--yes] [--quiet]
   vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
+  vaultore schedules late-after [<minutes> | default]
   vaultore --version | --help
 
 Options:
@@ -97,9 +101,6 @@ Options:
   --rescan <seconds>  Agent rescan interval (default: 300)
   --keep-days <n>     Days of scheduled-run history to keep, 0 to 30
                       (default: 30). 0 keeps each run for a day only.
-  --late-after <min>  How late a scheduled run may start and still run, 2 to 60
-                      minutes (default: 2); later, it is a missed run. Set
-                      Obsidian's "Late after" to the same.
   --out <file>        Write manifest to a file instead of stdout
   --quiet             Suppress info/debug output
 
@@ -110,6 +111,10 @@ occurrence of a schedule runs at most once, in the agent or in Obsidian;
 fired (the machine slept, nothing was running) are recorded as missed runs;
 'schedules catch-up' runs the note once for them, 'schedules dismiss' closes
 them. A missed run is named by its first slot, as the log shows it.
+
+An occurrence is missed once it is more than 2 minutes late. 'schedules
+late-after' shows or sets that for this machine, 2 to 60 minutes, in the file
+both runners read (Obsidian's "Late after" is the same setting).
 
 Secrets are read from the environment:
   VAULTORE_OPENAI_APIKEY (or OPENAI_API_KEY)
@@ -238,13 +243,21 @@ const SUPERSEDED = "a later occurrence came due at the same time and ran instead
 async function cmdAgent(args: ParsedArgs): Promise<number> {
 	let rescanSeconds: number;
 	let keepDays: number;
-	let late: number;
 	try {
 		rescanSeconds = rescanSecondsFrom(args.flags);
 		keepDays = keepDaysFrom(args.flags);
-		late = lateAfterMs(lateAfterFrom(args.flags));
 	} catch (err) {
 		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
+		return 2;
+	}
+	// The late threshold is this machine's, shared with Obsidian: a file that
+	// cannot be used stops the agent here (the error names it) rather than
+	// running with a threshold Obsidian may not share.
+	let late: number;
+	try {
+		late = lateAfterMs((await readMachineSettings()).lateAfterMinutes);
+	} catch (err) {
+		process.stderr.write(`error: ${errorMessage(err)}\n`);
 		return 2;
 	}
 
@@ -405,6 +418,23 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	const rescanTimer = setInterval(() => {
 		void rescan();
 	}, rescanSeconds * 1000);
+	// Obsidian's "Late after" writes the same file: follow it within a minute.
+	// A file that turned unusable is reported, and the last good value kept.
+	let lateFileError = "";
+	const lateTimer = setInterval(() => {
+		void readMachineSettings().then(
+			(settings) => {
+				lateFileError = "";
+				late = lateAfterMs(settings.lateAfterMinutes);
+				scheduler.lateAfterMs = late;
+			},
+			(err: unknown) => {
+				const message = errorMessage(err);
+				if (message !== lateFileError) warn(`${message}; keeping late after ${late / 60_000} minutes`);
+				lateFileError = message;
+			}
+		);
+	}, 60 * 1000);
 
 	process.stdout.write(
 		`[vaultore:agent] watching ${vaultRoot} (rescan every ${rescanSeconds}s, Ctrl-C to stop)\n`
@@ -413,6 +443,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	await new Promise<void>((resolveExit) => {
 		const stop = (): void => {
 			clearInterval(rescanTimer);
+			clearInterval(lateTimer);
 			scheduler.stop();
 			process.stdout.write("\n[vaultore:agent] stopped\n");
 			resolveExit();
@@ -523,6 +554,23 @@ async function cmdSchedulesDismiss(args: ParsedArgs): Promise<number> {
 	return 0;
 }
 
+/**
+ * Shows or sets how many minutes late a scheduled run may start, for this
+ * machine: the file both runners read (Obsidian's "Late after"). A running
+ * agent follows a change within a minute.
+ */
+async function cmdSchedulesLateAfter(args: ParsedArgs): Promise<number> {
+	let line: string;
+	try {
+		line = await lateAfter(args.positional[0], machineSettingsPath());
+	} catch (err) {
+		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
+		return 2;
+	}
+	process.stdout.write(line + "\n");
+	return 0;
+}
+
 async function cmdSchedulesApprove(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
 	const paths = notePathsFrom(args, vaultRoot);
@@ -613,6 +661,7 @@ async function main(): Promise<number> {
 				return slot === null ? 2 : cmdRun(args, { slot });
 			}
 			if (sub === "dismiss") return cmdSchedulesDismiss(args);
+			if (sub === "late-after") return cmdSchedulesLateAfter(args);
 			process.stderr.write(`error: unknown schedules subcommand '${sub ?? ""}'\n\n` + usage());
 			return 2;
 		}

@@ -9,6 +9,7 @@ import {
 	approveSchedules,
 	formatScheduleList,
 	formatSlotLog,
+	lateAfter,
 	listSchedules,
 	readScheduledNote,
 	revokeSchedules,
@@ -297,5 +298,30 @@ describe("formatSlotLog", () => {
 			"2026-11-24T11:15:00.000Z  dismissed  Workflows/daily.md [15 * * * *] 5 missed run(s) to 2026-11-24T15:15:00.000Z, found by vaultore agent; dismissed by vaultore",
 			"2026-11-24T11:15:00.000Z  completed  Workflows/daily.md [15 * * * *] 5 missed run(s) to 2026-11-24T15:15:00.000Z, found by vaultore agent; caught up by vaultore run r2",
 		]);
+	});
+});
+
+// One threshold per machine, in the file both runners read (#269).
+describe("lateAfter", () => {
+	let dir: string;
+	let path: string;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "vaultore-late-"));
+		path = join(dir, "vaultore", "settings.json");
+	});
+	afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+	it("shows the default, sets a value, and goes back to the default", async () => {
+		expect(await lateAfter(undefined, path)).toBe("late after 2 minutes (the default)");
+		expect(await lateAfter("15", path)).toBe(`late after 15 minutes (set in ${path})`);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ lateAfterMinutes: 15 });
+		expect(await lateAfter(undefined, path)).toBe(`late after 15 minutes (set in ${path})`);
+		expect(await lateAfter("default", path)).toBe("late after 2 minutes (the default)");
+	});
+
+	it.each(["1", "61", "2.5", "ten", ""])("refuses %j", async (value) => {
+		await expect(lateAfter(value, path)).rejects.toThrow(
+			`late after must be a whole number of minutes from 2 to 60, or default, got '${value}'`
+		);
 	});
 });

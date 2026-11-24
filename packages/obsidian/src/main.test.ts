@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,14 @@ import { join } from "node:path";
 // The run lock is the real one, in a directory of the test's own: a test never
 // touches the user's ~/.config/vaultore/locks.
 const runLocks = vi.hoisted(() => ({ directory: "", slots: "" }));
+// This machine's shared settings likewise: a file of the test's own, never
+// ~/.config/vaultore/settings.json; removed before each test.
+const machineSettings = vi.hoisted(() => {
+  const { mkdtempSync } = require("node:fs") as typeof import("node:fs");
+  const { tmpdir } = require("node:os") as typeof import("node:os");
+  const { join } = require("node:path") as typeof import("node:path");
+  return { path: join(mkdtempSync(join(tmpdir(), "vaultore-plugin-settings-")), "settings.json") };
+});
 vi.mock("@vaultore/core", async () => {
   const actual = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
   return {
@@ -29,6 +37,9 @@ vi.mock("@vaultore/core", async () => {
     MissedSlotError: actual.MissedSlotError,
     isLateSlot: actual.isLateSlot,
     lateAfterMs: actual.lateAfterMs,
+    readMachineSettings: () => actual.readMachineSettings({ path: machineSettings.path }),
+    writeMachineSettings: (changes: import("@vaultore/core").MachineSettings) =>
+      actual.writeMachineSettings(changes, { path: machineSettings.path }),
     recordMissedSlots: (options: import("@vaultore/core").RecordMissedOptions) =>
       actual.recordMissedSlots({ ...options, directory: runLocks.slots }),
     readSlotRecord: (options: import("@vaultore/core").ReadSlotRecordOptions) =>
@@ -65,6 +76,7 @@ describe("VaultOrePlugin", () => {
   let plugin: InstanceType<typeof VaultOrePlugin>;
 
   beforeEach(async () => {
+    rmSync(machineSettings.path, { force: true });
     vi.useFakeTimers();
     // Core's timers come from window; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
@@ -232,23 +244,41 @@ describe("VaultOrePlugin", () => {
       expect(plugin.saveData).toHaveBeenCalled();
     });
 
-    // How late a scheduled run may start (#269): 2 to 60 minutes, blank 2,
-    // and the scheduler follows the setting.
-    it("stores Late after from 2 to 60 minutes, and the scheduler uses it", async () => {
-      const late = at(row("Late after").texts);
+    // How late a scheduled run may start (#269): 2 to 60 minutes, blank 2.
+    // This machine's, in the file vaultore agent reads, not in data.json.
+    it("stores Late after from 2 to 60 minutes in the machine's file, and the scheduler uses it", async () => {
+      const lateRow = row("Late after");
+      const late = at(lateRow.texts);
       const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
       expect(scheduler.lateAfterMs).toBe(2 * 60_000);
 
       await late.changeHandler!("15");
-      expect(plugin.settings.lateAfterMinutes).toBe(15);
+      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({ lateAfterMinutes: 15 });
       expect(scheduler.lateAfterMs).toBe(15 * 60_000);
+      expect((plugin.settings as unknown as Record<string, unknown>)["lateAfterMinutes"]).toBeUndefined();
 
       await late.changeHandler!("1");
+      expect(lateRow.error).toMatch(/from 2 to 60/);
       await late.changeHandler!("61");
-      expect(plugin.settings.lateAfterMinutes).toBe(15);
+      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({ lateAfterMinutes: 15 });
 
       await late.changeHandler!("");
+      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({});
       expect(scheduler.lateAfterMs).toBe(2 * 60_000);
+    });
+
+    // vaultore schedules late-after changed it: Obsidian follows within a minute.
+    it("follows a change of the machine's file, and keeps the last good value when it turns unusable", async () => {
+      const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+      writeFileSync(machineSettings.path, JSON.stringify({ lateAfterMinutes: 30 }));
+      await plugin.loadMachineSettings();
+      expect(scheduler.lateAfterMs).toBe(30 * 60_000);
+
+      writeFileSync(machineSettings.path, "{broken");
+      await plugin.loadMachineSettings();
+      await plugin.loadMachineSettings();
+      expect(scheduler.lateAfterMs).toBe(30 * 60_000);
+      expect(Notice.shown.filter((m) => m.includes("is not valid JSON"))).toHaveLength(1);
     });
 
     // 0 switches the history off (each run kept for a day only), blank keeps
@@ -878,6 +908,7 @@ describe("scheduled workflows", () => {
   }
 
   beforeEach(async () => {
+    rmSync(machineSettings.path, { force: true });
     vi.useFakeTimers();
     // The plugin debounces with window.setTimeout; tests run without a DOM.
     vi.stubGlobal("window", globalThis);

@@ -7,6 +7,7 @@
 import { CronExpressionParser } from "cron-parser";
 import { ScheduledWorkflow, TimerHandle, Timers } from "../types";
 
+import { MAX_LATE_AFTER_MINUTES, MIN_LATE_AFTER_MINUTES } from "../settings/machine-settings";
 export { classifyScheduleApproval } from "./approvals";
 export type { ScheduleApproval, ScheduleApprovalState } from "./approvals";
 
@@ -24,12 +25,12 @@ export interface SchedulerOptions {
  * missed run (#269). The scheduler never lets a slot younger than this pass
  * unfired, so every occurrence is either fired in time or older than this,
  * and then part of a gap. A runner's setting may set it from MIN to MAX
- * (`lateAfterMs`); both runners should use the same.
+ * (`lateAfterMs`); both runners read it from this machine's settings (`readMachineSettings`).
  */
 export const LATE_AFTER_MS = 2 * 60 * 1000;
 /** Two ticks of the 60-second scheduler: any less and a tick on time could find its slot late. */
-export const MIN_LATE_AFTER_MS = 2 * 60 * 1000;
-export const MAX_LATE_AFTER_MS = 60 * 60 * 1000;
+export const MIN_LATE_AFTER_MS = MIN_LATE_AFTER_MINUTES * 60 * 1000;
+export const MAX_LATE_AFTER_MS = MAX_LATE_AFTER_MINUTES * 60 * 1000;
 
 /** `minutes` as the late threshold in ms, kept within its bounds; undefined is the default. */
 export function lateAfterMs(minutes?: number): number {

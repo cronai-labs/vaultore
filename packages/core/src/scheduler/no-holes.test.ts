@@ -192,6 +192,26 @@ describe("two runners", () => {
 });
 
 describe("the late threshold, a runner's setting", () => {
+	// The setting is one per machine; still, runners that disagree (a file
+	// changed between their reads, an older version) run a slot at most once.
+	it("set differently in two runners, still runs no slot twice", async () => {
+		const hourly = "15 * * * *";
+		vi.setSystemTime(at("2026-11-24T10:15:10Z"));
+		const strict = host("Obsidian", lateAfterMs(2));
+		const lenient = host("vaultore agent", lateAfterMs(10));
+		await strict.arm(hourly);
+		await lenient.arm(hourly);
+
+		// 15:15 is five minutes old: missed for one, in time for the other.
+		vi.setSystemTime(at("2026-11-24T15:20:00Z"));
+		await strict.tick();
+		await lenient.tick();
+
+		const { claimed, gaps } = await decided();
+		expect(claimed).toEqual(["2026-11-24T10:15:00.000Z"]);
+		expect(gaps).toEqual([["2026-11-24T11:15:00.000Z", "2026-11-24T15:15:00.000Z", 5]]);
+	});
+
 	it("is 2 to 60 minutes; 2 by default", () => {
 		expect(lateAfterMs()).toBe(2 * 60_000);
 		expect(lateAfterMs(10)).toBe(10 * 60_000);

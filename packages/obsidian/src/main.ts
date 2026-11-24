@@ -27,6 +27,8 @@ import {
   dismissMissedSlots,
   isLateSlot,
   lateAfterMs,
+  readMachineSettings,
+  writeMachineSettings,
   readSlotRecord,
   recordMissedSlots,
   computeNextRun,
@@ -69,10 +71,6 @@ interface VaultOreSettings {
   // Days of scheduled-run history kept outside the vault, 0 to 30; blank is
   // 30. 0 keeps each run for a day only, which stops a second runner (#255).
   scheduleHistoryDays?: number;
-  // How many minutes late a scheduled run may start and still run, 2 to 60;
-  // blank is 2. Later, it is a missed run (#269). The agent's --late-after
-  // should say the same.
-  lateAfterMinutes?: number;
 }
 
 // A workflow note with a schedule, as the settings tab lists it.
@@ -555,6 +553,7 @@ export default class VaultOrePlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    await this.loadMachineSettings();
     this.adapter = new ObsidianAdapter(this);
 
     // The run commands are offered only on workflow notes, so the palette
@@ -604,7 +603,12 @@ export default class VaultOrePlugin extends Plugin {
     this.addSettingTab(this.settingsTab);
 
     this.scheduler.start();
-    this.timers.setInterval(() => void this.recheckMissedRuns(), 60 * 1000);
+    // Each minute: missed runs the agent resolved, and a late threshold
+    // `vaultore schedules late-after` changed.
+    this.timers.setInterval(() => {
+      void this.recheckMissedRuns();
+      void this.loadMachineSettings();
+    }, 60 * 1000);
 
     // Defer the initial vault scan until the workspace layout (and metadata
     // cache) is ready, so plugin load stays fast on large vaults.
@@ -661,12 +665,42 @@ export default class VaultOrePlugin extends Plugin {
       delete (settings as Record<string, unknown>)[key];
     }
     this.settings = settings;
-    this.scheduler.lateAfterMs = lateAfterMs(this.settings.lateAfterMinutes);
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
-    this.scheduler.lateAfterMs = lateAfterMs(this.settings.lateAfterMinutes);
+  }
+
+  // How late a scheduled run may start, in minutes; undefined is the default.
+  // This machine's, shared with vaultore agent: not in data.json (#269).
+  lateAfterMinutes: number | undefined;
+  private machineSettingsError = "";
+
+  /**
+   * Reads this machine's shared settings (the late threshold). A file that
+   * cannot be used is told of once, and the last good value is kept.
+   */
+  async loadMachineSettings(): Promise<void> {
+    try {
+      const settings = await readMachineSettings();
+      this.machineSettingsError = "";
+      this.lateAfterMinutes = settings.lateAfterMinutes;
+      this.scheduler.lateAfterMs = lateAfterMs(this.lateAfterMinutes);
+    } catch (err) {
+      const message = errorMessage(err);
+      if (message !== this.machineSettingsError) {
+        this.adapter.log("warn", message);
+        new Notice(`VaultOre: ${message}. Scheduled runs keep a late threshold of ${this.scheduler.lateAfterMs / 60_000} minutes.`);
+      }
+      this.machineSettingsError = message;
+    }
+  }
+
+  /** Sets the late threshold for this machine; undefined goes back to the default. */
+  async setLateAfterMinutes(minutes: number | undefined): Promise<void> {
+    const settings = await writeMachineSettings({ lateAfterMinutes: minutes });
+    this.lateAfterMinutes = settings.lateAfterMinutes;
+    this.scheduler.lateAfterMs = lateAfterMs(this.lateAfterMinutes);
   }
 
   // Command checks run synchronously on every palette open, so they read the
@@ -1090,6 +1124,13 @@ function isNumericSetting(key: string): key is NumericSetting {
   return Object.prototype.hasOwnProperty.call(NUMERIC_SETTINGS, key);
 }
 
+// The numeric settings kept in data.json; Late after is this machine's (#269).
+type StoredNumericSetting = Exclude<NumericSetting, "lateAfterMinutes">;
+
+function isStoredNumericSetting(key: string): key is StoredNumericSetting {
+  return isNumericSetting(key) && key !== "lateAfterMinutes";
+}
+
 /** The number a numeric field holds: undefined when blank, null when invalid. */
 function parseNumericSetting(key: NumericSetting, raw: string): number | undefined | null {
   const trimmed = raw.trim();
@@ -1200,7 +1241,11 @@ class VaultOreSettingsTab extends PluginSettingTab {
   }
 
   getControlValue(key: string): unknown {
-    if (isNumericSetting(key)) {
+    if (key === "lateAfterMinutes") {
+      const value = this.plugin.lateAfterMinutes;
+      return value === undefined ? "" : String(value);
+    }
+    if (isStoredNumericSetting(key)) {
       const value = this.plugin.settings[key];
       return value === undefined ? "" : String(value);
     }
@@ -1239,8 +1284,16 @@ class VaultOreSettingsTab extends PluginSettingTab {
         settings.outputRoot = trimmed || "_vaultore";
         break;
       }
+      case "lateAfterMinutes":
+        try {
+          // validate() has refused an invalid value before it gets here.
+          await this.plugin.setLateAfterMinutes(parseNumericSetting(key, String(value)) ?? undefined);
+        } catch (err) {
+          new Notice(`VaultOre: could not save Late after: ${errorMessage(err)}`);
+        }
+        return;
       default:
-        if (!isNumericSetting(key)) {
+        if (!isStoredNumericSetting(key)) {
           throw new Error(`VaultOre has no setting "${key}"`);
         }
         // validate() has refused an invalid value before it gets here.
@@ -1344,7 +1397,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
         "lateAfterMinutes",
         "Late after",
         "Minutes a scheduled run may start late and still run, from 2 to 60; later, it is listed as missed. " +
-          "Set vaultore agent's --late-after to the same. Blank is 2.",
+          "For this computer, shared with vaultore agent (vaultore schedules late-after). Blank is 2.",
         "2"
       ),
     ];
