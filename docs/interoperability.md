@@ -13,14 +13,8 @@ tools.
 `@vaultore/cli` provides a standalone binary with a plain-filesystem
 `PlatformAdapter` — any directory of markdown is a vault.
 
-It is not on npm yet, so build it from a checkout and invoke the built entry
-point (or link it onto your `PATH` yourself):
-
-```bash
-git clone https://github.com/cronai-labs/vaultore.git
-cd vaultore && bun install && bun run build
-alias vaultore="node $PWD/packages/cli/dist/cli.js"
-```
+It is not on npm yet; build it from a checkout as the
+[README](../README.md#command-line-interface) shows.
 
 ```bash
 vaultore run Workflows/digest.md --vault ~/notes     # headless run

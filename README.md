@@ -269,7 +269,13 @@ are used for the provider request only, not passed to containers.
 ## Command-Line Interface
 
 `@vaultore/cli` runs the same workflows without Obsidian, on any folder of Markdown. It is not
-on npm yet; build it from source (`bun run build`) and run `node packages/cli/dist/cli.js`.
+on npm yet ([#112](https://github.com/cronai-labs/vaultore/issues/112)); build it from a checkout:
+
+```bash
+git clone https://github.com/cronai-labs/vaultore.git
+cd vaultore && bun install && bun run build
+alias vaultore="node $PWD/packages/cli/dist/cli.js"
+```
 
 ```
 vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
