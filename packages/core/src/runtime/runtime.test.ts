@@ -361,7 +361,7 @@ describe("execContainer timeout", () => {
 
       expect(result.timedOut).toBe(true);
       const [run, kill] = calls();
-      const name = /--name (vaultore-[0-9a-f]+)/.exec(run)?.[1];
+      const name = run?.match(/--name (vaultore-[0-9a-f]+)/)?.[1];
       expect(name).toBeDefined();
       expect(kill).toBe(`kill ${name}`);
     }

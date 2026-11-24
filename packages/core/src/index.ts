@@ -91,6 +91,7 @@ export {
   parser,
   serializer,
   interpolator,
+  stripTrailing,
 } from "./parser";
 
 // =============================================================================

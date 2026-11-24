@@ -72,7 +72,7 @@ describe("VaultOrePlugin", () => {
   // Renders the settings tab the plugin registered and returns what it showed.
   function renderSettings(): RecordedSetting[] {
     const calls = (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls;
-    const tab = calls[0][0];
+    const tab = at(at(calls));
     tab.display();
     return tab.containerEl.settings;
   }
@@ -163,7 +163,7 @@ describe("VaultOrePlugin", () => {
   // the tab declares them (#137).
   describe("declarative settings", () => {
     const settingsTab = () =>
-      (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      at(at((plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls));
     const row = (name: string) => {
       const found = renderSettings().find((setting) => setting.name === name);
       expect(found, `setting "${name}"`).toBeDefined();
@@ -202,48 +202,48 @@ describe("VaultOrePlugin", () => {
     });
 
     it("shows a blank numeric field as the provider default, with its placeholder", () => {
-      expect(row("Temperature").texts[0].value).toBe("");
-      expect(row("Max tokens").texts[0].value).toBe("800");
-      expect(row("AI request timeout").texts[0].placeholder).toBe("120");
+      expect(at(row("Temperature").texts).value).toBe("");
+      expect(at(row("Max tokens").texts).value).toBe("800");
+      expect(at(row("AI request timeout").texts).placeholder).toBe("120");
     });
 
     it("stores a valid number, and blank as unset", async () => {
-      await row("Temperature").texts[0].changeHandler!("0.7");
+      await at(row("Temperature").texts).changeHandler!("0.7");
       expect(plugin.settings.aiTemperature).toBe(0.7);
 
-      await row("Temperature").texts[0].changeHandler!(" ");
+      await at(row("Temperature").texts).changeHandler!(" ");
       expect(plugin.settings.aiTemperature).toBeUndefined();
       expect(plugin.saveData).toHaveBeenCalled();
     });
 
     it("refuses a number out of range with a message and keeps the old value", async () => {
       const temperature = row("Temperature");
-      await temperature.texts[0].changeHandler!("3");
+      await at(temperature.texts).changeHandler!("3");
 
       expect(temperature.error).toMatch(/0 to 2/);
       expect(plugin.settings.aiTemperature).toBeUndefined();
 
       const tokens = row("Max tokens");
-      await tokens.texts[0].changeHandler!("lots");
+      await at(tokens.texts).changeHandler!("lots");
       expect(tokens.error).toMatch(/above 0/);
       expect(plugin.settings.aiMaxTokens).toBe(800);
     });
 
     it("falls back to the provider's default model when the field is cleared", async () => {
-      await row("Default model").texts[0].changeHandler!("  ");
+      await at(row("Default model").texts).changeHandler!("  ");
       expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS[plugin.settings.defaultProvider]);
     });
 
     it("stores the output folder without leading or trailing slashes", async () => {
-      await row("Output folder").texts[0].changeHandler!(" /runs/out/ ");
+      await at(row("Output folder").texts).changeHandler!(" /runs/out/ ");
       expect(plugin.settings.outputRoot).toBe("runs/out");
 
-      await row("Output folder").texts[0].changeHandler!("/");
+      await at(row("Output folder").texts).changeHandler!("/");
       expect(plugin.settings.outputRoot).toBe("_vaultore");
     });
 
     it("stores the engine chosen in the dropdown", async () => {
-      const engine = row("Default runtime engine").dropdowns[0];
+      const engine = at(row("Default runtime engine").dropdowns);
       expect(engine.options).toEqual(["docker", "podman", "colima", "apple"]);
 
       await engine.changeHandler!("colima");
@@ -255,20 +255,20 @@ describe("VaultOrePlugin", () => {
     it("switches the default model with the provider when it was the old default", async () => {
       expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS.openai);
 
-      await row("Default provider").dropdowns[0].changeHandler!("anthropic");
+      await at(row("Default provider").dropdowns).changeHandler!("anthropic");
 
       expect(plugin.settings.defaultProvider).toBe("anthropic");
       expect(plugin.settings.defaultModel).toBe(DEFAULT_MODELS.anthropic);
-      expect(row("Default model").texts[0].value).toBe(DEFAULT_MODELS.anthropic);
+      expect(at(row("Default model").texts).value).toBe(DEFAULT_MODELS.anthropic);
       expect(plugin.saveData).toHaveBeenLastCalledWith(
         expect.objectContaining({ defaultModel: DEFAULT_MODELS.anthropic })
       );
     });
 
     it("keeps a model the user chose when the provider changes", async () => {
-      await row("Default model").texts[0].changeHandler!("gpt-5");
+      await at(row("Default model").texts).changeHandler!("gpt-5");
 
-      await row("Default provider").dropdowns[0].changeHandler!("anthropic");
+      await at(row("Default provider").dropdowns).changeHandler!("anthropic");
 
       expect(plugin.settings.defaultModel).toBe("gpt-5");
     });
@@ -336,7 +336,7 @@ describe("VaultOrePlugin", () => {
       plugin.settings.openaiSecretName = "shared-openai";
       const setting = secretSetting("OpenAI API key");
 
-      await setting.buttons[0].clickHandler!();
+      await at(setting.buttons).clickHandler!();
 
       expect(plugin.settings.openaiSecretName).toBe("");
     });
@@ -615,7 +615,7 @@ describe("scheduled workflows", () => {
 
   function renderSettings(): RecordedSetting[] {
     const calls = (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls;
-    const tab = calls[0][0];
+    const tab = at(at(calls));
     tab.display();
     return tab.containerEl.settings;
   }
@@ -627,7 +627,7 @@ describe("scheduled workflows", () => {
   }
 
   async function toggle(name: string, value: boolean) {
-    await row(name).toggles[0].changeHandler!(value);
+    await at(row(name).toggles).changeHandler!(value);
   }
 
   beforeEach(async () => {
@@ -674,12 +674,12 @@ describe("scheduled workflows", () => {
 
     expect(settings.find((s) => s.heading && s.name === "Scheduled workflows")).toBeDefined();
     const master = row("Run scheduled workflows");
-    expect(master.toggles[0].value).toBe(false);
+    expect(at(master.toggles).value).toBe(false);
 
     const daily = row("Workflows/daily.md");
     expect(daily.desc).toContain("0 18 * * *");
     expect(daily.desc).toMatch(/not approved/i);
-    expect(daily.toggles[0].value).toBe(false);
+    expect(at(daily.toggles).value).toBe(false);
     expect(settings.map((s) => s.name)).not.toContain("Workflows/manual.md");
     expect(settings.map((s) => s.name)).not.toContain("Notes/plain.md");
   });
@@ -692,10 +692,10 @@ describe("scheduled workflows", () => {
     useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
     const daily = row("Workflows/daily.md");
 
-    await daily.toggles[0].changeHandler!(true);
+    await at(daily.toggles).changeHandler!(true);
     expect(daily.desc).toMatch(/Approved; runs once "Run scheduled workflows" is on/);
 
-    await daily.toggles[0].changeHandler!(false);
+    await at(daily.toggles).changeHandler!(false);
     expect(daily.desc).toMatch(/Not approved/);
   });
 
@@ -735,12 +735,12 @@ describe("scheduled workflows", () => {
     await toggle("Run scheduled workflows", true);
     await toggle("Workflows/daily.md", true);
 
-    notes["Workflows/daily.md"].schedule = "* * * * *";
+    entry(notes, "Workflows/daily.md").schedule = "* * * * *";
     refresh();
 
     expect(armed()).toEqual([]);
     const daily = row("Workflows/daily.md");
-    expect(daily.toggles[0].value).toBe(false);
+    expect(at(daily.toggles).value).toBe(false);
     expect(daily.desc).toMatch(/changed from "0 18 \* \* \*" to "\* \* \* \* \*"/);
   });
 
@@ -753,7 +753,7 @@ describe("scheduled workflows", () => {
     refresh();
 
     expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
-    expect(row("Inbox/from-sync.md").toggles[0].value).toBe(false);
+    expect(at(row("Inbox/from-sync.md").toggles).value).toBe(false);
   });
 
   it("keeps the timers of unchanged notes when the vault changes", async () => {
@@ -786,7 +786,7 @@ describe("scheduled workflows", () => {
     await toggle("Workflows/daily.md", true);
     const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
 
-    scheduler().list()[0].nextRun = new Date(Date.now() - 1000);
+    at(scheduler().list()).nextRun = new Date(Date.now() - 1000);
     scheduler().tick();
 
     expect(run).toHaveBeenCalledWith("Workflows/daily.md");
@@ -812,8 +812,8 @@ describe("scheduled workflows", () => {
     await toggle("Workflows/daily.md", true);
     const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
 
-    notes["Workflows/daily.md"].schedule = "* * * * *";
-    scheduler().list()[0].nextRun = new Date(Date.now() - 1000);
+    entry(notes, "Workflows/daily.md").schedule = "* * * * *";
+    at(scheduler().list()).nextRun = new Date(Date.now() - 1000);
     scheduler().tick();
 
     expect(run).not.toHaveBeenCalled();
@@ -834,7 +834,7 @@ describe("scheduled workflows", () => {
     expect(Notice.shown.filter((m) => m.includes("Workflows/typo.md"))).toHaveLength(1);
     const typo = row("Workflows/typo.md");
     expect(typo.desc).toMatch(/invalid/i);
-    expect(typo.toggles[0].disabled).toBe(true);
+    expect(at(typo.toggles).disabled).toBe(true);
     warn.mockRestore();
   });
 
@@ -935,11 +935,28 @@ describe("versions.json", () => {
   });
 });
 
+/** The element at `index` of `items`, failing the test when there is none. */
+function at<T>(items: readonly T[], index = 0): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`expected an element at index ${index}, found ${items.length}`);
+  return item;
+}
+
+/** The entry `key` of `record`, failing the test when there is none. */
+function entry<T>(record: Record<string, T>, key: string): T {
+  const value = record[key];
+  if (value === undefined) throw new Error(`expected an entry ${key}`);
+  return value;
+}
+
 /** Negative, zero or positive as semver triple `a` is below, equal to or above `b`. */
 function compareVersions(a: string, b: string): number {
-  const [x, y] = [a, b].map((v) => v.split(".").map(Number));
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
   for (let i = 0; i < 3; i++) {
-    if (x[i] !== y[i]) return x[i] - y[i];
+    // A missing part counts as 0: 1.13 is 1.13.0.
+    const diff = (x[i] ?? 0) - (y[i] ?? 0);
+    if (diff !== 0) return diff;
   }
   return 0;
 }

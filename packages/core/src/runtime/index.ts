@@ -49,18 +49,21 @@ export async function detectRuntimes(
 
   // Probed in parallel so a slow engine does not delay the others; results are
   // collected in the fixed order above, which decides `preferred`.
-  const results = await Promise.allSettled(
-    engines.map((engine) => detectEngine(timers, engine, timeoutMs))
+  const results = await Promise.all(
+    engines.map((engine) =>
+      detectEngine(timers, engine, timeoutMs).then(
+        () => ({ engine, ok: true as const }),
+        (reason: unknown) => ({ engine, ok: false as const, reason })
+      )
+    )
   );
-  results.forEach((result, index) => {
-    const engine = engines[index];
-    if (result.status === "fulfilled") {
-      available.push(engine);
+  for (const result of results) {
+    if (result.ok) {
+      available.push(result.engine);
     } else {
-      const err: unknown = result.reason;
-      errors.set(engine, errorMessage(err));
+      errors.set(result.engine, errorMessage(result.reason));
     }
-  });
+  }
 
   return {
     available,
