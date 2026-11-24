@@ -57,17 +57,17 @@ A gap has its own states, on the same files:
 
 ### Every occurrence is decided
 
-Each occurrence of an armed note's schedule ends up either claimed (in time) or in a gap (missed); none falls between the two. Three rules make that so:
+Each occurrence of an armed note's schedule ends up either claimed (in time) or in a gap (missed); none falls between the two. These rules make that so:
 
-- **In time is two minutes, by default.** It is one setting per machine, from 2 to 60 minutes (owner, 2026-11-24), in `settings.json` beside the record (below), which both runners read: the plugin's "Late after" and `vaultore schedules late-after` change it, and each runner follows a change within a minute. Less than two would let a tick on time find its slot late. It is not a setting of each runner, as the history's length is: two runners that disagreed would find a slot in time for one and missed for the other. The scheduler never lets an occurrence younger than the setting pass unfired: a note armed at 09:01 fires its 09:00 occurrence at once (the host ticks right after arming), and a tick fires every occurrence that is due, not only the next one. A tick that fires a slot more than two minutes old does not run it: the slot is missed. A machine that wakes from sleep therefore runs no slot it held while asleep, but does run one of the last two minutes.
-- **A gap covers what is older.** A runner looks for a gap when it arms a note (Obsidian or the agent starts, a note is approved) and when a tick comes late. It covers the slots after the note's last decided slot (a claim's slot, or a gap's `until`) that are more than two minutes old, never further back than the history kept. Between the two rules nothing is left; a slot exactly at the boundary is the tick's.
+- **In time is two minutes, by default.** It is one setting per machine, from 2 to 60 minutes (owner, 2026-11-24), in `settings.json` beside the record (below), which both runners read: the plugin's "Late after" and `vaultore schedules late-after` change it, and each runner follows a change within a minute. Less than two would let a tick on time find its slot late. It is not a setting of each runner, as the history's length is: two runners that disagreed would find a slot in time for one and missed for the other. The scheduler never lets an occurrence younger than the setting pass unfired: a note armed at 09:01 fires its 09:00 occurrence at once (the host ticks right after arming), and a tick fires every occurrence that is due, not only the next one. A tick that fires a slot older than the setting does not run it: the slot is missed. A machine that wakes from sleep therefore runs no slot it held while asleep, but does run one younger than the setting.
+- **A gap covers what is older.** A runner looks for a gap when it arms a note (Obsidian or the agent starts, a note is approved) and when a tick comes late. It covers the slots after the note's last decided slot (a claim's slot, or a gap's `until`) that are older than the late setting, never further back than the history kept. Between the two rules nothing is left; a slot exactly at the boundary is the tick's.
 - **Of occurrences due at once,** after an arming or a late tick, only the latest runs; the others are claimed and recorded as `skipped` ("a later occurrence came due at the same time and ran instead"). Found in the app: arming a minute schedule fired two at once, and the older one ran while the newer was skipped as "still running".
 - **A slot fired while its note still runs** is claimed and recorded as `skipped` (the agent: "the previous run is still in progress"; the plugin: "the note was still running"), not dropped before its claim.
 
 What a gap looks back to:
 
 - **The note's last decided slot of the same schedule.** A record of another schedule says nothing: after a change from daily to every minute, the minutes before were never scheduled.
-- **Otherwise, when the runner armed the note** (less the two minutes it still fires): a note scheduled for the first time has nothing backfilled, but a runner that armed it and then slept records what it slept through.
+- **Otherwise, when the runner armed the note** (less the late setting, as it still fires what is younger): a note scheduled for the first time has nothing backfilled, but a runner that armed it and then slept records what it slept through.
 
 And:
 
@@ -108,7 +108,7 @@ Pruning removes a slot's files once the slot is older than the shorter of 30 day
 4. Only the claimer writes the outcome, once.
 5. Pruning never removes a slot less than a day old.
 6. A gap is resolved once, and a catch-up runs the note once for the whole gap.
-7. Every occurrence of an armed note is claimed or part of a gap: the scheduler fires each one younger than two minutes, and a gap covers what is older.
+7. Every occurrence of an armed note is claimed or part of a gap: the scheduler fires each one younger than the late setting, and a gap covers what is older.
 8. The record is outside the vault: sync does not carry it, and a cell cannot read or write it.
 
 ## Surfaces

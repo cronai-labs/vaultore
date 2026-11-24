@@ -151,6 +151,8 @@ top of it.
 | Default runtime engine | Docker | A workflow's `runtime.engine` overrides it |
 | Output folder | `_vaultore` | Where run outputs are written |
 | OpenAI API key, Anthropic API key | none | The name of a secret in Obsidian's secret storage |
+| Scheduled-run history | 30 days | How long what each scheduled run came to is kept, 0 to 30 days; 0 keeps each for a day only |
+| Late after | 2 minutes | How late a scheduled run may start and still run, 2 to 60 minutes; later, it is listed under "Missed runs". One value for the computer, shared with `vaultore agent`, not stored in the vault |
 | Run scheduled workflows | off | See [Scheduling](#scheduling) |
 
 ### Scheduling
