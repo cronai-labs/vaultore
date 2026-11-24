@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { describeHolder, holderGoneBecause } from "../lock";
 import type { LockHolder, LockOptions } from "../lock";
 import { noteKey, userStateDirectory } from "../lock/run-lock";
+import { LATE_AFTER_MS } from "./index";
 
 /** History is kept at most this long, whatever a runner's setting says. */
 export const MAX_KEEP_DAYS = 30;
@@ -35,17 +36,13 @@ export const MIN_KEEP_MS = 24 * 60 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export { LATE_AFTER_MS };
 /**
- * A tick that fires a slot later than this does not run it: the slot belongs
- * to a gap (#269). Two ticks of the 60-second scheduler.
+ * A gap covers only slots older than this: those no runner may claim any
+ * more, as a tick that reaches them is late. The scheduler fires every
+ * younger one (`LATE_AFTER_MS`), so between the two nothing is left undecided.
  */
-export const LATE_AFTER_MS = 2 * 60 * 1000;
-/**
- * A gap covers only slots older than this, so it never takes a slot that a
- * runner may still claim in time; the 30 seconds beyond LATE_AFTER_MS are
- * for writing that claim.
- */
-export const GAP_MARGIN_MS = LATE_AFTER_MS + 30 * 1000;
+export const GAP_MARGIN_MS = LATE_AFTER_MS;
 /** The most slots one gap records; a longer run of missed slots becomes several gaps. */
 const MAX_GAP_SLOTS = 50_000;
 /** How often a runner prunes the record, at most, when it claims. */
@@ -588,6 +585,13 @@ export interface RecordMissedOptions extends Pick<LockOptions, "host"> {
 	by: string;
 	/** Days of history to keep, 0 to 30; gaps are not looked for further back. Default 30. */
 	keepDays?: number;
+	/**
+	 * When this runner armed the note with this schedule. For a note whose
+	 * record has no slot of this schedule yet, gaps are looked for after it
+	 * (less two minutes, which the scheduler still fires); without it, such a
+	 * note has none, since nothing is backfilled.
+	 */
+	armedAt?: Date;
 	directory?: string;
 	now?: Date;
 }
@@ -602,7 +606,8 @@ export async function recordMissedSlots(options: RecordMissedOptions): Promise<R
 	const directory = options.directory ?? slotRecordDirectory();
 	const noteDir = join(directory, await noteKey(options.vaultRoot, options.notePath));
 	const now = options.now ?? new Date();
-	const until = new Date(now.getTime() - GAP_MARGIN_MS);
+	// Strictly older than the margin: a slot exactly that old is still a tick's.
+	const until = new Date(now.getTime() - GAP_MARGIN_MS - 1);
 	const earliest = new Date(now.getTime() - keepMilliseconds(options.keepDays));
 	const recorded: RecordedGap[] = [];
 
@@ -611,13 +616,24 @@ export async function recordMissedSlots(options: RecordMissedOptions): Promise<R
 	// keeps changing cannot hold a runner here.
 	for (let attempt = 0; attempt < 5; attempt += 1) {
 		const last = await lastDecidedSlot(noteDir);
-		if (last === undefined) return recorded;
-		const after = last.getTime() > earliest.getTime() ? last : earliest;
+		// A record of another schedule says nothing about this one: after a
+		// change from daily to every minute, the minutes before it were never
+		// scheduled.
+		const since =
+			last !== undefined && last.schedule === options.schedule
+				? last.slot
+				: options.armedAt !== undefined
+					? new Date(options.armedAt.getTime() - LATE_AFTER_MS)
+					: undefined;
+		if (since === undefined) return recorded;
+		const after = since.getTime() > earliest.getTime() ? since : earliest;
 		const slots = occurrencesBetween(options.schedule, after, until);
 		const first = slots[0];
 		const lastMissed = slots.at(-1);
 		if (first === undefined || lastMissed === undefined) return recorded;
 
+		// A note with no record yet has no directory either.
+		await fs.mkdir(noteDir, { recursive: true, mode: 0o700 });
 		const token = `${process.pid}.${randomBytes(6).toString("hex")}`;
 		const record: SlotMissedRecord = {
 			version: RECORD_VERSION,
@@ -645,8 +661,8 @@ export async function recordMissedSlots(options: RecordMissedOptions): Promise<R
 	return recorded;
 }
 
-/** The note's last decided slot: the latest claim's slot, or the latest gap's last slot. */
-async function lastDecidedSlot(noteDir: string): Promise<Date | undefined> {
+/** The note's last decided slot, and its schedule: the latest claim's slot, or the latest gap's last slot. */
+async function lastDecidedSlot(noteDir: string): Promise<{ slot: Date; schedule: string } | undefined> {
 	let latest: { name: string; slot: Date } | undefined;
 	for (const file of await listDirectory(noteDir)) {
 		if (!file.endsWith(".claim.json")) continue;
@@ -656,11 +672,12 @@ async function lastDecidedSlot(noteDir: string): Promise<Date | undefined> {
 	}
 	if (latest === undefined) return undefined;
 	const decision = await readJson<SlotDecisionRecord>(join(noteDir, `${latest.name}.claim.json`));
+	const schedule = typeof decision?.schedule === "string" ? decision.schedule : "";
 	if (decision?.kind === "missed") {
 		const until = new Date(decision.until);
-		if (!Number.isNaN(until.getTime()) && until.getTime() > latest.slot.getTime()) return until;
+		if (!Number.isNaN(until.getTime()) && until.getTime() > latest.slot.getTime()) return { slot: until, schedule };
 	}
-	return latest.slot;
+	return { slot: latest.slot, schedule };
 }
 
 /** A gap cannot be resolved as asked; the message says why and what to do. */

@@ -286,18 +286,32 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 
 	const runByPath = createSingleFlightRunner(
 		runApproved,
-		(path) => {
-			process.stderr.write(
-				`[vaultore:agent] skipped ${path}: the previous run is still in progress\n`
-			);
+		// Still decided: the slot is claimed and recorded as skipped, so it is
+		// neither run later nor lost between the record's slots (#269).
+		async (path, scheduled) => {
+			const reason = "the previous run is still in progress";
+			process.stderr.write(`[vaultore:agent] skipped ${path}: ${reason}\n`);
+			try {
+				const claim = await adapter.claimSlot(path, scheduled);
+				await claim.finish({ result: "skipped", reason });
+			} catch (err) {
+				if (!(err instanceof SlotTakenError)) warn(`could not record the skipped run of ${path}: ${errorMessage(err)}`);
+			}
 		}
 	);
 
 	// Occurrences no runner fired are recorded as missed runs, said once
 	// here, and left to the user to catch up or dismiss (#269).
-	const lookForMissed = async (path: string, schedule: string): Promise<void> => {
+	const lookForMissed = async (path: string, schedule: string, armedAt?: Date): Promise<void> => {
 		try {
-			const gaps = await recordMissedSlots({ vaultRoot, notePath: path, schedule, by: "vaultore agent", keepDays });
+			const gaps = await recordMissedSlots({
+				vaultRoot,
+				notePath: path,
+				schedule,
+				by: "vaultore agent",
+				keepDays,
+				...(armedAt ? { armedAt } : {}),
+			});
 			for (const gap of gaps) {
 				warn(
 					`missed ${gap.count} scheduled run(s) of ${path}, from ${gap.slot.toISOString()} to ${gap.until.toISOString()}; ` +
@@ -317,7 +331,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 				// A tick that comes late (the machine slept) does not run the
 				// slot it held: that slot, and any after it, are missed runs.
 				if (isLateSlot(workflow.slot)) {
-					void lookForMissed(workflow.path, workflow.cronExpression);
+					void lookForMissed(workflow.path, workflow.cronExpression, workflow.armedAt);
 					return;
 				}
 				void runByPath(workflow.path, { schedule: workflow.cronExpression, slot: workflow.slot });
@@ -358,8 +372,12 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 			process.stderr.write(`[vaultore:agent] invalid cron in ${note.path}, skipping\n`);
 		}
 		for (const note of armed) {
-			void lookForMissed(note.path, note.cronExpression);
+			const entry = scheduler.list().find((e) => e.path === note.path);
+			void lookForMissed(note.path, note.cronExpression, entry?.armedAt);
 		}
+		// An occurrence of the last two minutes fires now, in time, rather
+		// than at the next tick, when it would be late.
+		if (armed.length > 0) scheduler.tick();
 		const registered = plan.register.length - invalid.length;
 		process.stdout.write(`[vaultore:agent] ${registered} scheduled workflow(s) registered\n`);
 		reportSkips({ registered, skipped: plan.skipped });

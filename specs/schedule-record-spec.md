@@ -53,14 +53,24 @@ A gap has its own states, on the same files:
 | Catching up | decision, resolution `caught-up` | its resolver runs the note, once for the whole gap | the run ends → Done; the resolver is gone → Abandoned |
 | Done, Abandoned, Pruned | as for a claim | as for a claim | as for a claim |
 
-### Finding gaps
+### Every occurrence is decided
 
-A runner looks for a gap of a note when it arms the note (Obsidian or the agent starts, a note is approved) and when a tick comes late. It covers the slots after the note's last decided slot (a claim's slot, or a gap's `until`), up to now less a margin, and never further back than the history kept. A note with no decided slot yet has no gap: nothing is backfilled for a note scheduled for the first time.
+Each occurrence of an armed note's schedule ends up either claimed (in time) or in a gap (missed); none falls between the two. Three rules make that so:
 
-- **Late:** a tick that fires a slot more than two minutes after its time does not run it; the slot is part of a gap instead. A machine that slept therefore does not run the one slot it held when it woke, as it did before.
-- **The margin:** a gap covers only slots more than two and a half minutes old. A slot a runner may still claim is at most two minutes old, so the two never overlap but for a claim that took more than thirty seconds to write.
-- **Exclusive:** the gap's decision file is named after its first slot. Two runners that find the same gap write the same name, and one gets it; a runner that claims the first slot in time takes the name first, and the gap is looked for again after it.
-- **Told once:** the runner that recorded a gap says so once: the plugin as a notice naming the note and the number of runs, the agent on stderr.
+- **In time is two minutes.** The scheduler never lets an occurrence younger than two minutes pass unfired: a note armed at 09:01 fires its 09:00 occurrence at once (the host ticks right after arming), and a tick fires every occurrence that is due, not only the next one. A tick that fires a slot more than two minutes old does not run it: the slot is missed. A machine that wakes from sleep therefore runs no slot it held while asleep, but does run one of the last two minutes.
+- **A gap covers what is older.** A runner looks for a gap when it arms a note (Obsidian or the agent starts, a note is approved) and when a tick comes late. It covers the slots after the note's last decided slot (a claim's slot, or a gap's `until`) that are more than two minutes old, never further back than the history kept. Between the two rules nothing is left; a slot exactly at the boundary is the tick's.
+- **A slot fired while its note still runs** is claimed and recorded as `skipped` ("the previous run is still in progress"), not dropped before its claim.
+
+What a gap looks back to:
+
+- **The note's last decided slot of the same schedule.** A record of another schedule says nothing: after a change from daily to every minute, the minutes before were never scheduled.
+- **Otherwise, when the runner armed the note** (less the two minutes it still fires): a note scheduled for the first time has nothing backfilled, but a runner that armed it and then slept records what it slept through.
+
+And:
+
+- **Exclusive:** the gap's decision file is named after its first slot. Two runners that find the same gap write the same name, and one gets it; a runner that claims the first slot in time takes the name first, and the gap is looked for again after it. A claim of a later slot of the gap, written in the same instant as the gap, can overlap it; the slot still runs once, and the gap's count is one too high.
+- **Told once:** each open gap is told once per runner session, whoever recorded it: the plugin as a notice naming the note and the number of runs (also for a gap the agent recorded), the agent on stderr for the gaps it recorded.
+- **Arming again counts:** a note whose scheduling was switched off and on again, in the plugin or by revoking and re-approving it for the agent, reports the occurrences in between as missed, since nothing tells them from occurrences missed while the runner was closed. Dismiss them.
 
 ## Events
 
@@ -93,7 +103,7 @@ Pruning removes a slot's files once the slot is older than the shorter of 30 day
 4. Only the claimer writes the outcome, once.
 5. Pruning never removes a slot less than a day old.
 6. A gap is resolved once, and a catch-up runs the note once for the whole gap.
-7. A late tick never runs its slot: past two minutes, a slot is either claimed already or part of a gap.
+7. Every occurrence of an armed note is claimed or part of a gap: the scheduler fires each one younger than two minutes, and a gap covers what is older.
 8. The record is outside the vault: sync does not carry it, and a cell cannot read or write it.
 
 ## Surfaces

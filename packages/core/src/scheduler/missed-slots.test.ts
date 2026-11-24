@@ -126,7 +126,8 @@ describe("finding gaps", () => {
 
 		const gaps = await look(at("2026-11-24T23:00:00Z"), { schedule: every });
 		expect(gaps.length).toBeGreaterThan(1);
-		expect(gaps.reduce((sum, gap) => sum + gap.count, 0)).toBe((23 * 3600 * 1000 - GAP_MARGIN_MS) / 1000);
+		// Every second after 00:00:00 that is strictly older than the margin.
+		expect(gaps.reduce((sum, gap) => sum + gap.count, 0)).toBe((23 * 3600 * 1000 - GAP_MARGIN_MS) / 1000 - 1);
 	});
 });
 

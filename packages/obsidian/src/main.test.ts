@@ -630,6 +630,34 @@ describe("VaultOrePlugin", () => {
           expect(plugin.missedRuns).toEqual([]);
         });
 
+        // After a sleep both runners look; the user hears of the gap in
+        // Obsidian also when the agent recorded it first.
+        it("are told of when the agent recorded them first", async () => {
+          const { recordMissedSlots } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          await recordMissedSlots({ vaultRoot: join(base, "vault"), notePath: "notes/daily.md", schedule: HOURLY, by: "vaultore agent", directory: runLocks.slots });
+
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+
+          expect(Notice.shown.filter((m) => m.includes("missed"))).toHaveLength(1);
+          expect(plugin.missedRuns).toHaveLength(1);
+          expect(plugin.missedRuns[0]?.claimedBy.by).toBe("vaultore agent");
+        });
+
+        // A slot fired while the note still runs is decided, not dropped.
+        it("record a slot fired while the note runs as skipped", async () => {
+          const { readSlotRecord } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
+          (plugin as unknown as { runningWorkflows: Set<string> }).runningWorkflows.add("notes/daily.md");
+          const slot = new Date(Date.now() - 1000);
+
+          await (plugin as any).runWorkflow(file, { schedule: HOURLY, slot });
+
+          (plugin as unknown as { runningWorkflows: Set<string> }).runningWorkflows.delete("notes/daily.md");
+          const entry = (await readSlotRecord({ directory: runLocks.slots })).find((e) => e.slot.getTime() === slot.getTime());
+          expect(entry).toMatchObject({ state: "skipped", reason: "the note was still running" });
+          expect(Notice.shown).toEqual([]);
+        });
+
         it("are what a late tick finds, instead of a run", async () => {
           const look = vi.spyOn(plugin, "lookForMissedRuns").mockResolvedValue(undefined);
           const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
@@ -639,7 +667,7 @@ describe("VaultOrePlugin", () => {
 
           scheduler.tick();
 
-          expect(look).toHaveBeenCalledWith("notes/daily.md", HOURLY);
+          expect(look).toHaveBeenCalledWith("notes/daily.md", HOURLY, expect.any(Date));
           expect(run).not.toHaveBeenCalled();
         });
       });
