@@ -604,6 +604,7 @@ export default class VaultOrePlugin extends Plugin {
     this.addSettingTab(this.settingsTab);
 
     this.scheduler.start();
+    this.timers.setInterval(() => void this.recheckMissedRuns(), 60 * 1000);
 
     // Defer the initial vault scan until the workspace layout (and metadata
     // cache) is ready, so plugin load stays fast on large vaults.
@@ -906,11 +907,20 @@ export default class VaultOrePlugin extends Plugin {
     await this.refreshMissedRuns();
   }
 
+  /**
+   * A gap listed here may have been resolved by the other runner. Obsidian
+   * draws the settings tab again only on update() (1.15.1), so the list is
+   * re-read each minute while it holds a gap; quiet, as load told of errors.
+   */
+  async recheckMissedRuns(): Promise<void> {
+    if (this.missedRuns.length > 0) await this.refreshMissedRuns(true);
+  }
+
   // Open gaps this load of the plugin has told the user of, as "note slot".
   private announcedMissedRuns = new Set<string>();
 
   /** Reads the vault's open missed runs, and tells of each new one once. */
-  async refreshMissedRuns(): Promise<void> {
+  async refreshMissedRuns(quiet = false): Promise<void> {
     try {
       const entries = await readSlotRecord({ vaultRoot: await this.adapter.getVaultRoot() });
       const before = this.missedRuns.map((gap) => `${gap.note} ${gap.slot.toISOString()}`).join("\n");
@@ -918,7 +928,7 @@ export default class VaultOrePlugin extends Plugin {
       const after = this.missedRuns.map((gap) => `${gap.note} ${gap.slot.toISOString()}`).join("\n");
       if (after !== before) this.settingsTab?.update();
     } catch (err) {
-      this.adapter.log("warn", `Could not read the schedule record: ${errorMessage(err)}`);
+      if (!quiet) this.adapter.log("warn", `Could not read the schedule record: ${errorMessage(err)}`);
       return;
     }
     for (const gap of this.missedRuns) {

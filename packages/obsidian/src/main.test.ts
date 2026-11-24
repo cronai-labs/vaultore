@@ -629,6 +629,17 @@ describe("VaultOrePlugin", () => {
 
         // Found in the app: Obsidian keeps a settings tab as it last drew it,
         // also across reopening, so a change of the list redraws it.
+        // Found in the app: a gap dismissed with the CLI stayed listed.
+        it("are re-read each minute while listed, so one resolved elsewhere leaves the list", async () => {
+          const { dismissMissedSlots } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          expect(plugin.missedRuns).toHaveLength(1);
+          await dismissMissedSlots({ vaultRoot: join(base, "vault"), notePath: "notes/daily.md", by: "vaultore", directory: runLocks.slots });
+
+          await plugin.recheckMissedRuns();
+          expect(plugin.missedRuns).toHaveLength(0);
+        });
+
         it("redraw the settings tab when the list changes, and only then", async () => {
           const tab = (plugin as unknown as { settingsTab: { update: () => void } }).settingsTab;
           const update = vi.spyOn(tab, "update");
@@ -746,8 +757,9 @@ describe("VaultOrePlugin", () => {
 
   describe("scheduler", () => {
     // Registered, the interval is cleared on unload even if stop() never runs.
-    it("registers its tick interval with the plugin", () => {
-      expect(plugin.registerInterval).toHaveBeenCalledTimes(1);
+    // The scheduler's tick, and the minute's re-check of listed missed runs.
+    it("registers its intervals with the plugin", () => {
+      expect(plugin.registerInterval).toHaveBeenCalledTimes(2);
     });
 
     it("hands core the same timers through the adapter", () => {
