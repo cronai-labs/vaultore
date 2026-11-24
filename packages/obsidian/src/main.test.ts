@@ -11,7 +11,7 @@ import { join } from "node:path";
 // faked.
 // The run lock is the real one, in a directory of the test's own: a test never
 // touches the user's ~/.config/vaultore/locks.
-const runLocks = vi.hoisted(() => ({ directory: "" }));
+const runLocks = vi.hoisted(() => ({ directory: "", slots: "" }));
 vi.mock("@vaultore/core", async () => {
   const actual = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
   return {
@@ -21,6 +21,11 @@ vi.mock("@vaultore/core", async () => {
     acquireRunLock: (options: import("@vaultore/core").RunLockOptions) =>
       actual.acquireRunLock({ ...options, directory: runLocks.directory }),
     describeHolder: actual.describeHolder,
+    MAX_KEEP_DAYS: actual.MAX_KEEP_DAYS,
+    SlotTakenError: actual.SlotTakenError,
+    // The schedule record is the real one too, in the test's own directory.
+    claimSlot: (options: import("@vaultore/core").ClaimSlotOptions) =>
+      actual.claimSlot({ ...options, directory: runLocks.slots }),
     WorkflowExecutor: class {
       runWorkflow = vi.fn().mockResolvedValue({});
     },
@@ -214,6 +219,23 @@ describe("VaultOrePlugin", () => {
       await at(row("Temperature").texts).changeHandler!(" ");
       expect(plugin.settings.aiTemperature).toBeUndefined();
       expect(plugin.saveData).toHaveBeenCalled();
+    });
+
+    // 0 switches the history off (each run kept for a day only), blank keeps
+    // 30; the two must not collapse into one (#255).
+    it("stores a history of 0 days as 0, and refuses more than 30 or a fraction", async () => {
+      const history = at(row("Scheduled-run history").texts);
+      expect(history.placeholder).toBe("30");
+
+      await history.changeHandler!("0");
+      expect(plugin.settings.scheduleHistoryDays).toBe(0);
+
+      await history.changeHandler!("31");
+      await history.changeHandler!("1.5");
+      expect(plugin.settings.scheduleHistoryDays).toBe(0);
+
+      await history.changeHandler!("");
+      expect(plugin.settings.scheduleHistoryDays).toBeUndefined();
     });
 
     it("refuses a number out of range with a message and keeps the old value", async () => {
@@ -507,6 +529,69 @@ describe("VaultOrePlugin", () => {
       expect(Notice.shown).toContain("VaultOre: notes/daily.md is already being run by process 7 (vaultore agent)");
       expect(Notice.shown.some((message) => message.startsWith("VaultOre error"))).toBe(false);
     });
+
+    // One run per scheduled slot, shared with the CLI (#255).
+    describe("the schedule record", () => {
+      const scheduled = { schedule: "15 * * * *", slot: new Date("2026-11-24T10:15:00.000Z") };
+      const adapter = () => (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
+
+      beforeEach(() => {
+        runLocks.slots = join(base, "slots");
+      });
+
+      it("claims a slot as Obsidian, and refuses a second claim of it", async () => {
+        const { SlotTakenError, readSlotRecord } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+        await adapter().claimSlot!("notes/daily.md", scheduled);
+
+        await expect(adapter().claimSlot!("notes/daily.md", scheduled)).rejects.toBeInstanceOf(SlotTakenError);
+        const [entry] = await readSlotRecord({ directory: runLocks.slots });
+        expect(entry).toMatchObject({ note: "notes/daily.md", state: "running" });
+        expect(entry?.claimedBy.by).toBe("Obsidian");
+      });
+
+      it("prunes by the history setting when it claims", async () => {
+        const { readSlotRecord } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+        const old = { ...scheduled, slot: new Date(Date.now() - 3 * 24 * 3_600_000) };
+        await (await adapter().claimSlot!("notes/daily.md", old)).finish({ result: "completed" });
+        plugin.settings.scheduleHistoryDays = 1;
+
+        await adapter().claimSlot!("notes/daily.md", { ...scheduled, slot: new Date() });
+
+        expect((await readSlotRecord({ directory: runLocks.slots })).some((e) => e.slot.getTime() === old.slot.getTime())).toBe(false);
+      });
+
+      it("hands the slot to the executor for a scheduled run", async () => {
+        const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
+        plugin.app.vault.getAbstractFileByPath = vi.fn().mockReturnValue(file) as never;
+        plugin.app.vault.read = vi.fn().mockResolvedValue("---\nore: true\n---\n") as never;
+        const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
+        executor.runWorkflow.mockClear();
+
+        await (plugin as any).runWorkflowByPath("notes/daily.md", scheduled);
+
+        expect(executor.runWorkflow).toHaveBeenCalledWith(expect.objectContaining({ workflowPath: "notes/daily.md", scheduled }));
+      });
+
+      // The agent ran this occurrence: not worth a notice every minute.
+      it("shows no notice when the other runner had the slot", async () => {
+        const { SlotTakenError } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+        const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
+        plugin.app.vault.read = vi.fn().mockResolvedValue("---\nore: true\n---\n") as never;
+        const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
+        executor.runWorkflow.mockRejectedValueOnce(
+          new SlotTakenError("notes/daily.md", scheduled.slot, undefined, "The run was claimed by process 7 (vaultore agent). Nothing was run")
+        );
+        const info = vi.spyOn(console, "info").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        Notice.shown.length = 0;
+
+        await (plugin as any).runWorkflow(file, scheduled);
+
+        expect(Notice.shown).toEqual([]);
+        info.mockRestore();
+        log.mockRestore();
+      });
+    });
   });
 
   describe("scheduler", () => {
@@ -786,10 +871,12 @@ describe("scheduled workflows", () => {
     await toggle("Workflows/daily.md", true);
     const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
 
-    at(scheduler().list()).nextRun = new Date(Date.now() - 1000);
+    const slot = new Date(Date.now() - 1000);
+    at(scheduler().list()).nextRun = slot;
     scheduler().tick();
 
-    expect(run).toHaveBeenCalledWith("Workflows/daily.md");
+    // With the occurrence that came due, which names the slot it claims (#255).
+    expect(run).toHaveBeenCalledWith("Workflows/daily.md", { schedule: "0 18 * * *", slot });
   });
 
   // The note can go between the tick and the run, before the vault's delete

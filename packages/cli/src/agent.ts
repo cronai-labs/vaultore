@@ -15,19 +15,19 @@ import type { ScheduledNote } from "./schedules";
  * runs of one note write outputs back into it concurrently (#27). A call for a
  * path that is still running is skipped and reported through `onSkip`.
  */
-export function createSingleFlightRunner(
-	run: (path: string) => Promise<void>,
+export function createSingleFlightRunner<A = void>(
+	run: (path: string, arg: A) => Promise<void>,
 	onSkip: (path: string) => void
-): (path: string) => Promise<void> {
+): (path: string, arg: A) => Promise<void> {
 	const inFlight = new Set<string>();
-	return async (path) => {
+	return async (path, arg) => {
 		if (inFlight.has(path)) {
 			onSkip(path);
 			return;
 		}
 		inFlight.add(path);
 		try {
-			await run(path);
+			await run(path, arg);
 		} finally {
 			inFlight.delete(path);
 		}
@@ -77,13 +77,13 @@ export function planRegistrations(
  * honoured. `run` gets the content that was checked, so what runs is what was
  * approved. A note that may not run is passed to `onRefuse`.
  */
-export function createApprovedRunner(options: {
+export function createApprovedRunner<A = void>(options: {
 	readNote: (path: string) => Promise<{ note: ScheduledNote; content: string }>;
 	approvals: () => Promise<VaultApprovals>;
-	run: (path: string, content: string) => Promise<void>;
+	run: (path: string, content: string, arg: A) => Promise<void>;
 	onRefuse: (path: string, reason: string) => void;
-}): (path: string) => Promise<void> {
-	return async (path) => {
+}): (path: string, arg: A) => Promise<void> {
+	return async (path, arg) => {
 		let content: string;
 		try {
 			const read = await options.readNote(path);
@@ -97,7 +97,7 @@ export function createApprovedRunner(options: {
 			options.onRefuse(path, errorMessage(err));
 			return;
 		}
-		await options.run(path, content);
+		await options.run(path, content, arg);
 	};
 }
 

@@ -35,6 +35,48 @@ describe("WorkflowScheduler", () => {
     expect(scheduler.tick().map((w) => w.path)).toEqual(["Workflows/test.md"]);
   });
 
+  // The slot names the scheduled run in the schedule record (#255): the
+  // occurrence that came due, not the time of the tick.
+  it("hands over the occurrence that came due as the slot", () => {
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
+    const entry = scheduler.register("Workflows/test.md", "* * * * *");
+    const occurrence = new Date(Date.now() - 1000);
+    entry.nextRun = occurrence;
+
+    const [due] = scheduler.tick();
+
+    expect(due?.slot).toBe(occurrence);
+    expect(entry.nextRun.getTime()).toBeGreaterThan(occurrence.getTime());
+  });
+
+  // The agent's rescan unregistered everything and registered it again, which
+  // recomputed every next run from now: a slot due before the next tick was
+  // dropped (#255).
+  it("keeps a due slot when the armed notes are replaced", () => {
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
+    const due = new Date(Date.now() - 1000);
+    scheduler.register("Workflows/a.md", "* * * * *").nextRun = due;
+    scheduler.register("Workflows/gone.md", "* * * * *");
+
+    const invalid = scheduler.replace([
+      { path: "Workflows/a.md", cronExpression: "* * * * *" },
+      { path: "Workflows/new.md", cronExpression: "0 * * * *" },
+      { path: "Workflows/typo.md", cronExpression: "not a cron" },
+    ]);
+
+    expect(invalid.map((entry) => entry.path)).toEqual(["Workflows/typo.md"]);
+    expect(scheduler.list().map((entry) => entry.path).sort()).toEqual(["Workflows/a.md", "Workflows/new.md"]);
+    expect(scheduler.tick().map((entry) => [entry.path, entry.slot])).toEqual([["Workflows/a.md", due]]);
+  });
+
+  it("drops a note whose schedule became invalid when the armed notes are replaced", () => {
+    const scheduler = new WorkflowScheduler({ timers: nodeTimers });
+    scheduler.register("Workflows/a.md", "* * * * *");
+
+    expect(scheduler.replace([{ path: "Workflows/a.md", cronExpression: "nope" }])).toHaveLength(1);
+    expect(scheduler.list()).toEqual([]);
+  });
+
   it("recomputes nextRun when the cron changes", () => {
     const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     const entry = scheduler.register("Workflows/test.md", "0 * * * *");

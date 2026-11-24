@@ -17,7 +17,7 @@ export interface ParsedArgs {
  * `--yes workflow.md` swallows the workflow path, and a value flag missing from
  * it loses its value to the positionals.
  */
-const VALUE_FLAGS = new Set(["vault", "config-dir", "state-dir", "cell", "rescan", "out"]);
+const VALUE_FLAGS = new Set(["vault", "config-dir", "state-dir", "cell", "rescan", "out", "keep-days"]);
 
 /** Flags that take no value. */
 const BOOLEAN_FLAGS = new Set(["skip-deps", "yes", "quiet", "help", "version"]);
@@ -76,6 +76,21 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 export const DEFAULT_RESCAN_SECONDS = 300;
+
+/**
+ * Days of scheduled-run history the agent keeps, `--keep-days`: a whole
+ * number from 0 (history off; a slot is still kept for a day) to 30, the most
+ * the record keeps (#255). Default 30. Anything else is a usage error.
+ */
+export function keepDaysFrom(flags: Record<string, string | boolean>, max = 30): number {
+	const flag = flags["keep-days"];
+	if (flag === undefined) return max;
+	const days = typeof flag === "string" && /^\d+$/.test(flag.trim()) ? Number(flag) : Number.NaN;
+	if (!Number.isInteger(days) || days > max) {
+		throw new Error(`--keep-days must be a whole number of days from 0 to ${max}, got '${String(flag)}'`);
+	}
+	return days;
+}
 
 /**
  * Longest interval setInterval honours: Node clamps anything above 2^31-1 ms

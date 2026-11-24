@@ -253,6 +253,26 @@ function staleBecause(holder: LockHolder, name: string, check: StaleCheck): stri
 }
 
 /**
+ * Why `holder`, of a process other than a live load of VaultOre in this one,
+ * is gone, completing "process <pid>, which took it at <since>, …";
+ * undefined while it runs. The schedule record judges a claim with no outcome
+ * by it, as a lock's holder is judged. Holders on another machine are never
+ * gone.
+ */
+export function holderGoneBecause(
+	holder: LockHolder,
+	options: Pick<LockOptions, "isAlive" | "host" | "bootTime"> = {}
+): string | undefined {
+	if (holder.host !== (options.host ?? hostname())) return undefined;
+	return staleBecause(holder, "", {
+		host: options.host ?? hostname(),
+		isAlive: options.isAlive ?? processIsAlive,
+		bootTime: options.bootTime ?? lastBootTime(),
+		held: new Set(),
+	});
+}
+
+/**
  * Looks at what is at the lock's path. Removes a stale holder, reporting it
  * once, and an empty directory, and returns whether anything was there.
  * Throws LockHeldError for a lock that is held.

@@ -12,6 +12,7 @@ import {
   OutputMeta,
   PlatformAdapter,
   RuntimeEngine,
+  ScheduledSlot,
   Timers,
   Workflow,
   WorkflowFrontmatter,
@@ -37,7 +38,9 @@ import {
 import { renderArtifactIndex, renderOutputMarkdown } from "./output-note";
 import { cellOutputsSource } from "../vault";
 import { describeHolder } from "../lock";
+import { RunLockHeldError } from "../lock/run-lock";
 import type { LeftBehind } from "../lock/run-lock";
+import type { SlotClaim, SlotOutcome } from "../scheduler/slot-record";
 import { parse } from "@babel/parser";
 
 // =============================================================================
@@ -51,6 +54,29 @@ export interface ExecuteOptions {
   targetCellId?: string;
   skipDependencies?: boolean;
   emitEvent?: (event: string, data?: unknown) => void;
+  /**
+   * The slot of a scheduled run. It is claimed before the run lock is taken,
+   * and its outcome written when the run ends, so each slot of a schedule runs
+   * at most once across the plugin and the CLI (#255). A run started by hand
+   * passes none.
+   */
+  scheduled?: ScheduledSlot;
+}
+
+/** The note changed after the caller read it; nothing was run. */
+export class NoteChangedError extends Error {
+  constructor(readonly workflowPath: string) {
+    super(`${workflowPath} changed after it was read for this run, so nothing was run. Run it again`);
+    this.name = "NoteChangedError";
+  }
+}
+
+/** What a scheduled run came to, for its slot's outcome. */
+function slotOutcomeOf(err: unknown): SlotOutcome {
+  if (err instanceof RunLockHeldError || err instanceof NoteChangedError) {
+    return { result: "skipped", reason: errorMessage(err) };
+  }
+  return { result: "failed", reason: errorMessage(err) };
 }
 
 export class WorkflowExecutor {
@@ -78,6 +104,67 @@ export class WorkflowExecutor {
     // is refused when its path leads out of the vault through a link.
     const notePath = await platform.resolveInVault(workflow.path);
 
+    // One run per scheduled slot (#255): claimed before the run lock, so a
+    // runner that comes second to a slot is refused even when the first run
+    // has ended. From here on the slot is spent, whatever the run comes to.
+    let claim: SlotClaim | undefined;
+    if (options.scheduled) {
+      if (typeof platform.claimSlot !== "function") {
+        throw new Error(
+          "This platform cannot claim a scheduled slot (it has no claimSlot), " +
+            "so VaultOre does not run scheduled notes through it: another runner could run the same slot."
+        );
+      }
+      claim = await platform.claimSlot(notePath, options.scheduled);
+    }
+    const report: RunReport = {};
+    try {
+      const result = await this.runWithLock(options, platform, workflow, notePath, report);
+      await this.finishSlot(platform, workflow.path, claim, {
+        result: report.status ?? "completed",
+        ...(report.runId !== undefined ? { runId: report.runId } : {}),
+      });
+      return result;
+    } catch (err) {
+      const outcome = slotOutcomeOf(err);
+      await this.finishSlot(platform, workflow.path, claim, {
+        ...outcome,
+        ...(report.status === "aborted" ? { result: "aborted" } : {}),
+        ...(report.runId !== undefined ? { runId: report.runId } : {}),
+      });
+      throw err;
+    }
+  }
+
+  /**
+   * Writes a scheduled run's outcome. A write that fails must not replace the
+   * run's own result or error: the slot then reads as abandoned once this
+   * process is gone, and is not run again either way.
+   */
+  private async finishSlot(
+    platform: PlatformAdapter,
+    workflowPath: string,
+    claim: SlotClaim | undefined,
+    outcome: SlotOutcome
+  ): Promise<void> {
+    if (!claim) return;
+    try {
+      await claim.finish(outcome);
+    } catch (err) {
+      platform.log(
+        "warn",
+        `The outcome of the ${claim.slot.toISOString()} run of ${workflowPath} could not be recorded: ${errorMessage(err)}`
+      );
+    }
+  }
+
+  private async runWithLock(
+    options: ExecuteOptions,
+    platform: PlatformAdapter,
+    workflow: Workflow,
+    notePath: string,
+    report: RunReport
+  ): Promise<Workflow> {
     // One run per note, across the plugin and the CLI (#215). Taken before
     // anything is recorded or run; a second runner is refused here, with the
     // holder named, and nothing of this run exists yet.
@@ -93,11 +180,9 @@ export class WorkflowExecutor {
       // would run.
       const current = await platform.readFile(workflow.path);
       if (current !== options.content) {
-        throw new Error(
-          `${workflow.path} changed after it was read for this run, so nothing was run. Run it again`
-        );
+        throw new NoteChangedError(workflow.path);
       }
-      return await this.runLocked(options, platform, workflow);
+      return await this.runLocked(options, platform, workflow, report);
     } finally {
       // However the run ended. A release that fails must not replace the
       // run's own result or error; the lock it leaves is taken over as stale
@@ -113,9 +198,11 @@ export class WorkflowExecutor {
   private async runLocked(
     options: ExecuteOptions,
     platform: PlatformAdapter,
-    workflow: Workflow
+    workflow: Workflow,
+    report: RunReport
   ): Promise<Workflow> {
     const runContext = await createRunContext(platform, workflow.path);
+    report.runId = runContext.runId;
 
     const outputs = new Map<string, CellOutput>(workflow.outputs);
     let updatedContent = workflow.rawContent;
@@ -201,7 +288,7 @@ export class WorkflowExecutor {
       runError = err;
       throw err;
     } finally {
-      await finalizeRunContext(platform, runContext, ran, outputs, runError);
+      report.status = await finalizeRunContext(platform, runContext, ran, outputs, runError);
     }
 
     return {
@@ -380,6 +467,15 @@ interface ResolvedPermissions {
   buildNetwork: boolean;
   vaultRead: boolean;
   vaultWrite: boolean;
+}
+
+/** How a run ended, as its `run.json` says. */
+type RunStatus = "completed" | "failed" | "aborted";
+
+/** What the locked run tells the slot's outcome: its id, once it has one, and how it ended. */
+interface RunReport {
+  runId?: string;
+  status?: RunStatus;
 }
 
 interface RunContext {
@@ -780,7 +876,7 @@ export async function finalizeRunContext(
   ran: readonly string[],
   outputs: ReadonlyMap<string, CellOutput>,
   runError?: unknown
-): Promise<void> {
+): Promise<RunStatus> {
   const cells = ran.map((cellId) => ({
     cellId,
     status: outputs.get(cellId)?.meta.status ?? "error",
@@ -795,7 +891,7 @@ export async function finalizeRunContext(
   // were persisted, so a throw part-way through leaves the recorded cells all
   // green — reporting that as "completed" would claim success for a run the
   // caller saw fail.
-  const status = runError !== undefined ? "aborted" : failed > 0 ? "failed" : "completed";
+  const status: RunStatus = runError !== undefined ? "aborted" : failed > 0 ? "failed" : "completed";
 
   try {
     await platform.writeFile(
@@ -822,6 +918,7 @@ export async function finalizeRunContext(
   } catch {
     // Swallowed on purpose — see the doc comment.
   }
+  return status;
 }
 
 async function hydrateOutputsFromStubs(

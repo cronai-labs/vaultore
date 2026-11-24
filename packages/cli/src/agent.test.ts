@@ -45,6 +45,18 @@ describe("createSingleFlightRunner", () => {
 		await first;
 	});
 
+	// The scheduled slot rides along to the run (#255).
+	it("passes the run its argument", async () => {
+		const seen: Array<[string, number]> = [];
+		const run = createSingleFlightRunner<number>(async (path, slot) => {
+			seen.push([path, slot]);
+		}, () => undefined);
+
+		await run("a.md", 7);
+
+		expect(seen).toEqual([["a.md", 7]]);
+	});
+
 	it("runs different workflows concurrently", async () => {
 		const gate = deferred();
 		const started: string[] = [];

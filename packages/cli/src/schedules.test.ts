@@ -8,6 +8,7 @@ import { discoverWorkflows } from "./scan";
 import {
 	approveSchedules,
 	formatScheduleList,
+	formatSlotLog,
 	listSchedules,
 	readScheduledNote,
 	revokeSchedules,
@@ -242,5 +243,34 @@ describe("schedules list", () => {
 		write("manual.md", note(undefined));
 
 		expect(formatScheduleList(await listing())).toEqual(["No scheduled workflow notes found."]);
+	});
+});
+
+describe("formatSlotLog", () => {
+	const claimedBy = { pid: 42, host: "h", since: "2026-11-24T10:15:01.000Z", by: "Obsidian" };
+	const base = {
+		note: "Workflows/daily.md",
+		vault: "/vault",
+		schedule: "15 * * * *",
+		slot: new Date("2026-11-24T10:15:00.000Z"),
+		claimedBy: { version: 1, kind: "claimed" as const, vault: "/vault", note: "Workflows/daily.md", schedule: "15 * * * *", slot: "", token: "t", ...claimedBy },
+	};
+
+	it("shows each slot with what it came to, who claimed it, and why", () => {
+		expect(
+			formatSlotLog([
+				{ ...base, state: "completed", runId: "r1" },
+				{ ...base, state: "skipped", reason: "Workflows/daily.md is already being run by process 7 (vaultore run)" },
+				{ ...base, state: "abandoned", reason: "the runner is no longer running", claimedBy: { ...base.claimedBy, by: undefined } },
+			])
+		).toEqual([
+			"2026-11-24T10:15:00.000Z  completed  Workflows/daily.md [15 * * * *] by Obsidian run r1",
+			"2026-11-24T10:15:00.000Z  skipped    Workflows/daily.md [15 * * * *] by Obsidian: Workflows/daily.md is already being run by process 7 (vaultore run)",
+			"2026-11-24T10:15:00.000Z  abandoned  Workflows/daily.md [15 * * * *] by process 42: the runner is no longer running",
+		]);
+	});
+
+	it("says when nothing is recorded", () => {
+		expect(formatSlotLog([])).toEqual(["No scheduled run recorded."]);
 	});
 });

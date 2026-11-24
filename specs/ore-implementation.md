@@ -22,7 +22,8 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 - **`runtime.timeout`** applies to container cells only; AI cells use the AI request timeout (below).
 - **`schedule`** is read by `cron-parser` 5. Schedulers tick every 60 seconds.
   - **Obsidian plugin:** runs a scheduled note only while Obsidian is open, only when the "Run scheduled workflows" setting is on (off by default), and only when the user approved that note's exact schedule in the settings list. A changed schedule, a renamed note or a note that arrives through sync is listed but not run until approved. An invalid expression is shown in the list and reported once as a notice.
-  - **`vaultore agent`:** runs a scheduled note only after `vaultore schedules approve`, and only while the note's front matter and cells are what was approved (the hash a permission decision is bound to). The approvals are kept outside the vault, in `approvals.json` under `--state-dir`, and are separate from the plugin's. The note and the approvals are read again when a run is due. Details: [permissions-spec.md](permissions-spec.md) §6.2.
+  - **`vaultore agent`:** runs a scheduled note only after `vaultore schedules approve`, and only while the note's front matter and cells are what was approved (the hash a permission decision is bound to). The approvals are kept outside the vault, in `approvals.json` under `--state-dir`, and are separate from the plugin's. The note and the approvals are read again when a run is due. Its rescan, every `--rescan` seconds, keeps the next run of a note it armed already, so an occurrence that came due just before a rescan still runs (#255). Details: [permissions-spec.md](permissions-spec.md) §6.2.
+  - **One run per occurrence:** each occurrence of a note's schedule, a slot, runs at most once, whether the plugin or the agent fires it. The runner whose own check passes first claims it, in a record outside the vault beside the run locks (`~/.config/vaultore/slots`); the other skips it, naming the first. The record keeps what each slot came to, for 30 days at most (`--keep-days`, the plugin's "Scheduled-run history"), and `vaultore schedules log` shows it. The model, its states and limits: [schedule-record-spec.md](schedule-record-spec.md).
 - **`go:`:** the schema accepts a `go:` block ([go-cell-spec.md](go-cell-spec.md)); nothing reads it.
 
 ## Permissions (Ore §4)
@@ -93,7 +94,7 @@ Requests go to `https://api.openai.com/v1/chat/completions` or `https://api.anth
   - **The limits:**
     - Two machines that run the same synced vault each have their own locks, so both may run a note at once. Run scheduled notes on one machine.
     - Runners in separate containers that share a lock directory cannot see each other's processes, and may take each other's locks as left behind.
-    - The lock prevents two runs at once, not two runs in a row. A note scheduled in both the plugin and `vaultore agent` is fired by both; a slow note runs once, but a fast one can finish before the second runner looks, which then runs it again or finds it changed (#255).
+    - The lock prevents two runs at once, not two runs in a row. For a note scheduled in both the plugin and `vaultore agent`, the schedule record (above) keeps the second runner from running the same occurrence again (#255).
     - A runner needs to be able to create `~/.config/vaultore/locks`. Under a user id with no account entry (a container may run one), or with a read-only home, every run is refused with a message saying so.
 
 ## Outputs (Ore §9)
