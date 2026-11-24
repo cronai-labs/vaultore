@@ -627,6 +627,19 @@ describe("VaultOrePlugin", () => {
           expect(row?.buttons.map((b) => b.text)).toEqual(["Catch up", "Dismiss"]);
         });
 
+        // Found in the app: Obsidian keeps a settings tab as it last drew it,
+        // also across reopening, so a change of the list redraws it.
+        it("redraw the settings tab when the list changes, and only then", async () => {
+          const tab = (plugin as unknown as { settingsTab: { update: () => void } }).settingsTab;
+          const update = vi.spyOn(tab, "update");
+
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          expect(update).toHaveBeenCalledTimes(1);
+
+          await plugin.refreshMissedRuns();
+          expect(update).toHaveBeenCalledTimes(1);
+        });
+
         it("are dismissed from the settings, and leave the list", async () => {
           await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
           const row = renderSettings().find((s) => s.name === "notes/daily.md" && s.buttons.length === 2);

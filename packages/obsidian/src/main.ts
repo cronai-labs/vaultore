@@ -545,6 +545,10 @@ export default class VaultOrePlugin extends Plugin {
   // the record outside the vault when gaps are found or resolved, and when
   // the schedules are refreshed.
   missedRuns: SlotEntry[] = [];
+  // Obsidian keeps a settings tab as it last drew it, also across closing and
+  // opening the settings, until the tab's update() (Obsidian 1.15.1); a list
+  // that changes on its own (missed runs) redraws it.
+  private settingsTab: VaultOreSettingsTab | undefined;
   // Invalid schedules already reported, as "path\nschedule", so a typo is
   // reported once rather than on every vault change.
   private reportedInvalidSchedules = new Set<string>();
@@ -596,7 +600,8 @@ export default class VaultOrePlugin extends Plugin {
       },
     });
 
-    this.addSettingTab(new VaultOreSettingsTab(this.app, this));
+    this.settingsTab = new VaultOreSettingsTab(this.app, this);
+    this.addSettingTab(this.settingsTab);
 
     this.scheduler.start();
 
@@ -908,7 +913,10 @@ export default class VaultOrePlugin extends Plugin {
   async refreshMissedRuns(): Promise<void> {
     try {
       const entries = await readSlotRecord({ vaultRoot: await this.adapter.getVaultRoot() });
+      const before = this.missedRuns.map((gap) => `${gap.note} ${gap.slot.toISOString()}`).join("\n");
       this.missedRuns = entries.filter((entry) => entry.kind === "missed" && entry.state === "missed");
+      const after = this.missedRuns.map((gap) => `${gap.note} ${gap.slot.toISOString()}`).join("\n");
+      if (after !== before) this.settingsTab?.update();
     } catch (err) {
       this.adapter.log("warn", `Could not read the schedule record: ${errorMessage(err)}`);
       return;
