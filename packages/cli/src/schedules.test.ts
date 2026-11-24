@@ -249,6 +249,7 @@ describe("schedules list", () => {
 describe("formatSlotLog", () => {
 	const claimedBy = { pid: 42, host: "h", since: "2026-11-24T10:15:01.000Z", by: "Obsidian" };
 	const base = {
+		kind: "claimed" as const,
 		note: "Workflows/daily.md",
 		vault: "/vault",
 		schedule: "15 * * * *",
@@ -272,5 +273,29 @@ describe("formatSlotLog", () => {
 
 	it("says when nothing is recorded", () => {
 		expect(formatSlotLog([])).toEqual(["No scheduled run recorded."]);
+	});
+
+	// #269: a gap is one line, with its size, who found it and who resolved it.
+	it("shows a missed run with its size, who found it, and who resolved it", () => {
+		const gap = {
+			...base,
+			kind: "missed" as const,
+			slot: new Date("2026-11-24T11:15:00.000Z"),
+			until: new Date("2026-11-24T15:15:00.000Z"),
+			count: 5,
+			claimedBy: { ...base.claimedBy, by: "vaultore agent" },
+		};
+		const resolver = { version: 1, pid: 9, host: "h", since: "x", by: "vaultore", token: "t" };
+		expect(
+			formatSlotLog([
+				{ ...gap, state: "missed" },
+				{ ...gap, state: "dismissed", resolvedBy: { ...resolver, kind: "dismissed" as const } },
+				{ ...gap, state: "completed", runId: "r2", resolvedBy: { ...resolver, kind: "caught-up" as const } },
+			])
+		).toEqual([
+			"2026-11-24T11:15:00.000Z  missed     Workflows/daily.md [15 * * * *] 5 missed run(s) to 2026-11-24T15:15:00.000Z, found by vaultore agent",
+			"2026-11-24T11:15:00.000Z  dismissed  Workflows/daily.md [15 * * * *] 5 missed run(s) to 2026-11-24T15:15:00.000Z, found by vaultore agent; dismissed by vaultore",
+			"2026-11-24T11:15:00.000Z  completed  Workflows/daily.md [15 * * * *] 5 missed run(s) to 2026-11-24T15:15:00.000Z, found by vaultore agent; caught up by vaultore run r2",
+		]);
 	});
 });

@@ -131,9 +131,17 @@ export { WorkflowScheduler, computeNextRun, classifyScheduleApproval } from "./s
 export type { DueWorkflow, Registration, ScheduleApproval, ScheduleApprovalState } from "./scheduler";
 
 export {
+  GAP_MARGIN_MS,
+  LATE_AFTER_MS,
   MAX_KEEP_DAYS,
+  MissedSlotError,
   SlotTakenError,
+  catchUpMissedSlot,
   claimSlot,
+  dismissMissedSlots,
+  isLateSlot,
+  occurrencesBetween,
+  recordMissedSlots,
   describeSlotState,
   keepMilliseconds,
   pruneSlotRecord,
@@ -143,6 +151,13 @@ export {
 
 export type {
   ClaimSlotOptions,
+  ReadSlotRecordOptions,
+  RecordMissedOptions,
+  RecordedGap,
+  ResolveMissedOptions,
+  SlotDecisionRecord,
+  SlotMissedRecord,
+  SlotResolutionRecord,
   SlotClaim,
   SlotClaimRecord,
   SlotEntry,

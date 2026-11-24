@@ -235,6 +235,8 @@ vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
 vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
 vaultore schedules log [<workflow.md>] [--vault <dir>]
+vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--yes]
+vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
 ```
 
 - Settings come from `<vault>/.vaultore/config.json` (`defaultProvider`, `defaultModel`,
@@ -261,6 +263,12 @@ vaultore schedules log [<workflow.md>] [--vault <dir>]
   claims it first. `vaultore schedules log` shows what each one came to and who ran it; the
   agent keeps that for `--keep-days` (default and most: 30)
   ([schedule record](specs/schedule-record-spec.md)).
+- Occurrences that no runner fired, because the machine slept or nothing was running, are
+  recorded as missed runs once a runner looks again, and said once (the agent on stderr,
+  Obsidian as a notice). `vaultore schedules catch-up <note.md>` runs the note once for them,
+  `vaultore schedules dismiss <note.md>` closes them; in Obsidian, the settings list them with
+  "Catch up" and "Dismiss". A machine that wakes from sleep no longer runs the one occurrence
+  it held: that one is missed too.
 - `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
   ([handover spec](specs/cronai-handover-spec.md)).
 

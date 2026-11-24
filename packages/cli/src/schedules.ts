@@ -230,6 +230,13 @@ export function formatSlotLog(entries: SlotEntry[]): string[] {
 		const by = entry.claimedBy.by ?? `process ${entry.claimedBy.pid}`;
 		const run = entry.runId ? ` run ${entry.runId}` : "";
 		const reason = entry.reason ? `: ${entry.reason}` : "";
-		return `${entry.slot.toISOString()}  ${entry.state.padEnd(9)}  ${entry.note} [${entry.schedule}] by ${by}${run}${reason}`;
+		const head = `${entry.slot.toISOString()}  ${entry.state.padEnd(9)}  ${entry.note} [${entry.schedule}]`;
+		if (entry.kind !== "missed") return `${head} by ${by}${run}${reason}`;
+		// A gap: how many runs it holds, who found it, and who resolved it.
+		const runs = `${entry.count ?? 1} missed run(s) to ${(entry.until ?? entry.slot).toISOString()}, found by ${by}`;
+		const resolved = entry.resolvedBy
+			? `; ${entry.resolvedBy.kind === "dismissed" ? "dismissed" : "caught up"} by ${entry.resolvedBy.by ?? `process ${entry.resolvedBy.pid}`}`
+			: "";
+		return `${head} ${runs}${resolved}${run}${reason}`;
 	});
 }

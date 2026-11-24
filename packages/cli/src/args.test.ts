@@ -6,6 +6,7 @@ import {
 	hasExplicitVault,
 	keepDaysFrom,
 	parseArgs,
+	slotFrom,
 	rescanSecondsFrom,
 	toVaultRelative,
 	vaultRootFrom,
@@ -165,5 +166,20 @@ describe("keepDaysFrom", () => {
 		expect(() => keepDaysFrom(parseArgs(["agent", `--keep-days=${value}`]).flags)).toThrow(
 			`--keep-days must be a whole number of days from 0 to 30, got '${value}'`
 		);
+	});
+});
+
+describe("slotFrom", () => {
+	it("reads the slot a catch-up or dismissal names, as the log prints it", () => {
+		expect(slotFrom(["Workflows/a.md"])).toBeUndefined();
+		expect(slotFrom(["Workflows/a.md", "2026-11-24T11:15:00.000Z"])).toEqual(new Date("2026-11-24T11:15:00.000Z"));
+	});
+
+	it.each(["yesterday", "11:15", "2026-11-24", "2026-13-40T99:99:00Z"])("refuses '%s'", (raw) => {
+		expect(() => slotFrom(["Workflows/a.md", raw])).toThrow("is not a slot");
+	});
+
+	it("refuses a third argument", () => {
+		expect(() => slotFrom(["a.md", "2026-11-24T11:15:00Z", "b.md"])).toThrow("at most one slot");
 	});
 });

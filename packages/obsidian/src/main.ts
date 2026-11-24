@@ -15,13 +15,19 @@ import {
   DEFAULT_MODELS,
   DEFAULT_PROVIDER,
   RunLockHeldError,
+  MissedSlotError,
   SlotTakenError,
   WorkflowExecutor,
   WorkflowParser,
   WorkflowScheduler,
   MAX_KEEP_DAYS,
   acquireRunLock,
+  catchUpMissedSlot,
   claimSlot,
+  dismissMissedSlots,
+  isLateSlot,
+  readSlotRecord,
+  recordMissedSlots,
   computeNextRun,
   describeHolder,
   errorMessage,
@@ -35,6 +41,7 @@ import type {
   RunLock,
   ScheduledSlot,
   SlotClaim,
+  SlotEntry,
   Timers,
 } from "@vaultore/core";
 
@@ -505,6 +512,12 @@ export default class VaultOrePlugin extends Plugin {
           );
           continue;
         }
+        // A tick that comes late (the machine slept) does not run the slot
+        // it held: that slot, and any after it, are missed runs (#269).
+        if (isLateSlot(workflow.slot)) {
+          void this.lookForMissedRuns(workflow.path, workflow.cronExpression);
+          continue;
+        }
         void this.runWorkflowByPath(workflow.path, {
           schedule: workflow.cronExpression,
           slot: workflow.slot,
@@ -514,6 +527,10 @@ export default class VaultOrePlugin extends Plugin {
   });
   private schedulerRefreshTimer: number | null = null;
   private runningWorkflows = new Set<string>();
+  // The vault's open missed runs, as the settings list them (#269). Read from
+  // the record outside the vault when gaps are found or resolved, and when
+  // the schedules are refreshed.
+  missedRuns: SlotEntry[] = [];
   // Invalid schedules already reported, as "path\nschedule", so a typo is
   // reported once rather than on every vault change.
   private reportedInvalidSchedules = new Set<string>();
@@ -573,6 +590,8 @@ export default class VaultOrePlugin extends Plugin {
     // cache) is ready, so plugin load stays fast on large vaults.
     this.app.workspace.onLayoutReady(() => {
       this.refreshScheduledWorkflows();
+      // Open missed runs found earlier, by this runner or the agent (#269).
+      void this.refreshMissedRuns();
     });
 
     this.registerEvent(
@@ -635,7 +654,7 @@ export default class VaultOrePlugin extends Plugin {
     return isWorkflowFrontmatter(this.app.metadataCache.getFileCache(file)?.frontmatter);
   }
 
-  private async runWorkflow(file: TFile, scheduled?: ScheduledSlot): Promise<void> {
+  private async runWorkflow(file: TFile, scheduled?: ScheduledSlot, slotClaim?: SlotClaim): Promise<void> {
     if (this.runningWorkflows.has(file.path)) {
       new Notice("VaultOre: Workflow is already running");
       return;
@@ -661,6 +680,7 @@ export default class VaultOrePlugin extends Plugin {
         workflowPath: file.path,
         content,
         ...(scheduled ? { scheduled } : {}),
+        ...(slotClaim ? { slotClaim } : {}),
         emitEvent: (event, data) => {
           if (event === "cell:started") {
             const cellId = (data as { cellId?: string })?.cellId;
@@ -679,6 +699,10 @@ export default class VaultOrePlugin extends Plugin {
         this.adapter.log("info", err.message);
         return;
       }
+      // A catch-up that failed before the run began (the note could not be
+      // read): its gap is finished as failed, not left taken. Finishing again
+      // after the executor did changes nothing.
+      await slotClaim?.finish({ result: "failed", reason: errorMessage(err) }).catch(() => undefined);
       new Notice(runFailureNotice(err));
     } finally {
       // The notice is only created once the read succeeds, so it may not exist.
@@ -807,8 +831,90 @@ export default class VaultOrePlugin extends Plugin {
     for (const [path, schedule] of wanted) {
       if (!registered.has(path)) {
         this.scheduler.register(path, schedule);
+        // Armed now: what it missed while it was not (#269).
+        void this.lookForMissedRuns(path, schedule);
       }
     }
+  }
+
+  /**
+   * Records the runs of a scheduled note that no runner fired, and says so
+   * once, for the gaps this runner recorded. Never fails the caller.
+   */
+  async lookForMissedRuns(path: string, schedule: string): Promise<void> {
+    try {
+      const gaps = await recordMissedSlots({
+        vaultRoot: await this.adapter.getVaultRoot(),
+        notePath: path,
+        schedule,
+        by: "Obsidian",
+        keepDays: this.settings.scheduleHistoryDays,
+      });
+      for (const gap of gaps) {
+        new Notice(
+          `VaultOre: ${path} missed ${gap.count} scheduled run(s) since ${gap.slot.toLocaleString()}. ` +
+            "Catch up or dismiss them in VaultOre's settings."
+        );
+      }
+      if (gaps.length > 0) await this.refreshMissedRuns();
+    } catch (err) {
+      this.adapter.log("warn", `Could not look for missed runs of ${path}: ${errorMessage(err)}`);
+    }
+  }
+
+  /** Reads the vault's open missed runs from the record. */
+  async refreshMissedRuns(): Promise<void> {
+    try {
+      const entries = await readSlotRecord({ vaultRoot: await this.adapter.getVaultRoot() });
+      this.missedRuns = entries.filter((entry) => entry.kind === "missed" && entry.state === "missed");
+    } catch (err) {
+      this.adapter.log("warn", `Could not read the schedule record: ${errorMessage(err)}`);
+    }
+  }
+
+  /** Runs a note once for a gap of missed runs, as a run by hand. */
+  async catchUpMissedRun(gap: SlotEntry): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(gap.note);
+    if (!(file instanceof TFile)) {
+      new Notice(`VaultOre: ${gap.note} no longer exists; dismiss its missed runs instead`);
+      return;
+    }
+    // Before the gap is taken: a catch-up that could not start would leave it
+    // taken and not run.
+    if (this.runningWorkflows.has(file.path)) {
+      new Notice("VaultOre: Workflow is already running; catch up once it ends");
+      return;
+    }
+    let claim: SlotClaim;
+    try {
+      claim = await catchUpMissedSlot({
+        vaultRoot: await this.adapter.getVaultRoot(),
+        notePath: gap.note,
+        slot: gap.slot,
+        by: "Obsidian",
+      });
+    } catch (err) {
+      new Notice(err instanceof MissedSlotError ? `VaultOre: ${err.message}` : `VaultOre error: ${errorMessage(err)}`);
+      await this.refreshMissedRuns();
+      return;
+    }
+    await this.refreshMissedRuns();
+    await this.runWorkflow(file, undefined, claim);
+  }
+
+  /** Closes a gap of missed runs without running the note. */
+  async dismissMissedRun(gap: SlotEntry): Promise<void> {
+    try {
+      await dismissMissedSlots({
+        vaultRoot: await this.adapter.getVaultRoot(),
+        notePath: gap.note,
+        slot: gap.slot,
+        by: "Obsidian",
+      });
+    } catch (err) {
+      new Notice(err instanceof MissedSlotError ? `VaultOre: ${err.message}` : `VaultOre error: ${errorMessage(err)}`);
+    }
+    await this.refreshMissedRuns();
   }
 
   private reportInvalidSchedule(path: string, schedule: string, error: string): void {
@@ -1013,6 +1119,9 @@ class VaultOreSettingsTab extends PluginSettingTab {
         heading: "Scheduled workflows",
         items: this.scheduleSettings(),
       },
+      ...(this.plugin.missedRuns.length > 0
+        ? [{ type: "group" as const, heading: "Missed runs", items: this.missedRunSettings() }]
+        : []),
     ];
   }
 
@@ -1202,6 +1311,37 @@ class VaultOreSettingsTab extends PluginSettingTab {
       });
     }
     return items;
+  }
+
+  // Scheduled runs no runner fired, one row per gap, with what to do (#269).
+  private missedRunSettings(): SettingGroupItem[] {
+    return this.plugin.missedRuns.map((gap) => {
+      const count = gap.count ?? 1;
+      const from = gap.slot.toLocaleString();
+      const to = (gap.until ?? gap.slot).toLocaleString();
+      return {
+        name: gap.note,
+        desc:
+          count === 1
+            ? `The run of ${from} was missed.`
+            : `${count} scheduled runs from ${from} to ${to} were missed. Catching up runs the note once.`,
+        searchable: false,
+        render: (setting: Setting) => {
+          setting.addButton((button) =>
+            button.setButtonText("Catch up").onClick(async () => {
+              await this.plugin.catchUpMissedRun(gap);
+              this.update();
+            })
+          );
+          setting.addButton((button) =>
+            button.setButtonText("Dismiss").onClick(async () => {
+              await this.plugin.dismissMissedRun(gap);
+              this.update();
+            })
+          );
+        },
+      };
+    });
   }
 
   private describeSchedule(note: ScheduledNote): string {

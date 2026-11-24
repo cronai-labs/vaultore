@@ -61,6 +61,12 @@ export interface ExecuteOptions {
    * passes none.
    */
   scheduled?: ScheduledSlot;
+  /**
+   * A slot the caller holds already: the catch-up of a missed gap (#269),
+   * whose resolution took it. The run writes its outcome, as a scheduled run
+   * does for its claim. Not together with `scheduled`.
+   */
+  slotClaim?: SlotClaim;
 }
 
 /** The note changed after the caller read it; nothing was run. */
@@ -85,6 +91,19 @@ export class WorkflowExecutor {
   private interpolator = new TemplateInterpolator();
 
   async runWorkflow(options: ExecuteOptions): Promise<Workflow> {
+    const held = options.slotClaim;
+    if (!held) return this.runWorkflowOnce(options);
+    // A slot held before the run starts is finished whatever ends it, also a
+    // note that does not parse; finishing twice changes nothing.
+    try {
+      return await this.runWorkflowOnce(options);
+    } catch (err) {
+      await this.finishSlot(options.platform, options.workflowPath, held, slotOutcomeOf(err));
+      throw err;
+    }
+  }
+
+  private async runWorkflowOnce(options: ExecuteOptions): Promise<Workflow> {
     const workflow = this.parser.parse(options.content, options.workflowPath);
     // Before anything runs or is recorded: an id no cell has used to select
     // no cell, and the run was recorded as completed (#223). An empty id
@@ -107,7 +126,10 @@ export class WorkflowExecutor {
     // One run per scheduled slot (#255): claimed before the run lock, so a
     // runner that comes second to a slot is refused even when the first run
     // has ended. From here on the slot is spent, whatever the run comes to.
-    let claim: SlotClaim | undefined;
+    if (options.scheduled && options.slotClaim) {
+      throw new Error("A run either claims its scheduled slot or finishes one it holds, not both");
+    }
+    let claim: SlotClaim | undefined = options.slotClaim;
     if (options.scheduled) {
       if (typeof platform.claimSlot !== "function") {
         throw new Error(

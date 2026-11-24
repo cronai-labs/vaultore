@@ -74,27 +74,32 @@ export class WorkflowScheduler {
   /**
    * Arm exactly `registrations`: the ones armed already keep their next run,
    * as `register` keeps it, and the others are dropped. Returns those whose
-   * cron expression is invalid, which are not armed.
+   * cron expression is invalid, which are not armed, and those armed now that
+   * were not before (or with another schedule), for the host to look for
+   * missed runs of (#269).
    *
    * Unregistering everything and registering again recomputed every next run
    * from now, so a slot that came due between two ticks was dropped whenever
    * a rescan fell in between (#255).
    */
-  replace(registrations: readonly Registration[]): Registration[] {
+  replace(registrations: readonly Registration[]): { invalid: Registration[]; armed: Registration[] } {
     const wanted = new Set(registrations.map((entry) => entry.path));
     for (const path of this.workflows.keys()) {
       if (!wanted.has(path)) this.workflows.delete(path);
     }
     const invalid: Registration[] = [];
+    const armed: Registration[] = [];
     for (const entry of registrations) {
+      const before = this.workflows.get(entry.path);
       try {
-        this.register(entry.path, entry.cronExpression);
+        const now = this.register(entry.path, entry.cronExpression);
+        if (now !== before) armed.push(entry);
       } catch {
         this.workflows.delete(entry.path);
         invalid.push(entry);
       }
     }
-    return invalid;
+    return { invalid, armed };
   }
 
   list(): ScheduledWorkflow[] {

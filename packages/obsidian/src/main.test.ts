@@ -25,7 +25,17 @@ vi.mock("@vaultore/core", async () => {
     SlotTakenError: actual.SlotTakenError,
     // The schedule record is the real one too, in the test's own directory.
     claimSlot: (options: import("@vaultore/core").ClaimSlotOptions) =>
-      actual.claimSlot({ ...options, directory: runLocks.slots }),
+      actual.claimSlot({ ...options, directory: runLocks.slots, pruneIntervalMs: 0 }),
+    MissedSlotError: actual.MissedSlotError,
+    isLateSlot: actual.isLateSlot,
+    recordMissedSlots: (options: import("@vaultore/core").RecordMissedOptions) =>
+      actual.recordMissedSlots({ ...options, directory: runLocks.slots }),
+    readSlotRecord: (options: import("@vaultore/core").ReadSlotRecordOptions) =>
+      actual.readSlotRecord({ ...options, directory: runLocks.slots }),
+    catchUpMissedSlot: (options: import("@vaultore/core").ResolveMissedOptions) =>
+      actual.catchUpMissedSlot({ ...options, directory: runLocks.slots }),
+    dismissMissedSlots: (options: import("@vaultore/core").ResolveMissedOptions) =>
+      actual.dismissMissedSlots({ ...options, directory: runLocks.slots }),
     WorkflowExecutor: class {
       runWorkflow = vi.fn().mockResolvedValue({});
     },
@@ -570,6 +580,68 @@ describe("VaultOrePlugin", () => {
         await (plugin as any).runWorkflowByPath("notes/daily.md", scheduled);
 
         expect(executor.runWorkflow).toHaveBeenCalledWith(expect.objectContaining({ workflowPath: "notes/daily.md", scheduled }));
+      });
+
+      // #269: runs no runner fired are recorded once, shown, and resolved.
+      describe("missed runs", () => {
+        const HOURLY = "15 * * * *";
+        const lastRun = new Date(Date.now() - 6 * 3_600_000);
+
+        beforeEach(async () => {
+          // A run the note had, so there is a last decided slot to look after.
+          await (await adapter().claimSlot!("notes/daily.md", { schedule: HOURLY, slot: lastRun })).finish({ result: "completed" });
+          const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
+          plugin.app.vault.getAbstractFileByPath = vi.fn().mockReturnValue(file) as never;
+          plugin.app.vault.read = vi.fn().mockResolvedValue("---\nore: true\n---\n") as never;
+          Notice.shown.length = 0;
+        });
+
+        it("are recorded once, said once, and listed with Catch up and Dismiss", async () => {
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+
+          expect(Notice.shown.filter((m) => m.includes("missed"))).toHaveLength(1);
+          expect(Notice.shown[0]).toMatch(/^VaultOre: notes\/daily\.md missed \d+ scheduled run\(s\) since /);
+          expect(plugin.missedRuns).toHaveLength(1);
+          const row = renderSettings().find((s) => s.name === "notes/daily.md" && s.buttons.length === 2);
+          expect(row?.buttons.map((b) => b.text)).toEqual(["Catch up", "Dismiss"]);
+        });
+
+        it("are dismissed from the settings, and leave the list", async () => {
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          const row = renderSettings().find((s) => s.name === "notes/daily.md" && s.buttons.length === 2);
+
+          await row!.buttons[1]!.clickHandler!();
+
+          expect(plugin.missedRuns).toEqual([]);
+          const { readSlotRecord } = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          expect((await readSlotRecord({ directory: runLocks.slots })).find((e) => e.kind === "missed")?.state).toBe("dismissed");
+        });
+
+        it("are caught up with one run that holds the gap", async () => {
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
+          executor.runWorkflow.mockClear();
+
+          await plugin.catchUpMissedRun(plugin.missedRuns[0]!);
+
+          expect(executor.runWorkflow).toHaveBeenCalledTimes(1);
+          expect(executor.runWorkflow.mock.calls[0]?.[0]).toMatchObject({ workflowPath: "notes/daily.md", slotClaim: expect.anything() });
+          expect(plugin.missedRuns).toEqual([]);
+        });
+
+        it("are what a late tick finds, instead of a run", async () => {
+          const look = vi.spyOn(plugin, "lookForMissedRuns").mockResolvedValue(undefined);
+          const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
+          const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
+          scheduler.register("notes/daily.md", HOURLY).nextRun = new Date(Date.now() - 3 * 60_000);
+          vi.spyOn(plugin as any, "isApprovedSchedule").mockReturnValue(true);
+
+          scheduler.tick();
+
+          expect(look).toHaveBeenCalledWith("notes/daily.md", HOURLY);
+          expect(run).not.toHaveBeenCalled();
+        });
       });
 
       // The agent ran this occurrence: not worth a notice every minute.

@@ -225,3 +225,47 @@ describe("a run started by hand", () => {
 		expect(v.record.slots.size).toBe(0);
 	});
 });
+
+describe("a catch-up, which holds its slot before the run (#269)", () => {
+	function held() {
+		const outcomes: unknown[] = [];
+		return {
+			outcomes,
+			claim: {
+				slot: SLOT,
+				finish: async (outcome: unknown) => {
+					outcomes.push(outcome);
+				},
+			},
+		};
+	}
+
+	it("finishes the slot it holds, and claims none", async () => {
+		const v = vault();
+		const h = held();
+
+		await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: NOTE, slotClaim: h.claim });
+
+		expect(h.outcomes).toMatchObject([{ result: "completed" }]);
+		expect(v.record.slots.size).toBe(0);
+	});
+
+	it("finishes it also when the note does not parse", async () => {
+		const v = vault();
+		const h = held();
+
+		await expect(
+			new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: "---\nore: true\nruntime:\n  timeout: 0\n---\n", slotClaim: h.claim })
+		).rejects.toThrow();
+
+		expect(h.outcomes).toMatchObject([{ result: "failed" }]);
+	});
+
+	it("is refused together with a scheduled slot", async () => {
+		const v = vault();
+
+		await expect(
+			new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: NOTE, scheduled: SCHEDULED, slotClaim: held().claim })
+		).rejects.toThrow("not both");
+	});
+});

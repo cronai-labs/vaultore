@@ -58,13 +58,15 @@ describe("WorkflowScheduler", () => {
     scheduler.register("Workflows/a.md", "* * * * *").nextRun = due;
     scheduler.register("Workflows/gone.md", "* * * * *");
 
-    const invalid = scheduler.replace([
+    const { invalid, armed } = scheduler.replace([
       { path: "Workflows/a.md", cronExpression: "* * * * *" },
       { path: "Workflows/new.md", cronExpression: "0 * * * *" },
       { path: "Workflows/typo.md", cronExpression: "not a cron" },
     ]);
 
     expect(invalid.map((entry) => entry.path)).toEqual(["Workflows/typo.md"]);
+    // Newly armed: the host looks for its missed runs (#269).
+    expect(armed.map((entry) => entry.path)).toEqual(["Workflows/new.md"]);
     expect(scheduler.list().map((entry) => entry.path).sort()).toEqual(["Workflows/a.md", "Workflows/new.md"]);
     expect(scheduler.tick().map((entry) => [entry.path, entry.slot])).toEqual([["Workflows/a.md", due]]);
   });
@@ -73,7 +75,7 @@ describe("WorkflowScheduler", () => {
     const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     scheduler.register("Workflows/a.md", "* * * * *");
 
-    expect(scheduler.replace([{ path: "Workflows/a.md", cronExpression: "nope" }])).toHaveLength(1);
+    expect(scheduler.replace([{ path: "Workflows/a.md", cronExpression: "nope" }]).invalid).toHaveLength(1);
     expect(scheduler.list()).toEqual([]);
   });
 

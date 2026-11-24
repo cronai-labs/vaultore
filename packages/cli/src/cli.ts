@@ -11,6 +11,8 @@
  *   vaultore schedules revoke        withdraw that
  *   vaultore schedules export        emit the CronAI handover manifest
  *   vaultore schedules log           what each scheduled run came to
+ *   vaultore schedules catch-up      run a note's missed scheduled runs once now
+ *   vaultore schedules dismiss       close a note's missed scheduled runs
  */
 
 import { promises as fs } from "node:fs";
@@ -20,13 +22,17 @@ import { clearInterval, setInterval } from "node:timers";
 import {
 	RunLockHeldError,
 	SlotTakenError,
+	catchUpMissedSlot,
+	dismissMissedSlots,
+	isLateSlot,
 	readSlotRecord,
+	recordMissedSlots,
 	WorkflowExecutor,
 	WorkflowScheduler,
 	VERSION,
 	errorMessage,
 } from "@vaultore/core";
-import type { ScheduledSlot } from "@vaultore/core";
+import type { ScheduledSlot, SlotClaim } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import {
 	createApprovedRunner,
@@ -50,6 +56,7 @@ import {
 	hasExplicitVault,
 	keepDaysFrom,
 	parseArgs,
+	slotFrom,
 	rescanSecondsFrom,
 	toVaultRelative,
 	vaultRootFrom,
@@ -68,6 +75,8 @@ Usage:
   vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
   vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
   vaultore schedules log [<workflow.md>] [--vault <dir>]
+  vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--yes] [--quiet]
+  vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
   vaultore --version | --help
 
 Options:
@@ -92,7 +101,10 @@ Options:
 The agent runs a scheduled note only after 'vaultore schedules approve', and
 only while the note's front matter and cells are what was approved. Each
 occurrence of a schedule runs at most once, in the agent or in Obsidian;
-'vaultore schedules log' shows what each one came to.
+'vaultore schedules log' shows what each one came to. Occurrences no runner
+fired (the machine slept, nothing was running) are recorded as missed runs;
+'schedules catch-up' runs the note once for them, 'schedules dismiss' closes
+them. A missed run is named by its first slot, as the log shows it.
 
 Secrets are read from the environment:
   VAULTORE_OPENAI_APIKEY (or OPENAI_API_KEY)
@@ -100,10 +112,15 @@ Secrets are read from the environment:
 `;
 }
 
-async function cmdRun(args: ParsedArgs): Promise<number> {
+/** Runs a note: `vaultore run`, or with `catchUp` the catch-up of its missed runs (#269). */
+async function cmdRun(args: ParsedArgs, catchUp?: { slot: Date | undefined }): Promise<number> {
 	const workflowArg = args.positional[0];
 	if (!workflowArg) {
 		process.stderr.write("error: missing workflow file\n\n" + usage());
+		return 2;
+	}
+	if (catchUp && args.flags["cell"] !== undefined) {
+		process.stderr.write("error: a catch-up runs the whole note; --cell is not for it\n\n" + usage());
 		return 2;
 	}
 
@@ -113,13 +130,26 @@ async function cmdRun(args: ParsedArgs): Promise<number> {
 		configDir: configDirFrom(args.flags),
 		assumeYes: args.flags["yes"] === true,
 		quiet: args.flags["quiet"] === true,
-		runner: "vaultore run",
+		runner: catchUp ? "vaultore schedules catch-up" : "vaultore run",
 	});
 
 	const workflowPath = toVaultRelative(vaultRoot, workflowArg, {
 		vaultExplicit: hasExplicitVault(args.flags),
 	});
 	const content = await adapter.readFile(workflowPath);
+
+	// Taken once the note was read: a note that cannot be read leaves its
+	// missed runs open.
+	let slotClaim: SlotClaim | undefined;
+	if (catchUp) {
+		const claim = await catchUpMissedSlot({ vaultRoot, notePath: workflowPath, slot: catchUp.slot, by: "vaultore" });
+		const { gap } = claim;
+		process.stdout.write(
+			`[vaultore] catching up ${gap.count ?? 1} missed run(s) of ${workflowPath}, ` +
+				`from ${gap.slot.toISOString()} to ${(gap.until ?? gap.slot).toISOString()}, with one run\n`
+		);
+		slotClaim = claim;
+	}
 
 	const executor = new WorkflowExecutor();
 	const targetCellId = typeof args.flags["cell"] === "string" ? args.flags["cell"] : undefined;
@@ -135,6 +165,7 @@ async function cmdRun(args: ParsedArgs): Promise<number> {
 		content,
 		targetCellId,
 		skipDependencies: args.flags["skip-deps"] === true,
+		...(slotClaim ? { slotClaim } : {}),
 		emitEvent: (event, data) => {
 			const cellId = (data as { cellId?: string })?.cellId;
 			if (event === "cell:started" && cellId !== undefined) ran.push(cellId);
@@ -262,11 +293,33 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		}
 	);
 
+	// Occurrences no runner fired are recorded as missed runs, said once
+	// here, and left to the user to catch up or dismiss (#269).
+	const lookForMissed = async (path: string, schedule: string): Promise<void> => {
+		try {
+			const gaps = await recordMissedSlots({ vaultRoot, notePath: path, schedule, by: "vaultore agent", keepDays });
+			for (const gap of gaps) {
+				warn(
+					`missed ${gap.count} scheduled run(s) of ${path}, from ${gap.slot.toISOString()} to ${gap.until.toISOString()}; ` +
+						`run them once with: vaultore schedules catch-up ${path}, or close them with: vaultore schedules dismiss ${path}`
+				);
+			}
+		} catch (err) {
+			warn(`could not look for missed runs of ${path}: ${errorMessage(err)}`);
+		}
+	};
+
 	const scheduler = new WorkflowScheduler({
 		timers: adapter.timers,
 		tickIntervalMs: 60 * 1000,
 		onTick: (workflows) => {
 			workflows.forEach((workflow) => {
+				// A tick that comes late (the machine slept) does not run the
+				// slot it held: that slot, and any after it, are missed runs.
+				if (isLateSlot(workflow.slot)) {
+					void lookForMissed(workflow.path, workflow.cronExpression);
+					return;
+				}
 				void runByPath(workflow.path, { schedule: workflow.cronExpression, slot: workflow.slot });
 			});
 		},
@@ -298,11 +351,14 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		const plan = planRegistrations(await scheduledNotes(discovered), approvals);
 		// Notes armed already keep their next run, so a slot that came due since
 		// the last tick still fires (#255).
-		const invalid = scheduler.replace(
+		const { invalid, armed } = scheduler.replace(
 			plan.register.map((note) => ({ path: note.path, cronExpression: note.schedule }))
 		);
 		for (const note of invalid) {
 			process.stderr.write(`[vaultore:agent] invalid cron in ${note.path}, skipping\n`);
+		}
+		for (const note of armed) {
+			void lookForMissed(note.path, note.cronExpression);
 		}
 		const registered = plan.register.length - invalid.length;
 		process.stdout.write(`[vaultore:agent] ${registered} scheduled workflow(s) registered\n`);
@@ -403,6 +459,35 @@ async function cmdSchedulesLog(args: ParsedArgs): Promise<number> {
 	return 0;
 }
 
+/** `slotFrom`, with a usage error printed and null for a bad one. */
+function slotArg(args: ParsedArgs): Date | undefined | null {
+	try {
+		return slotFrom(args.positional);
+	} catch (err) {
+		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
+		return null;
+	}
+}
+
+async function cmdSchedulesDismiss(args: ParsedArgs): Promise<number> {
+	const noteArg = args.positional[0];
+	if (!noteArg) {
+		process.stderr.write("error: missing workflow file\n\n" + usage());
+		return 2;
+	}
+	const slot = slotArg(args);
+	if (slot === null) return 2;
+	const vaultRoot = vaultRootFrom(args.flags);
+	const notePath = toVaultRelative(vaultRoot, noteArg, { vaultExplicit: hasExplicitVault(args.flags) });
+	const dismissed = await dismissMissedSlots({ vaultRoot, notePath, slot, by: "vaultore" });
+	for (const gap of dismissed) {
+		process.stdout.write(
+			`dismissed ${gap.count ?? 1} missed run(s) of ${notePath}, from ${gap.slot.toISOString()} to ${(gap.until ?? gap.slot).toISOString()}\n`
+		);
+	}
+	return 0;
+}
+
 async function cmdSchedulesApprove(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
 	const paths = notePathsFrom(args, vaultRoot);
@@ -488,6 +573,11 @@ async function main(): Promise<number> {
 			if (sub === "revoke") return cmdSchedulesRevoke(args);
 			if (sub === "export") return cmdSchedulesExport(args);
 			if (sub === "log") return cmdSchedulesLog(args);
+			if (sub === "catch-up") {
+				const slot = slotArg(args);
+				return slot === null ? 2 : cmdRun(args, { slot });
+			}
+			if (sub === "dismiss") return cmdSchedulesDismiss(args);
 			process.stderr.write(`error: unknown schedules subcommand '${sub ?? ""}'\n\n` + usage());
 			return 2;
 		}

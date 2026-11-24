@@ -73,6 +73,8 @@ export interface NodeAdapterOptions {
 	keepDays?: number;
 	/** Where the schedule record lives. Default: core's `slotRecordDirectory()`. Tests pass their own. */
 	slotDirectory?: string;
+	/** How often claims prune the record, at most. Default: core's hour. Tests pass 0. */
+	slotPruneIntervalMs?: number;
 }
 
 export class NodeAdapter implements PlatformAdapter {
@@ -93,6 +95,7 @@ export class NodeAdapter implements PlatformAdapter {
 	private readonly runLockDirectory: string | undefined;
 	private readonly keepDays: number | undefined;
 	private readonly slotDirectory: string | undefined;
+	private readonly slotPruneIntervalMs: number | undefined;
 	/** SKIP_DIRS plus the configured and the default config folder. */
 	private readonly skipDirs: ReadonlySet<string>;
 	private config: Record<string, unknown>;
@@ -108,6 +111,7 @@ export class NodeAdapter implements PlatformAdapter {
 		this.runLockDirectory = options.runLockDirectory;
 		this.keepDays = options.keepDays;
 		this.slotDirectory = options.slotDirectory;
+		this.slotPruneIntervalMs = options.slotPruneIntervalMs;
 		this.config = this.loadConfig();
 	}
 
@@ -190,6 +194,7 @@ export class NodeAdapter implements PlatformAdapter {
 			by: this.runner,
 			keepDays: this.keepDays,
 			directory: this.slotDirectory,
+			...(this.slotPruneIntervalMs !== undefined ? { pruneIntervalMs: this.slotPruneIntervalMs } : {}),
 			onPruneError: (path, err) => {
 				process.stderr.write(`[vaultore] could not prune ${path} from the schedule record: ${errorMessage(err)}\n`);
 			},
