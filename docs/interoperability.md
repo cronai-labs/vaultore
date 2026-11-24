@@ -1,7 +1,5 @@
 # Interoperability
 
-> **Last Updated:** 2026-10-15
-
 VaultOre is core-first by design: all engine logic lives in
 `@vaultore/core`, and each surface (today the Obsidian plugin and the CLI)
 is a thin adapter. This document maps
@@ -15,14 +13,8 @@ tools.
 `@vaultore/cli` provides a standalone binary with a plain-filesystem
 `PlatformAdapter` — any directory of markdown is a vault.
 
-It is not on npm yet, so build it from a checkout and invoke the built entry
-point (or link it onto your `PATH` yourself):
-
-```bash
-git clone https://github.com/cronai-labs/vaultore.git
-cd vaultore && bun install && bun run build
-alias vaultore="node $PWD/packages/cli/dist/cli.js"
-```
+It is not on npm yet; build it from a checkout as the
+[README](../README.md#command-line-interface) shows.
 
 ```bash
 vaultore run Workflows/digest.md --vault ~/notes     # headless run
@@ -55,10 +47,9 @@ only after `vaultore schedules approve <note.md>`**, and only while its
 frontmatter and cells are what was approved; the agent reads the note and
 the approvals again when a run is due, and names every scheduled note it
 does not run. Its approvals are separate from the plugin's and are kept
-outside the vault, in `approvals.json` under `$XDG_CONFIG_HOME/vaultore` or
-`~/.config/vaultore` (`--state-dir <dir>` for another place): on a server
-that syncs the vault, an approval cannot arrive with it
-([permissions spec](../specs/permissions-spec.md) §6.2). It skips a
+outside the vault, so on a server that syncs the vault an approval cannot
+arrive with it ([permissions spec](../specs/permissions-spec.md) §6.2; where
+exactly: [README](../README.md#where-vaultore-keeps-things)). It skips a
 scheduled run while the previous run of the same note is still going. Run
 it under systemd or launchd to keep it alive, with the same user and the
 same `--state-dir` you approved with.

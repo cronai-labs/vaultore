@@ -51,7 +51,7 @@ git push --force-with-lease          # never a bare --force
 
 **The PR title and every branch commit are linted.** The title becomes the squash commit
 subject and therefore the changelog entry; the `policy` job checks that it is a Conventional
-Commit. The `commitlint` job checks each commit between the base and your head against
+Commit. The `code` job's "Lint commit messages" step checks each commit between the base and your head against
 `commitlint.config.cjs`: an unknown type fails, an unlisted scope only warns. Write branch
 commits for whoever reads the PR.
 
@@ -62,8 +62,8 @@ unticked box fails `policy` and blocks the merge.
 
 1. Branch from `main` (`<issue>-<slug>`)
 2. Make focused commits following the conventions below
-3. Run `bun run build`, `bun run test`, `bun run typecheck`, `bun run lint` and
-   `bun run test:canonical`
+3. Run `bun run build`, `bun run test`, `bun run typecheck`, `bun run lint`,
+   `bun run test:canonical` and, when you touched `scripts/`, `bun run test:scripts`
 4. Open the PR against `main`. Two checks are required: `policy` (`policy.yml`: the PR title,
    the breaking footer, rebase-not-merge, the Definition of done, no tool attribution, pinned
    actions) runs on every PR event, edits included; `code` (`code.yml`: commitlint, secret scan,
@@ -110,8 +110,11 @@ bun run test              # unit tests (all packages)
 bun run typecheck         # TypeScript across all packages, tests included
 bun run lint              # the Obsidian review's ESLint config (obsidianmd recommended), all packages
 bun run test:canonical    # parse every canonical fixture (no container needed)
+bun run test:scripts      # the release, changelog and CI scripts in scripts/
 VAULTORE_IT_ENGINE=docker bun run --cwd packages/core test:integration   # against a real container engine (default engine: colima)
 ```
+
+The unit tests need nothing: a shared setup fails any `fetch` a test did not stub. The integration tests need a running engine and create their vaults under `~/.cache`, as colima shares only the home directory with its VM. CI runs all of these, the integration tests on Docker, and a reproducible-build check. How each fixture is exercised: [docs/testing-fixtures.md](docs/testing-fixtures.md).
 
 Please keep tests green and add coverage for new behavior. Canonical fixtures in `fixtures/canonical/` are the acceptance bar — if you change the workflow format, update the spec in `specs/` first.
 

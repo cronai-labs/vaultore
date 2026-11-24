@@ -24,8 +24,15 @@ documents link to it.
 | [Plugin development quickstart](quickstart-plugin-dev.md) | Build the plugin, load it into a test vault, run a fixture |
 | [Testing fixtures](testing-fixtures.md) | The canonical workflows and how they are tested |
 | [Interoperability](interoperability.md) | The CLI and headless agent, OKF, the Obsidian CLI, Quarto, CronAI |
-| [Architecture](../ARCHITECTURE.md) | Packages, modules, how a run flows through the code |
-| [Contributing](../CONTRIBUTING.md) | Setup, conventions, pull requests, releases |
+| [Architecture](../ARCHITECTURE.md) | A map of the repository: packages, directories, where to start for a change |
+| [Contributing](../CONTRIBUTING.md) | Setup, conventions, tests, pull requests, releases |
+
+## Internals
+
+| Document | Covers |
+|----------|--------|
+| [How a run flows](internals/run-flow.md) | The adapters, the core modules, the steps of a run |
+| [Container images](internals/container-images.md) | Which images run cells; the unbuilt Dockerfiles under `containers/` |
 
 ## Planning
 
@@ -33,18 +40,22 @@ documents link to it.
 |----------|--------|
 | [Roadmap](roadmap.md) | What exists, what is next, what is under consideration |
 | [Local intelligence](local-intelligence.md) | An exploration of local retrieval for AI cells; nothing of it is built |
+| [Parallel execution](design/parallel-execution.md) | The constraints running cells at the same time has to meet; not built |
 
 ## Decisions
 
 | Document | Covers |
 |----------|--------|
 | [Dependency audit scope](decisions/dependency-audit-scope.md) | Why the CI audit fails on high and critical advisories only |
+| [Two required checks](decisions/ci-two-checks.md) | Why CI is split into `policy` and `code` |
 
 ## Layout
 
 ```
 docs/
 ├── decisions/                # decision records, each with a re-check date
+├── design/                   # designs of what is not built
+├── internals/                # how the code works, below the map in ARCHITECTURE.md
 ├── index.md                  # this file
 ├── interoperability.md
 ├── local-intelligence.md
@@ -57,7 +68,8 @@ specs/
 ├── go-cell-spec.md
 ├── ore-implementation.md
 ├── permissions-spec.md
-└── sandbox-spec.md
+├── sandbox-spec.md
+└── schedule-record-spec.md
 
 fixtures/canonical/           # workflow notes that double as acceptance tests
 ├── daily-summary.md

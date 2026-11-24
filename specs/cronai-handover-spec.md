@@ -3,7 +3,6 @@
 > **Version:** 0.1.0
 > **Status:** The export side is implemented (`vaultore schedules export`). The CronAI side and
 > local schedulers honouring `.vaultore/handover.json` are not built.
-> **Last Updated:** 2026-10-15
 
 ## Motivation
 
@@ -106,8 +105,8 @@ path listed in a handover file with `owner: cronai`. Deleting the file —
 or removing a path from it — returns ownership to local scheduling on the
 next rescan. *(Not built: neither the plugin nor `vaultore agent` reads
 `handover.json` yet. Until they do, stop local scheduling of a handed-over
-note yourself: withdraw its approval in the plugin, and do not run
-`vaultore agent` on that vault.)*
+note yourself: withdraw its approval in the plugin, and
+`vaultore schedules revoke <note.md>` for the agent.)*
 
 ## Permission Semantics in the Cloud
 

@@ -1,86 +1,13 @@
 # VaultOre Architecture
 
-> **Last Updated:** 2026-10-15
-> **Repository:** [github.com/cronai-labs/vaultore](https://github.com/cronai-labs/vaultore)
-
-How the code is organised and how a run moves through it. Behaviour is specified elsewhere,
-once: the workflow format in the [Ore specification](https://github.com/cronai-labs/ore-spec)
-and VaultOre's implementation of it in [specs/ore-implementation.md](specs/ore-implementation.md),
-permissions and their defaults in [specs/permissions-spec.md](specs/permissions-spec.md),
-container flags in [specs/sandbox-spec.md](specs/sandbox-spec.md) (exact flags in
-permissions-spec §4.1), plans in [docs/roadmap.md](docs/roadmap.md).
+A map of the repository, for finding your way. How a run moves through the code is in [docs/internals/run-flow.md](docs/internals/run-flow.md); behaviour is specified once, in [specs/](specs/) and the [Ore specification](https://github.com/cronai-labs/ore-spec).
 
 ## Principles
 
-1. **Core first.** All engine logic lives in `@vaultore/core`. The Obsidian plugin and the CLI
-   are adapters: each implements `PlatformAdapter` and calls the same executor.
-2. **Local first.** Everything runs on the user's machine; the only remote services are the AI
-   providers a workflow calls.
+1. **Core first.** All engine logic lives in `@vaultore/core`. The Obsidian plugin and the CLI are adapters: each implements `PlatformAdapter` and calls the same executor. Core calls no global `fetch` or timer; it uses the adapter's.
+2. **Local first.** Everything runs on the user's machine; the only remote services are the AI providers a workflow calls.
 3. **Fail closed.** No container engine means no run; a permission nobody granted is denied.
-4. **Fixtures as acceptance tests.** The notes in `fixtures/canonical/` are real workflows and
-   test inputs at the same time.
-
-## Repository
-
-Every tracked file outside `.github/`:
-
-```
-vaultore/
-├── ARCHITECTURE.md, CHANGELOG.md, CONTRIBUTING.md, LICENSE, README.md
-├── package.json              # bun workspaces (packages/*), turbo scripts
-├── bun.lock
-├── turbo.json
-├── manifest.json             # Obsidian manifest (copy of packages/obsidian/manifest.json)
-├── versions.json             # plugin version → minAppVersion, for Obsidian
-├── version-bump.mjs          # sets the version in every location
-├── cliff.toml                # git-cliff changelog config
-├── commitlint.config.cjs
-├── containers/               # Dockerfiles that nothing builds or uses (see "Container images")
-│   ├── bun-base/Dockerfile
-│   ├── go-builder/Dockerfile
-│   ├── python-base/{Dockerfile,requirements.txt}
-│   └── shell-base/Dockerfile
-├── docs/
-│   ├── index.md, interoperability.md, local-intelligence.md
-│   ├── quickstart-plugin-dev.md, roadmap.md, testing-fixtures.md
-├── fixtures/canonical/       # daily-summary, hello-world, link-digest, smart-inbox, sys-snapshot (.md)
-├── packages/
-│   ├── core/                 # @vaultore/core
-│   │   ├── src/
-│   │   │   ├── index.ts      # public exports
-│   │   │   ├── version.ts    # VERSION, rewritten by version-bump.mjs
-│   │   │   ├── errors.ts     # errorMessage: the message of any thrown value
-│   │   │   ├── types/        # types, defaults, the frontmatter schema
-│   │   │   ├── parser/       # note → workflow; output callouts; templates
-│   │   │   ├── executor/     # runs a workflow (index.ts); output notes (output-note.ts)
-│   │   │   ├── runtime/      # engine detection; container command line
-│   │   │   ├── providers/    # OpenAI and Anthropic
-│   │   │   ├── scheduler/    # cron registrations and ticks; the schedule record (slot-record.ts)
-│   │   │   ├── lock/         # a lock between VaultOre processes on one machine
-│   │   │   ├── settings/     # this machine's settings both runners share (machine-settings.ts)
-│   │   │   ├── vault/        # exported vault helpers (not used by the executor)
-│   │   │   ├── fixtures/     # canonical and smart-inbox tests
-│   │   │   └── testing/      # integration-test helpers, network guard
-│   │   ├── tsup.config.ts, tsconfig.json, eslint.config.mjs
-│   │   └── vitest.config.ts, vitest.canonical.config.ts, vitest.integration.config.ts
-│   ├── obsidian/             # the plugin
-│   │   ├── src/main.ts       # plugin, ObsidianAdapter, settings tab, permission modal
-│   │   ├── src/main.test.ts, src/__mocks__/obsidian.ts
-│   │   ├── manifest.json, styles.css
-│   │   └── esbuild.config.mjs, tsconfig.json, eslint.config.mts, vitest.config.ts
-│   └── cli/                  # @vaultore/cli
-│       ├── src/cli.ts        # the vaultore command
-│       ├── src/adapter.ts    # NodeAdapter
-│       ├── src/scan.ts       # workflow discovery, schedule manifest
-│       ├── src/schedules.ts  # schedules list, approve, revoke, log, late-after
-│       ├── src/approvals.ts  # the agent's approvals file, outside the vault
-│       ├── src/args.ts, src/agent.ts, src/index.ts, *.test.ts
-│       └── tsup.config.ts, tsconfig.json, eslint.config.mjs, vitest.config.ts
-├── scripts/                  # package-obsidian.mjs, release*.mjs, release-gate.sh
-└── specs/                    # ore-implementation.md; cronai-handover, go-cell, permissions, sandbox (-spec.md)
-```
-
-`.github/` holds `policy.yml` and `code.yml` (the two required checks), `release.yml`, `dependabot.yml` and the pull request template.
+4. **Fixtures as acceptance tests.** The notes in `fixtures/canonical/` are real workflows and test inputs at the same time.
 
 ## Packages
 
@@ -89,119 +16,53 @@ vaultore/
             ┌──────┴──────┐
             ▼             ▼
   @vaultore/obsidian   @vaultore/cli
-  (Obsidian plugin)    (vaultore command, NodeAdapter)
+  (Obsidian plugin)    (vaultore command and agent)
 ```
 
-| | Obsidian plugin | CLI |
+## Where things are
+
+```
+vaultore/
+├── packages/
+│   ├── core/src/            # @vaultore/core; index.ts is the public surface
+│   │   ├── parser/          #   note → workflow; output callouts; {{…}} templates
+│   │   ├── executor/        #   a whole run (index.ts); output notes
+│   │   ├── runtime/         #   container engines; the hardened `run` command line
+│   │   ├── providers/       #   OpenAI and Anthropic
+│   │   ├── scheduler/       #   cron ticks; the schedule record (slot-record.ts)
+│   │   ├── lock/            #   run locks; where per-machine state lives
+│   │   ├── settings/        #   settings both runners share on one machine
+│   │   ├── types/           #   types, defaults, the front matter schema
+│   │   ├── vault/           #   exported vault helpers (#45)
+│   │   └── fixtures/, testing/
+│   ├── obsidian/src/main.ts # the plugin: ObsidianAdapter, settings tab, permission modal
+│   └── cli/src/             # cli.ts (the command), adapter.ts (NodeAdapter), agent.ts,
+│                            # schedules.ts, approvals.ts, scan.ts, args.ts
+├── fixtures/canonical/      # workflow notes that are also acceptance tests
+├── specs/                   # what VaultOre does: one spec per topic
+├── docs/                    # guides, internals, designs, decisions, roadmap (docs/index.md)
+├── scripts/                 # release, changelog, packaging and CI helpers, with their tests
+├── containers/              # Dockerfiles nothing builds yet (docs/internals/container-images.md)
+├── .github/                 # policy.yml and code.yml (the two required checks), release.yml
+└── manifest.json, versions.json, version-bump.mjs, package.json, turbo.json, cliff.toml
+```
+
+## To change something, start here
+
+| To change | Start in | Specified in |
 |---|---|---|
-| Built by | esbuild → `packages/obsidian/dist/main.js` (one CommonJS bundle, core included) | tsup → `packages/cli/dist/cli.js`, `index.js` |
-| Files | Obsidian's vault API; `.vaultore/` through the adapter | Node `fs`, confined to the vault root |
-| Settings | Plugin data (`.obsidian/plugins/vaultore/data.json`) | `<vault>/.vaultore/config.json` |
-| Secrets | Obsidian secret storage, by the name the user selected | Environment variables |
-| HTTP | `requestUrl` | `fetch` |
-| Timers (core calls none of its own) | The window's; the scheduler's interval is registered with the plugin | Node's |
-| `ask` permissions | Modal | Deny, or allow with `--yes` |
-| Run lock | `acquireRunLock` as `Obsidian` | `acquireRunLock` as `vaultore run`, `vaultore agent` or `vaultore schedules catch-up` |
-| Schedule record | `claimSlot` as `Obsidian`, pruned by the "Scheduled-run history" setting | `claimSlot` as `vaultore agent`, pruned by `--keep-days` |
-| Scheduling | Approved notes only, while Obsidian is open; an approval is a path and a schedule, in the plugin data | `vaultore agent`, approved notes only; an approval is a path and the note's content hash, in `approvals.json` outside the vault (`--state-dir`) |
-
-## Core Modules
-
-| Module | Responsibility | Main symbols |
-|--------|----------------|--------------|
-| `types` | Shared types; `DEFAULT_PERMISSIONS`, `DEFAULT_RUNTIME`, `WorkflowFrontmatterSchema` (zod) | |
-| `parser` | Frontmatter and cells from note text; reading and writing output callouts; `{{…}}` templates | `WorkflowParser`, `OutputSerializer`, `TemplateInterpolator`, `isWorkflowFrontmatter` |
-| `executor` | A whole run: permissions, engine check, order, each cell, outputs, run records | `WorkflowExecutor`, `renderOutputMarkdown` |
-| `runtime` | Which engines answer; the `run` command line with its hardening; spawning it | `detectRuntimes`, `buildRunCommand`, `execContainer` |
-| `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` (core has no transport of its own); model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
-| `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback with the occurrence that came due; whether a note still has its schedule approval; the schedule record, which lets each occurrence run at most once across the plugin and the CLI, in `~/.config/vaultore/slots`, and records the occurrences no runner fired as missed runs to catch up or dismiss | `WorkflowScheduler`, `computeNextRun`, `classifyScheduleApproval`, `claimSlot`, `readSlotRecord`, `SlotTakenError`, `recordMissedSlots`, `catchUpMissedSlot`, `dismissMissedSlots` |
-| `lock` | A lock between VaultOre processes on one machine: the approvals file's, and one run lock per note, shared by the plugin and the CLI, in `~/.config/vaultore/locks` | `acquireLock`, `acquireRunLock`, `RunLockHeldError` |
-| `settings` | This machine's settings both runners must share, in `~/.config/vaultore/settings.json`: the late threshold | `readMachineSettings`, `writeMachineSettings`, `machineSettingsPath` |
-| `vault` | `createVaultAPI`, `generateRuntimeScript`: exported, but the executor injects its own copy (`buildTypeScriptRuntime`), and the two have diverged ([#45](https://github.com/cronai-labs/vaultore/issues/45)) | |
-
-## How a Run Works
-
-`WorkflowExecutor.runWorkflow` (`packages/core/src/executor/index.ts`):
-
-1. **Parse** the note: frontmatter against the schema, cells, existing outputs.
-2. **Claim the slot**, for a scheduled run only: the platform's `claimSlot`, refused when a
-   runner claimed this occurrence first. A catch-up of missed runs brings the slot it holds
-   instead (`slotClaim`). From here the slot is spent; its outcome is written when the run
-   ends, however it ends (schedule-record-spec).
-3. **Lock the note**: the platform's `acquireRunLock`, refused while another run of the note
-   holds it. A lock left behind by a run that ended without finishing is taken over, and that
-   run's record is marked `aborted`. Then read the note again, and stop if it is no longer what
-   the caller read. The lock is released when the run ends (ore-implementation, "One run per
-   note").
-4. **Create the run**: a run id, `<outputRoot>/runs/<workflow>/<runId>/run.json` with status
-   `running`.
-5. **Resolve permissions**: defaults, then frontmatter, then a stored decision or a prompt for
-   each `ask`, bound to a hash of the frontmatter and cells (permissions-spec §5).
-6. **Choose and check the engine**: frontmatter, else setting, else `docker`; `detectRuntimes`
-   probes all four engines in parallel, each with a 10-second timeout.
-7. **Order the cells** by `depends`; for a single-cell run, keep the target and what it needs.
-8. **Hydrate** earlier outputs from the JSON files the note's callouts link, so `cell()` and
-   dependency checks can use them for cells that do not run this time.
-9. **For each cell, one at a time:** check its dependencies succeeded; run it (a container for
-   `ts` and `shell`, a provider request for `ai`); write its JSON record, Markdown view and the
-   run index; re-read the note and replace the cell's callout.
-10. **Finish** `run.json`: `completed`, `failed` (a cell failed) or `aborted` (the run threw).
-
-A container cell is `docker run --rm …` (or `podman`, or `container` for Apple; Colima uses
-the `docker` CLI). TS cells get a generated script on stdin that defines `cell()`, `vault` and
-`vaultore`, runs the cell body, and prints the last expression's value as JSON between markers
-the executor extracts.
-
-## Container Images
-
-| Image | Used for |
-|-------|----------|
-| `runtime.image`, default `oven/bun:1-alpine` | Every `ore:ts` and `ore:shell` cell |
-| `alpine:3.19` | Only the integration-test helper `waitForContainerView` |
-
-The Dockerfiles under `containers/` are not built by CI, not published, and not referenced by
-the code. They sketch images for a possible future (`bun-base`, `shell-base`, `python-base`,
-`go-builder`); each says so in its header.
-
-## Security
-
-What a cell may do, the mount model, prompts and stored decisions:
-[specs/permissions-spec.md](specs/permissions-spec.md). The container flags per engine:
-[specs/sandbox-spec.md](specs/sandbox-spec.md) and permissions-spec §4.1. Neither is repeated
-here.
-
-## Parallel Execution (Not Built)
-
-Cells run one at a time. Running independent cells at the same time is under consideration
-([roadmap](docs/roadmap.md#under-consideration)); these are the constraints a design has to
-meet:
-
-- **CPU and memory budget:** total container CPU and memory must not saturate the machine.
-- **Runtime mix:** TS, shell and AI cells load the machine differently; concurrency limits per
-  kind and globally.
-- **Vault writes:** two cells writing the same path must not race.
-- **Provider limits:** concurrent AI calls bounded per provider.
-- **Write-back:** the note is re-read before every callout write (step 7 above); parallel cells
-  would make those writes concurrent.
-
-A warm container pool (starting containers ahead and `exec`-ing cells into them) is part of
-the same consideration. It would change the isolation model: cells of one run would share a
-container's filesystem and processes unless it is reset between them.
-
-## Go Cells (Not Built)
-
-A design for compiled `ore:go` cells with build caching is in
-[specs/go-cell-spec.md](specs/go-cell-spec.md).
+| What a workflow note means | the [Ore specification](https://github.com/cronai-labs/ore-spec), as an issue there | |
+| How a note is parsed | `core/src/parser/` | [ore-implementation.md](specs/ore-implementation.md) |
+| How a run goes, outputs, run records | `core/src/executor/index.ts` | [ore-implementation.md](specs/ore-implementation.md) |
+| Permissions, mounts, stored decisions | `core/src/executor/index.ts`, `core/src/runtime/` | [permissions-spec.md](specs/permissions-spec.md) |
+| Container flags, engines | `core/src/runtime/` | [sandbox-spec.md](specs/sandbox-spec.md) |
+| Scheduling, missed runs, the late threshold | `core/src/scheduler/`, `core/src/settings/` | [schedule-record-spec.md](specs/schedule-record-spec.md) |
+| An AI provider | `core/src/providers/` | [ore-implementation.md](specs/ore-implementation.md) |
+| Something only the plugin does (settings tab, notices) | `obsidian/src/main.ts` | |
+| A CLI command or flag | `cli/src/cli.ts`, logic in the module beside it | README, Command-Line Interface |
+| The CronAI handover | `cli/src/scan.ts` | [cronai-handover-spec.md](specs/cronai-handover-spec.md) |
+| Releases, the changelog | `scripts/` | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Tests
 
-| Suite | Command | Needs |
-|-------|---------|-------|
-| Unit | `bun run test` | Nothing; a shared setup fails any unstubbed `fetch` |
-| Canonical fixtures | `bun run test:canonical` | Nothing: it parses each fixture, it does not run them |
-| Container integration | `VAULTORE_IT_ENGINE=docker bun run --cwd packages/core test:integration` | A running engine (default `colima`); vaults are created under `~/.cache` |
-| Typecheck, lint | `bun run typecheck`, `bun run lint` | |
-
-CI runs all of them, the integration tests on Docker, and a reproducible-build check; see
-[CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). How each fixture is exercised:
-[docs/testing-fixtures.md](docs/testing-fixtures.md).
+Each package's tests sit beside the code (`*.test.ts`); the script tests sit in `scripts/`. The commands and what they need: [CONTRIBUTING.md](CONTRIBUTING.md); how each fixture is exercised: [docs/testing-fixtures.md](docs/testing-fixtures.md).

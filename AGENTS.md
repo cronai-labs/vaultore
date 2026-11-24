@@ -1,6 +1,6 @@
 # Agent instructions
 
-VaultOre runs [Ore](https://github.com/cronai-labs/ore-spec) workflows: an Obsidian plugin and a command-line runner over one TypeScript core. Start with [CONTRIBUTING.md](CONTRIBUTING.md) (setup, pull requests, commits, releases) and [ARCHITECTURE.md](ARCHITECTURE.md) (packages, modules, how a run flows).
+VaultOre runs [Ore](https://github.com/cronai-labs/ore-spec) workflows: an Obsidian plugin and a command-line runner over one TypeScript core. Start with [CONTRIBUTING.md](CONTRIBUTING.md) (setup, pull requests, commits, releases) and [ARCHITECTURE.md](ARCHITECTURE.md) (a map of the repository and where to start for a change).
 
 ## Where behaviour is defined
 
@@ -21,6 +21,7 @@ VaultOre runs [Ore](https://github.com/cronai-labs/ore-spec) workflows: an Obsid
 ```bash
 bun install --frozen-lockfile
 bun run build && bun run test && bun run typecheck && bun run lint
+bun run test:scripts                            # when scripts/ changed
 bun run --cwd packages/core test:integration   # needs a container engine (default: colima)
 ```
 
