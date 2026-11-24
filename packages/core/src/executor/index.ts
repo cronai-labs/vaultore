@@ -430,7 +430,7 @@ export class WorkflowExecutor {
 
       return buildOutput(
         cell.attributes.id,
-        `Cell type not supported in v0.1: ${cell.attributes.type}`,
+        unsupportedCellMessage(cell.attributes.id, cell.attributes.type),
         start,
         "error"
       );
@@ -439,6 +439,24 @@ export class WorkflowExecutor {
       return buildOutput(cell.attributes.id, errorMessage(err), start, status);
     }
   }
+}
+
+/** The cell types this executor runs, in the order a message names them. */
+export const RUNNABLE_CELL_TYPES = ["ts", "shell", "ai"] as const;
+
+/**
+ * What a user sees for a cell the parser accepts but VaultOre does not run
+ * (`ore:py`, `ore:go`, which the Ore format reserves): what the cell is, what
+ * runs instead, and what to do. Names no VaultOre version (#279).
+ */
+export function unsupportedCellMessage(id: string, type: string): string {
+  const runnable = RUNNABLE_CELL_TYPES.map((t) => `ore:${t}`);
+  const list = `${runnable.slice(0, -1).join(", ")} and ${runnable.at(-1)}`;
+  return (
+    `Cell "${id}" is an ore:${type} cell, which VaultOre does not run. ` +
+    `It runs ${list} cells: rewrite the cell as one of those, or remove it. ` +
+    `Cells that do not depend on it still run.`
+  );
 }
 
 // =============================================================================

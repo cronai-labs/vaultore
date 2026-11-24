@@ -31,7 +31,7 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 
 ## Cells (Ore §5)
 
-- `ore:py` and `ore:go` cells are parsed and fail at run time with `Cell type not supported in v0.1: <type>`. The text still names the first release; no version of VaultOre runs these cells.
+- `ore:py` and `ore:go` cells are parsed and fail at run time, each on its own: `Cell "<id>" is an ore:<type> cell, which VaultOre does not run. It runs ore:ts, ore:shell and ore:ai cells: rewrite the cell as one of those, or remove it. Cells that do not depend on it still run.` (`unsupportedCellMessage`). The message names no VaultOre version.
 - A missing, empty or duplicate `id`, or a `depends` entry naming no cell, is a parse error.
 - An `id` that is not of the form Ore §5.3 gives is a parse error that names the id and the rule it breaks (`idFault`, `packages/core/src/parser/index.ts`): `Cell id "fetch.raw" contains ".": an id holds only the letters A-Z and a-z, digits, "_" and "-"`, `Cell id "-rf" starts with "-": an id starts with a letter or digit`, `Cell id "…" has 65 characters: an id has at most 64`. The characters are matched as these exactly; a letter outside `A`-`Z` and `a`-`z` is refused.
 - A reserved `id` is a parse error in any letter case: `Cell id "Run" is reserved: its output would be run.json, the run's own record`, and for `con`, `prn`, `aux`, `nul`, `com0` to `com9` and `lpt0` to `lpt9`, `Cell id "COM1" is reserved: Windows keeps this name for a device, so it cannot be a file name there`. Only `A`-`Z` are folded for the comparison.
