@@ -171,7 +171,7 @@ lists every note with a schedule, with its next run or why the schedule is inval
 **Run scheduled workflows**, then approve each note you want to run. An approval covers that
 note's path and exact schedule: a changed schedule, a renamed note, or a note that arrives
 through sync is listed but does not run until you approve it. The switch and your approvals
-belong to this computer: they are kept outside the vault, so sync carries them nowhere. Scheduled runs happen only while
+belong to this computer: they are kept outside the vault, so sync carries them nowhere. Earlier releases kept them in the plugin's settings, which sync carries; after upgrading from one, scheduling is off on each computer until you turn it on there and approve your notes again, and the plugin says so once on each computer where it was on. Scheduled runs happen only while
 Obsidian is open; `vaultore agent` runs them without Obsidian ([Command-Line
 Interface](#command-line-interface)).
 
@@ -345,8 +345,8 @@ two folders ([#277](https://github.com/cronai-labs/vaultore/issues/277)).
 
 ## Upgrading
 
-Each release's notes, and the [changelog](CHANGELOG.md), say under **Upgrading** what a release
-asks of you. Update the plugin and the CLI together where you use both: they read each other's
+Each release's notes, and the [changelog](CHANGELOG.md), say under **Breaking changes** and
+**Upgrading** what a release asks of you. Update the plugin and the CLI together where you use both: they read each other's
 files in `~/.config/vaultore/`. An older runner treats a scheduled occurrence it cannot read as
 taken, so it never runs one twice, but it may not show it; versioned formats and a warning about
 a newer runner are planned ([#278](https://github.com/cronai-labs/vaultore/issues/278)).

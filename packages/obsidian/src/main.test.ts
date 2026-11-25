@@ -1021,29 +1021,74 @@ describe("scheduled workflows", () => {
     expect(plugin.app.vault.modify).not.toHaveBeenCalled();
   });
 
+  // Loads the plugin again on the same computer (the same app, so the same
+  // per-device storage), from this data.json.
+  async function reload(data: Record<string, unknown> | null): Promise<ReturnType<typeof vi.spyOn>> {
+    const app = plugin.app;
+    plugin.onunload();
+    plugin = new VaultOrePlugin(undefined as any, undefined as any);
+    Object.assign(plugin.app, app);
+    vi.spyOn(plugin, "addSettingTab");
+    const saved = vi.spyOn(plugin, "saveData");
+    vi.spyOn(plugin, "loadData").mockResolvedValue(data);
+    await plugin.onload();
+    return saved;
+  }
+
+  // What an older VaultOre wrote: scheduling on, one note approved.
+  const OLD_DATA = {
+    runScheduledWorkflows: true,
+    scheduleApprovals: { "Workflows/daily.md": "0 18 * * *" },
+    defaultModel: "gpt-5-mini",
+  };
+  const movedNotice = () => Notice.shown.filter((m) => m.includes("now turned on per computer"));
+
   // A data.json synced from a machine with an older VaultOre still carries
-  // the switch and approvals: they arm nothing, and are dropped from it.
-  it("arms nothing from a synced data.json that turns scheduling on, and drops those keys", async () => {
+  // the switch and approvals: they arm nothing here.
+  it("arms nothing from a data.json that turns scheduling on", async () => {
     useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
-    const synced = new VaultOrePlugin(undefined as any, undefined as any);
-    vi.spyOn(synced, "addSettingTab");
-    const saved = vi.spyOn(synced, "saveData");
-    vi.spyOn(synced, "loadData").mockResolvedValue({
-      runScheduledWorkflows: true,
-      scheduleApprovals: { "Workflows/daily.md": "0 18 * * *" },
-      defaultModel: "gpt-5-mini",
-    });
-    Object.assign(synced.app, plugin.app);
 
-    await synced.onload();
+    await reload(OLD_DATA);
 
-    expect(synced.schedules).toEqual({ runScheduledWorkflows: false, approvals: {} });
-    expect(((synced as any).scheduler as InstanceType<typeof WorkflowScheduler>).list()).toEqual([]);
-    expect(saved).toHaveBeenCalledTimes(1);
-    expect(saved.mock.calls[0]?.[0]).not.toHaveProperty("runScheduledWorkflows");
-    expect(saved.mock.calls[0]?.[0]).not.toHaveProperty("scheduleApprovals");
-    expect(saved.mock.calls[0]?.[0]).toHaveProperty("defaultModel", "gpt-5-mini");
-    synced.onunload();
+    expect(plugin.schedules).toEqual({ runScheduledWorkflows: false, approvals: {} });
+    expect(armed()).toEqual([]);
+  });
+
+  // An older plugin on another computer reads the same data.json: removing
+  // the keys would switch its scheduling off before it is upgraded.
+  it("keeps the old keys in data.json as found, beside every other setting saved", async () => {
+    const saved = await reload(OLD_DATA);
+    expect(saved).not.toHaveBeenCalled();
+
+    plugin.settings.defaultModel = "gpt-5";
+    await plugin.saveSettings();
+
+    expect(saved.mock.calls[0]?.[0]).toEqual({ ...plugin.settings, ...OLD_DATA, defaultModel: "gpt-5" });
+  });
+
+  it("says once on this computer that scheduling is off here, until dismissed", async () => {
+    await reload(OLD_DATA);
+    expect(movedNotice()).toHaveLength(1);
+
+    await reload(OLD_DATA);
+    expect(movedNotice()).toHaveLength(1);
+  });
+
+  it("says nothing when scheduling was off before, or is already on here", async () => {
+    await reload({ runScheduledWorkflows: false });
+    expect(movedNotice()).toEqual([]);
+
+    await toggle("Run scheduled workflows", true);
+    await reload(OLD_DATA);
+    expect(movedNotice()).toEqual([]);
+  });
+
+  it("says in the settings that scheduling was on before, until it is on here", async () => {
+    await reload(OLD_DATA);
+    expect(row("Run scheduled workflows").desc).toMatch(/Before this version, scheduling was on/);
+
+    await toggle("Run scheduled workflows", true);
+    expect(row("Run scheduled workflows").desc).not.toMatch(/Before this version/);
   });
 
   // Found with #276: a settings.json that cannot be used made onload throw,

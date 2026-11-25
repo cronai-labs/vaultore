@@ -295,8 +295,12 @@ it in the other.
   Windows; core `pluginSchedulesStore`), keyed by the vault's real path, apart from the agent's
   approvals. Sync does not carry them, so approving a note on one machine approves it nowhere
   else ([#276](https://github.com/cronai-labs/vaultore/issues/276)). Earlier releases kept them in
-  the plugin's `data.json`; they are dropped from it on load and not carried over, as a synced
-  `data.json` is what this keeps from granting consent. A file there that cannot be used keeps
+  the plugin's `data.json`; they are not carried over, as a synced `data.json` is what this
+  keeps from granting consent. They stay in `data.json`, written back as found, so an older
+  plugin on another computer keeps scheduling until it is upgraded; a later release removes
+  them. When they say scheduling was on and it is off on this computer, the plugin says so once
+  on this computer (a flag in Obsidian's per-device storage, which sync does not carry), and its
+  settings say so until scheduling is turned on here. A file there that cannot be used keeps
   scheduling off, and the plugin says so. A changed schedule, a
   renamed or deleted note, or a note that arrives through sync is listed but does not run until
   approved again.

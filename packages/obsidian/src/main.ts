@@ -103,11 +103,21 @@ const SECRET_SETTINGS: Record<string, { setting: SecretNameSetting; label: strin
   "anthropic.apiKey": { setting: "anthropicSecretName", label: "Anthropic API key" },
 };
 
+// Settings that no longer exist, dropped from data.json on load.
 // enableWarmPool: a "future feature" toggle that never did anything.
-// Settings that no longer exist in data.json. runScheduledWorkflows and
-// scheduleApprovals moved to this machine's user tree (#276): consent a synced
-// data.json must not grant, so they are dropped, not carried over.
-const REMOVED_SETTINGS = ["enableWarmPool", "runScheduledWorkflows", "scheduleApprovals"];
+const REMOVED_SETTINGS = ["enableWarmPool"];
+
+// The scheduling switch and approvals moved to this machine's user tree
+// (#276): consent a synced data.json must not grant, so they are read for
+// nothing but the upgrade notice. They stay in data.json, written back as
+// found: an older plugin on another computer that sync reaches keeps
+// scheduling until it is upgraded, and each upgraded computer sees that
+// scheduling was on.
+const LEGACY_SCHEDULE_SETTINGS = ["runScheduledWorkflows", "scheduleApprovals"];
+
+// Obsidian's per-device storage for this vault, which sync does not carry:
+// set once the upgrade notice was shown on this computer.
+const SCHEDULING_MOVED_NOTICE_KEY = "vaultore-scheduling-moved-notice-shown";
 
 const SCHEDULER_DEBOUNCE_MS = 2000;
 
@@ -554,6 +564,7 @@ export default class VaultOrePlugin extends Plugin {
     // After the adapter: a file that cannot be used is logged through it.
     await this.loadMachineSettings();
     await this.loadSchedules();
+    this.noticeSchedulingMoved();
 
     // The run commands are offered only on workflow notes, so the palette
     // does not show them on every Markdown note in the vault.
@@ -657,16 +668,46 @@ export default class VaultOrePlugin extends Plugin {
       ...DEFAULT_SETTINGS,
       ...(data ?? {}),
     };
-    // Settings that no longer exist, dropped so data.json stops carrying them;
-    // written back at once, so a data.json that still turns scheduling on
-    // elsewhere is cleaned on each machine it reaches.
     let dropped = false;
     for (const key of REMOVED_SETTINGS) {
       if (key in settings) dropped = true;
       delete (settings as Record<string, unknown>)[key];
     }
+    const legacy: Record<string, unknown> = {};
+    for (const key of LEGACY_SCHEDULE_SETTINGS) {
+      if (Object.prototype.hasOwnProperty.call(settings, key)) {
+        legacy[key] = (settings as Record<string, unknown>)[key];
+        delete (settings as Record<string, unknown>)[key];
+      }
+    }
+    this.legacyScheduleSettings = legacy;
     this.settings = settings;
     if (dropped) await this.saveSettings();
+  }
+
+  // The old scheduling keys as data.json holds them, written back unchanged
+  // on every save and read for nothing else (LEGACY_SCHEDULE_SETTINGS).
+  private legacyScheduleSettings: Record<string, unknown> = {};
+
+  /** Whether data.json says scheduling was on before it moved to each computer (#276). */
+  get scheduledBeforeUpgrade(): boolean {
+    return this.legacyScheduleSettings["runScheduledWorkflows"] === true;
+  }
+
+  /**
+   * Says once on this computer that scheduling is off here since it moved to
+   * each computer, when data.json says it was on and it is not on here yet.
+   * Stays until dismissed: a schedule that stopped is not seen otherwise.
+   */
+  private noticeSchedulingMoved(): void {
+    if (!this.scheduledBeforeUpgrade || this.schedules.runScheduledWorkflows) return;
+    if (this.app.loadLocalStorage(SCHEDULING_MOVED_NOTICE_KEY) !== null) return;
+    new Notice(
+      "VaultOre: scheduled workflows are now turned on per computer and are off on this one. " +
+        "To run them here, turn them on and approve your notes under Settings → VaultOre → Scheduled workflows.",
+      0
+    );
+    this.app.saveLocalStorage(SCHEDULING_MOVED_NOTICE_KEY, true);
   }
 
   // This machine's scheduling consent for the vault: "Run scheduled
@@ -711,7 +752,7 @@ export default class VaultOrePlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    await this.saveData({ ...this.settings, ...this.legacyScheduleSettings });
   }
 
   // How late a scheduled run may start, in minutes; undefined is the default.
@@ -1427,8 +1468,11 @@ class VaultOreSettingsTab extends PluginSettingTab {
       {
         name: "Run scheduled workflows",
         desc:
-          "Off by default. When on, a workflow note runs on its schedule while Obsidian " +
-          "is open, but only if you approved it below.",
+          "Off by default, and set on each computer. When on, a workflow note runs on its schedule while Obsidian " +
+          "is open, but only if you approved it below." +
+          (this.plugin.scheduledBeforeUpgrade && !this.plugin.schedules.runScheduledWorkflows
+            ? " Before this version, scheduling was on for this vault; it is now off until you turn it on here."
+            : ""),
         control: { type: "toggle", key: "runScheduledWorkflows" },
       },
       this.numericSetting(
