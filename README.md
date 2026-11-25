@@ -153,7 +153,7 @@ top of it.
 | Output folder | `_vaultore` | Where run outputs are written |
 | OpenAI API key, Anthropic API key | none | The name of a secret in Obsidian's secret storage |
 | Scheduled-run history | 30 days | How long what each scheduled run came to is kept, 0 to 30 days; 0 keeps each for a day only |
-| Late after | 2 minutes | How late a scheduled run may start and still run, 2 to 60 minutes; later, it is listed under "Missed runs". One value for the computer, shared with `vaultore agent`, not stored in the vault |
+| Late after | 2 minutes | How late a scheduled run may start and still run, 2 to 60 minutes; later, it is listed under "Missed runs". One value for your account on this computer, shared with `vaultore agent`, not stored in the vault |
 | Run scheduled workflows | off | See [Scheduling](#scheduling) |
 
 ### Scheduling
@@ -171,7 +171,7 @@ lists every note with a schedule, with its next run or why the schedule is inval
 **Run scheduled workflows**, then approve each note you want to run. An approval covers that
 note's path and exact schedule: a changed schedule, a renamed note, or a note that arrives
 through sync is listed but does not run until you approve it. The switch and your approvals
-belong to this computer: they are kept outside the vault, so sync carries them nowhere. Earlier releases kept them in the plugin's settings, which sync carries; after upgrading from one, scheduling is off on each computer until you turn it on there and approve your notes again, and the plugin says so once on each computer where it was on. Scheduled runs happen only while
+belong to your account on this computer: they are kept outside the vault, in your account's folder, so sync carries them nowhere and another account does not share them. Earlier releases kept them in the plugin's settings, which sync carries; after upgrading from one, scheduling is off on each computer until you turn it on there and approve your notes again, and the plugin says so once on each computer where it was on. Scheduled runs happen only while
 Obsidian is open; `vaultore agent` runs them without Obsidian ([Command-Line
 Interface](#command-line-interface)).
 
@@ -197,6 +197,13 @@ The model, its states and its limits: [schedule record spec](specs/schedule-reco
 Each computer schedules on its own: **Run scheduled workflows**, the approvals of both runners,
 the record that lets an occurrence run once, the run locks and "Late after" are kept per
 computer, outside the vault. Two computers on which a note is approved each run it.
+
+Strictly, they are kept per account: each account on a computer has its own. Two accounts that
+open the same vault folder, and computers that share one on a network drive, are like two
+computers, except that they run at the same moment into the same files, and a note one of them
+runs is not refused to the other. A vault opened through a symbolic link is the same vault: both
+paths share the approvals, the record and the locks. Running once beyond one account:
+[#287](https://github.com/cronai-labs/vaultore/issues/287).
 
 What sync carries depends on your sync. iCloud, Nextcloud, Syncthing and Obsidian Sync with
 plugin settings on carry `.obsidian/plugins/vaultore/data.json`, which holds the plugin's other
@@ -258,7 +265,8 @@ are used for the provider request only, not passed to containers.
   component of a path is refused wherever it points. A workflow in a folder linked from outside
   the vault therefore cannot run.
 - **Several computers on one synced vault** each run a scheduled note; let one schedule
-  ([above](#several-computers-one-synced-vault)).
+  ([above](#several-computers-one-synced-vault)). The same holds for several accounts on one
+  computer and for a vault on a network drive ([#287](https://github.com/cronai-labs/vaultore/issues/287)).
 - **Switching the provider keeps the default model** of the other provider; AI cells then fail
   with a message saying so, until you change the model.
 - **The Apple `container` engine** is covered by unit tests only, not yet by runs against a
@@ -309,8 +317,8 @@ vaultore --version | --help
   from the plugin's ([where](#where-vaultore-keeps-things)).
 - A note runs once at a time, whether Obsidian, `vaultore run` or `vaultore agent` starts it: a
   second run is refused and told who has the note
-  ([one run per note](specs/ore-implementation.md)). This holds on one computer
-  ([several computers](#several-computers-one-synced-vault)).
+  ([one run per note](specs/ore-implementation.md)). This holds for one account on one
+  computer ([several computers](#several-computers-one-synced-vault)).
 - Scheduled runs, missed runs and "Late after" work as in Obsidian
   ([Scheduling](#scheduling)).
 - `vaultore schedules export` writes the manifest that hands scheduled workflows to CronAI
@@ -328,10 +336,10 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | Your workflow notes | The `ore-output` callout under each cell that ran | both runners |
 | Wherever a workflow writes | What its cells write with `vault.write` or into the mounted vault | your workflows |
 | `.vaultore/` | Created by every run that may read the vault, so a cell cannot plant it; `config.json` holds the CLI's settings and permission decisions | both runners |
-| **Outside the vault** (`~/.config/vaultore/`; `%APPDATA%\vaultore\` on Windows) | | |
+| **Outside the vault**, per account (`~/.config/vaultore/`; `%APPDATA%\vaultore\` on Windows) | | |
 | `locks/` | One lock file per running note, removed when the run ends | both runners |
 | `slots/` | What each scheduled occurrence came to, and missed runs; 30 days at most | both runners |
-| `settings.json` | "Late after", for this computer | both runners |
+| `settings.json` | "Late after", for your account on this computer | both runners |
 | `obsidian-schedules.json` and `.lock` | **Run scheduled workflows** and the plugin's approvals, per vault | the plugin |
 | `approvals.json`, `approvals.json.lock` | The agent's schedule approvals | `vaultore schedules approve` |
 | **Elsewhere** | | |

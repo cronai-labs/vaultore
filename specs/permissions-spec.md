@@ -300,7 +300,8 @@ it in the other.
   plugin on another computer keeps scheduling until it is upgraded; a later release removes
   them ([#286](https://github.com/cronai-labs/vaultore/issues/286)). When they say scheduling was on and it is off on this computer, the plugin says so once
   on this computer (a flag in Obsidian's per-device storage, which sync does not carry), and its
-  settings say so until scheduling is turned on here. A file there that cannot be used keeps
+  settings say so until scheduling is turned on here. The user tree is the account's: another
+  account on the same machine has its own ([#287](https://github.com/cronai-labs/vaultore/issues/287)). A file there that cannot be used keeps
   scheduling off, and the plugin says so. A changed schedule, a
   renamed or deleted note, or a note that arrives through sync is listed but does not run until
   approved again.

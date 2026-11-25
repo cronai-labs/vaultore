@@ -1041,7 +1041,7 @@ describe("scheduled workflows", () => {
     scheduleApprovals: { "Workflows/daily.md": "0 18 * * *" },
     defaultModel: "gpt-5-mini",
   };
-  const movedNotice = () => Notice.shown.filter((m) => m.includes("now turned on per computer"));
+  const movedNotice = () => Notice.shown.filter((m) => m.includes("now turned on for each account on each computer"));
 
   // A data.json synced from a machine with an older VaultOre still carries
   // the switch and approvals: they arm nothing here.

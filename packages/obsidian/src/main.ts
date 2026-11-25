@@ -703,7 +703,7 @@ export default class VaultOrePlugin extends Plugin {
     if (!this.scheduledBeforeUpgrade || this.schedules.runScheduledWorkflows) return;
     if (this.app.loadLocalStorage(SCHEDULING_MOVED_NOTICE_KEY) !== null) return;
     new Notice(
-      "VaultOre: scheduled workflows are now turned on per computer and are off on this one. " +
+      "VaultOre: scheduled workflows are now turned on for each account on each computer, and are off for yours here. " +
         "To run them here, turn them on and approve your notes under Settings → VaultOre → Scheduled workflows.",
       0
     );
@@ -1468,7 +1468,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
       {
         name: "Run scheduled workflows",
         desc:
-          "Off by default, and set on each computer. When on, a workflow note runs on its schedule while Obsidian " +
+          "Off by default, and set for each account on each computer. When on, a workflow note runs on its schedule while Obsidian " +
           "is open, but only if you approved it below." +
           (this.plugin.scheduledBeforeUpgrade && !this.plugin.schedules.runScheduledWorkflows
             ? " Before this version, scheduling was on for this vault; it is now off until you turn it on here."
@@ -1486,7 +1486,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
         "lateAfterMinutes",
         "Late after",
         "Minutes a scheduled run may start late and still run, from 2 to 60; later, it is listed as missed. " +
-          "For this computer, shared with vaultore agent (vaultore schedules late-after). Blank is 2.",
+          "For your account on this computer, shared with vaultore agent (vaultore schedules late-after). Blank is 2.",
         "2"
       ),
     ];
