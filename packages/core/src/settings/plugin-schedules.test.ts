@@ -55,14 +55,25 @@ describe("the plugin's scheduling consent", () => {
 		});
 	});
 
-	it("stores a note named __proto__ as an entry like any other", async () => {
+	// A note path is text from outside: one named "__proto__" is read from the
+	// file and kept as an entry like any other, not taken for a prototype.
+	it("reads and keeps a note named __proto__ as an entry like any other", async () => {
 		const store = pluginSchedulesStore({ path });
 		await store.update("/v", (entry) => {
-			// Defined, not assigned: the same own entry, in a form no reader takes
-			// for setting a prototype.
-			Object.defineProperty(entry.approvals, "__proto__", { value: "* * * * *", enumerable: true, configurable: true, writable: true });
+			entry.runScheduledWorkflows = true;
 		});
+		writeFileSync(
+			path,
+			'{"format":"vaultore.obsidian-schedules","version":1,"vaults":{"/v":{"runScheduledWorkflows":true,"approvals":{"__proto__":"* * * * *"}}}}'
+		);
+
 		expect(Object.keys((await store.forVault("/v")).approvals)).toEqual(["__proto__"]);
+		await store.update("/v", (entry) => {
+			entry.approvals["Daily.md"] = "0 9 * * *";
+		});
+		expect(JSON.parse(readFileSync(path, "utf8")).vaults["/v"].approvals).toEqual(
+			JSON.parse('{"__proto__":"* * * * *","Daily.md":"0 9 * * *"}')
+		);
 	});
 
 	// A runner that carried on would schedule nothing for a reason nobody sees.
