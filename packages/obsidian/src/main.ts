@@ -112,7 +112,7 @@ const REMOVED_SETTINGS = ["enableWarmPool"];
 // nothing but the upgrade notice. They stay in data.json, written back as
 // found: an older plugin on another computer that sync reaches keeps
 // scheduling until it is upgraded, and each upgraded computer sees that
-// scheduling was on.
+// scheduling was on. A later release drops them (#286).
 const LEGACY_SCHEDULE_SETTINGS = ["runScheduledWorkflows", "scheduleApprovals"];
 
 // Obsidian's per-device storage for this vault, which sync does not carry:
