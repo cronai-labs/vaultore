@@ -170,7 +170,8 @@ Nothing runs on a schedule until you opt in. **Settings → VaultOre → Schedul
 lists every note with a schedule, with its next run or why the schedule is invalid. Turn on
 **Run scheduled workflows**, then approve each note you want to run. An approval covers that
 note's path and exact schedule: a changed schedule, a renamed note, or a note that arrives
-through sync is listed but does not run until you approve it. Scheduled runs happen only while
+through sync is listed but does not run until you approve it. The switch and your approvals
+belong to this computer: they are kept outside the vault, so sync carries them nowhere. Scheduled runs happen only while
 Obsidian is open; `vaultore agent` runs them without Obsidian ([Command-Line
 Interface](#command-line-interface)).
 
@@ -193,20 +194,17 @@ The model, its states and its limits: [schedule record spec](specs/schedule-reco
 
 #### Several computers, one synced vault
 
-Each computer schedules on its own: the record that lets an occurrence run once, the run locks
-and "Late after" are kept per computer, outside the vault. Two computers that both run a note's
-schedule each run it.
+Each computer schedules on its own: **Run scheduled workflows**, the approvals of both runners,
+the record that lets an occurrence run once, the run locks and "Late after" are kept per
+computer, outside the vault. Two computers on which a note is approved each run it.
 
 What sync carries depends on your sync. iCloud, Nextcloud, Syncthing and Obsidian Sync with
-plugin settings on carry `.obsidian/plugins/vaultore/data.json`, and with it **Run scheduled
-workflows**, the plugin's approvals and its permission decisions: approving a note on one
-computer then approves it on every computer that has the vault open in Obsidian
-([#276](https://github.com/cronai-labs/vaultore/issues/276)). The agent's approvals never travel:
-they are kept outside the vault. Run records and the result callouts in notes travel with the
-vault, so two computers write into the same notes.
+plugin settings on carry `.obsidian/plugins/vaultore/data.json`, which holds the plugin's other
+settings and its permission decisions; decisions bound to the device that made them are
+[#284](https://github.com/cronai-labs/vaultore/issues/284). Run records and the result callouts
+in notes travel with the vault, so two computers write into the same notes.
 
-**Let one computer schedule.** On every other one, turn off **Run scheduled workflows** after
-each sync that may have turned it on, and do not run `vaultore agent` with approvals there.
+**Let one computer schedule:** approve the note there only, in Obsidian or for the agent.
 Sync cannot keep two computers from both running a note: each would take a lock or a lease in
 its own copy and learn of the other only after both had run. That needs one service all
 computers ask, which is what [CronAI](specs/cronai-handover-spec.md) is for. A warning when a
@@ -325,7 +323,7 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | Where | What | Written by |
 |---|---|---|
 | **In the vault** | | |
-| `.obsidian/plugins/vaultore/` | The plugin; `data.json` holds its settings, **Run scheduled workflows**, schedule approvals and permission decisions | Obsidian, the plugin |
+| `.obsidian/plugins/vaultore/` | The plugin; `data.json` holds its settings and permission decisions | Obsidian, the plugin |
 | `_vaultore/` (the output folder setting) | `runs/<workflow>/<run id>/`: each run's record, each cell's JSON and Markdown; `runs/<workflow>/index.json` | both runners |
 | Your workflow notes | The `ore-output` callout under each cell that ran | both runners |
 | Wherever a workflow writes | What its cells write with `vault.write` or into the mounted vault | your workflows |
@@ -334,6 +332,7 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | `locks/` | One lock file per running note, removed when the run ends | both runners |
 | `slots/` | What each scheduled occurrence came to, and missed runs; 30 days at most | both runners |
 | `settings.json` | "Late after", for this computer | both runners |
+| `obsidian-schedules.json` and `.lock` | **Run scheduled workflows** and the plugin's approvals, per vault | the plugin |
 | `approvals.json`, `approvals.json.lock` | The agent's schedule approvals | `vaultore schedules approve` |
 | **Elsewhere** | | |
 | Obsidian's secret storage | The API keys you stored there; VaultOre only reads them | you |
@@ -357,7 +356,8 @@ The CLI built from source is updated with `git pull`, `bun install` and `bun run
 ## Uninstalling
 
 **Uninstall** in **Settings → Community plugins** removes `.obsidian/plugins/vaultore/` with
-the plugin's settings and approvals; disabling it only stops it. What stays, to remove by hand
+the plugin's settings; disabling it only stops it. Its scheduling approvals are in
+`~/.config/vaultore/` (step 4). What stays, to remove by hand
 if you want it gone:
 
 1. **The output folder** (`_vaultore/` by default) in each vault: your run records. Keep it if

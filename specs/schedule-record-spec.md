@@ -122,6 +122,6 @@ Pruning removes a slot's files once the slot is older than the shorter of 30 day
 
 ## Limits
 
-- Two machines that share a synced vault each have their own record, as each has its own run locks. Schedule a note on one machine; approving it in a runner on each machine is what makes it run on both. Sync cannot carry a lease between machines (each would win locally and learn otherwise only later), so preventing this needs one authority all machines ask, which is a service's job, not this record's.
+- Two machines that share a synced vault each have their own record, as each has its own run locks. Schedule a note on one machine; approving it in a runner on each machine is what makes it run on both, as approvals are kept per machine and sync carries none (#276). Sync cannot carry a lease between machines (each would win locally and learn otherwise only later), so preventing this needs one authority all machines ask, which is a service's job, not this record's.
 - The schedule's time zone is the runner's: two runners in different time zones name different slots.
 - A run started by hand claims nothing; it is still refused while a scheduled run holds the note's run lock.

@@ -18,7 +18,8 @@ const machineSettings = vi.hoisted(() => {
   const { mkdtempSync } = require("node:fs") as typeof import("node:fs");
   const { tmpdir } = require("node:os") as typeof import("node:os");
   const { join } = require("node:path") as typeof import("node:path");
-  return { path: join(mkdtempSync(join(tmpdir(), "vaultore-plugin-settings-")), "settings.json") };
+  const dir = mkdtempSync(join(tmpdir(), "vaultore-plugin-settings-"));
+  return { path: join(dir, "settings.json"), schedules: join(dir, "obsidian-schedules.json") };
 });
 vi.mock("@vaultore/core", async () => {
   const actual = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
@@ -38,6 +39,10 @@ vi.mock("@vaultore/core", async () => {
     isLateSlot: actual.isLateSlot,
     lateAfterMs: actual.lateAfterMs,
     readMachineSettings: () => actual.readMachineSettings({ path: machineSettings.path }),
+    // The scheduling consent, likewise in the test's own file (#276); the
+    // vault key is the root as given, as the test vaults need not exist.
+    pluginSchedulesStore: () => actual.pluginSchedulesStore({ path: machineSettings.schedules }),
+    vaultKeyFor: async (root: string) => root,
     writeMachineSettings: (changes: import("@vaultore/core").MachineSettings) =>
       actual.writeMachineSettings(changes, { path: machineSettings.path }),
     recordMissedSlots: (options: import("@vaultore/core").RecordMissedOptions) =>
@@ -77,6 +82,7 @@ describe("VaultOrePlugin", () => {
 
   beforeEach(async () => {
     rmSync(machineSettings.path, { force: true });
+    rmSync(machineSettings.schedules, { force: true });
     vi.useFakeTimers();
     // Core's timers come from window; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
@@ -909,6 +915,7 @@ describe("scheduled workflows", () => {
 
   beforeEach(async () => {
     rmSync(machineSettings.path, { force: true });
+    rmSync(machineSettings.schedules, { force: true });
     vi.useFakeTimers();
     // The plugin debounces with window.setTimeout; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
@@ -924,6 +931,8 @@ describe("scheduled workflows", () => {
     plugin.app.vault.modify = vi.fn();
     plugin.app.metadataCache.getFileCache = (file: { path: string }) =>
       file.path in notes ? { frontmatter: notes[file.path] } : null;
+    // A desktop vault: the scheduling consent is keyed by its root (#276).
+    (plugin.app.vault as any).adapter = new FileSystemAdapter();
     await plugin.onload();
   });
 
@@ -938,8 +947,7 @@ describe("scheduled workflows", () => {
     refresh();
 
     expect(armed()).toEqual([]);
-    expect(plugin.settings.runScheduledWorkflows).toBe(false);
-    expect(plugin.settings.scheduleApprovals).toEqual({});
+    expect(plugin.schedules).toEqual({ runScheduledWorkflows: false, approvals: {} });
   });
 
   it("lists every scheduled workflow note with its schedule and a toggle", () => {
@@ -981,7 +989,7 @@ describe("scheduled workflows", () => {
     useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
 
     await toggle("Workflows/daily.md", true);
-    expect(plugin.settings.scheduleApprovals).toEqual({ "Workflows/daily.md": "0 18 * * *" });
+    expect(plugin.schedules.approvals).toEqual({ "Workflows/daily.md": "0 18 * * *" });
     expect(armed()).toEqual([]);
 
     await toggle("Run scheduled workflows", true);
@@ -989,23 +997,84 @@ describe("scheduled workflows", () => {
     expect(row("Workflows/daily.md").desc).toMatch(/next run/i);
 
     await toggle("Workflows/daily.md", false);
-    expect(plugin.settings.scheduleApprovals).toEqual({});
+    expect(plugin.schedules.approvals).toEqual({});
     expect(armed()).toEqual([]);
   });
 
-  it("keeps the decisions in plugin settings, not in the notes", async () => {
+  // Sync carries data.json and the notes, so neither holds the consent (#276).
+  it("keeps the decisions on this machine, in the user tree, not in data.json or the notes", async () => {
     useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
 
     await toggle("Run scheduled workflows", true);
     await toggle("Workflows/daily.md", true);
 
-    expect(plugin.saveData).toHaveBeenLastCalledWith(
-      expect.objectContaining({
+    expect(JSON.parse(readFileSync(machineSettings.schedules, "utf8")).vaults).toEqual({
+      [await (plugin as unknown as { adapter: { getVaultRoot(): Promise<string> } }).adapter.getVaultRoot()]: {
         runScheduledWorkflows: true,
-        scheduleApprovals: { "Workflows/daily.md": "0 18 * * *" },
-      })
-    );
+        approvals: { "Workflows/daily.md": "0 18 * * *" },
+      },
+    });
+    for (const [data] of vi.mocked(plugin.saveData).mock.calls) {
+      expect(data).not.toHaveProperty("runScheduledWorkflows");
+      expect(data).not.toHaveProperty("scheduleApprovals");
+    }
     expect(plugin.app.vault.modify).not.toHaveBeenCalled();
+  });
+
+  // A data.json synced from a machine with an older VaultOre still carries
+  // the switch and approvals: they arm nothing, and are dropped from it.
+  it("arms nothing from a synced data.json that turns scheduling on, and drops those keys", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    const synced = new VaultOrePlugin(undefined as any, undefined as any);
+    vi.spyOn(synced, "addSettingTab");
+    const saved = vi.spyOn(synced, "saveData");
+    vi.spyOn(synced, "loadData").mockResolvedValue({
+      runScheduledWorkflows: true,
+      scheduleApprovals: { "Workflows/daily.md": "0 18 * * *" },
+      defaultModel: "gpt-5-mini",
+    });
+    Object.assign(synced.app, plugin.app);
+
+    await synced.onload();
+
+    expect(synced.schedules).toEqual({ runScheduledWorkflows: false, approvals: {} });
+    expect(((synced as any).scheduler as InstanceType<typeof WorkflowScheduler>).list()).toEqual([]);
+    expect(saved).toHaveBeenCalledTimes(1);
+    expect(saved.mock.calls[0]?.[0]).not.toHaveProperty("runScheduledWorkflows");
+    expect(saved.mock.calls[0]?.[0]).not.toHaveProperty("scheduleApprovals");
+    expect(saved.mock.calls[0]?.[0]).toHaveProperty("defaultModel", "gpt-5-mini");
+    synced.onunload();
+  });
+
+  // Found with #276: a settings.json that cannot be used made onload throw,
+  // as the error was logged through an adapter not made yet.
+  it("loads with a settings.json or schedules file that cannot be used, and says so", async () => {
+    writeFileSync(machineSettings.path, "{broken");
+    writeFileSync(machineSettings.schedules, "{broken");
+    Notice.shown.length = 0;
+    const broken = new VaultOrePlugin(undefined as any, undefined as any);
+    vi.spyOn(broken, "addSettingTab");
+    vi.spyOn(broken, "saveData");
+    vi.spyOn(broken, "loadData").mockResolvedValue(null);
+    Object.assign(broken.app, plugin.app);
+
+    await broken.onload();
+
+    expect(broken.schedules.runScheduledWorkflows).toBe(false);
+    expect(Notice.shown.some((m) => m.includes("settings.json"))).toBe(true);
+    expect(Notice.shown.some((m) => m.includes("obsidian-schedules.json"))).toBe(true);
+    broken.onunload();
+  });
+
+  // Fail closed: a file that cannot be used turns nothing on, and says so.
+  it("keeps scheduling off and says why when the user tree's file cannot be used", async () => {
+    writeFileSync(machineSettings.schedules, "{broken");
+    Notice.shown.length = 0;
+
+    await plugin.loadSchedules();
+
+    expect(plugin.schedules).toEqual({ runScheduledWorkflows: false, approvals: {} });
+    expect(Notice.shown.some((m) => m.includes("scheduled workflows stay off") && m.includes("obsidian-schedules.json"))).toBe(true);
   });
 
   it("needs a new approval when the schedule changes", async () => {
@@ -1103,14 +1172,14 @@ describe("scheduled workflows", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     useVault({ "Workflows/typo.md": { ore: true, schedule: "every day" } });
     await toggle("Run scheduled workflows", true);
-    plugin.settings.scheduleApprovals = { "Workflows/typo.md": "every day" };
+    await plugin.setScheduleApproval("Workflows/typo.md", "every day");
 
     refresh();
     refresh();
 
     expect(armed()).toEqual([]);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0])).toContain("Workflows/typo.md");
+    // Once for this note (the record of /mock-vault, which does not exist, warns apart).
+    expect(warn.mock.calls.filter((call) => String(call).includes("Workflows/typo.md"))).toHaveLength(1);
     expect(Notice.shown.filter((m) => m.includes("Workflows/typo.md"))).toHaveLength(1);
     const typo = row("Workflows/typo.md");
     expect(typo.desc).toMatch(/invalid/i);
@@ -1131,10 +1200,11 @@ describe("scheduled workflows", () => {
     await onDelete(note("Workflows/a.md"));
     await onRename(note("Archive/b.md"), "Workflows/b.md");
 
-    expect(plugin.settings.scheduleApprovals).toEqual({});
-    expect(plugin.saveData).toHaveBeenLastCalledWith(
-      expect.objectContaining({ scheduleApprovals: {} })
-    );
+    // The handlers drop it without waiting, both at once; the plugin's queue
+    // writes one after the other (found with #276: the second was refused).
+    await vi.waitFor(() => expect(plugin.schedules.approvals).toEqual({}));
+    expect(Notice.shown.filter((m) => m.includes("could not save"))).toEqual([]);
+    expect(JSON.parse(readFileSync(machineSettings.schedules, "utf8")).vaults).toEqual({});
   });
 });
 
