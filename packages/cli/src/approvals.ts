@@ -12,7 +12,7 @@
  */
 
 import { posix, resolve, win32 } from "node:path";
-import { VaultStateStore, VaultStateStoreError, isRecord } from "@vaultore/core";
+import { VaultStateStore, isRecord } from "@vaultore/core";
 import type { ScheduleApproval, VaultStateStoreOps } from "@vaultore/core";
 
 export { vaultKeyFor } from "@vaultore/core";
@@ -21,10 +21,6 @@ const APPROVALS_FILE = "approvals.json";
 
 /** A vault's approvals: vault-relative note path to approval. */
 export type VaultApprovals = Record<string, ScheduleApproval>;
-
-/** The approvals file cannot be read, used or changed. The message names it. */
-export const ApprovalStoreError = VaultStateStoreError;
-export type ApprovalStoreError = VaultStateStoreError;
 
 // =============================================================================
 // WHERE
