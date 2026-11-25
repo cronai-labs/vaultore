@@ -58,7 +58,9 @@ describe("the plugin's scheduling consent", () => {
 	it("stores a note named __proto__ as an entry like any other", async () => {
 		const store = pluginSchedulesStore({ path });
 		await store.update("/v", (entry) => {
-			entry.approvals["__proto__"] = "* * * * *";
+			// Defined, not assigned: the same own entry, in a form no reader takes
+			// for setting a prototype.
+			Object.defineProperty(entry.approvals, "__proto__", { value: "* * * * *", enumerable: true, configurable: true, writable: true });
 		});
 		expect(Object.keys((await store.forVault("/v")).approvals)).toEqual(["__proto__"]);
 	});
