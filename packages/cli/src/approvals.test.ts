@@ -12,7 +12,8 @@ import {
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ApprovalStore, ApprovalStoreError, resolveStateDir, vaultKeyFor } from "./approvals";
+import { VaultStateStoreError } from "@vaultore/core";
+import { ApprovalStore, resolveStateDir, vaultKeyFor } from "./approvals";
 
 const APPROVAL = {
 	hash: "a".repeat(64),
@@ -227,7 +228,7 @@ describe("ApprovalStore", () => {
 			writeFileSync(join(dir, "approvals.json"), text);
 			const store = new ApprovalStore(dir);
 
-			await expect(store.forVault("/vault")).rejects.toThrow(ApprovalStoreError);
+			await expect(store.forVault("/vault")).rejects.toThrow(VaultStateStoreError);
 			await expect(store.forVault("/vault")).rejects.toThrow(join(dir, "approvals.json"));
 		});
 
@@ -239,7 +240,7 @@ describe("ApprovalStore", () => {
 				store.update("/vault", (approvals) => {
 					approvals["a.md"] = APPROVAL;
 				})
-			).rejects.toThrow(ApprovalStoreError);
+			).rejects.toThrow(VaultStateStoreError);
 
 			expect(readFileSync(join(dir, "approvals.json"), "utf8")).toBe(text);
 			expect(readdirSync(dir)).toEqual(["approvals.json"]);
@@ -261,7 +262,7 @@ describe("ApprovalStore", () => {
 				.catch((err: unknown) => err);
 		});
 
-		expect(refusal).toBeInstanceOf(ApprovalStoreError);
+		expect(refusal).toBeInstanceOf(VaultStateStoreError);
 		expect(String(refusal)).toMatch(/approvals\.json\.lock/);
 		expect(await store.forVault("/vault")).toEqual({ "a.md": APPROVAL });
 		expect(readdirSync(dir)).toEqual(["approvals.json"]);

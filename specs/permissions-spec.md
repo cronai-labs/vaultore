@@ -289,7 +289,20 @@ it in the other.
 
 - The "Run scheduled workflows" setting is off by default.
 - Each scheduled note must be approved in **Settings → VaultOre → Scheduled workflows**. The
-  approval is stored for the note's path and its exact schedule string. A changed schedule, a
+  approval is stored for the note's path and its exact schedule string.
+- The switch and the approvals are this machine's: kept outside the vault, in
+  `obsidian-schedules.json` in the user tree (`~/.config/vaultore/`, `%APPDATA%\vaultore\` on
+  Windows; core `pluginSchedulesStore`), keyed by the vault's real path, apart from the agent's
+  approvals. Sync does not carry them, so approving a note on one machine approves it nowhere
+  else ([#276](https://github.com/cronai-labs/vaultore/issues/276)). Earlier releases kept them in
+  the plugin's `data.json`; they are not carried over, as a synced `data.json` is what this
+  keeps from granting consent. They stay in `data.json`, written back as found, so an older
+  plugin on another computer keeps scheduling until it is upgraded; a later release removes
+  them ([#286](https://github.com/cronai-labs/vaultore/issues/286)). When they say scheduling was on and it is off on this computer, the plugin says so once
+  on this computer (a flag in Obsidian's per-device storage, which sync does not carry), and its
+  settings say so until scheduling is turned on here. The user tree is the account's: another
+  account on the same machine has its own ([#287](https://github.com/cronai-labs/vaultore/issues/287)). A file there that cannot be used keeps
+  scheduling off, and the plugin says so. A changed schedule, a
   renamed or deleted note, or a note that arrives through sync is listed but does not run until
   approved again.
 - Approval is re-checked when a run is due. A scheduled run then resolves permissions like any
@@ -388,7 +401,7 @@ workflow is granted `network`.
 | A note changing after it was granted `ask` permissions | Decisions bound to the content (§5.3) |
 | A synced or renamed note running unattended | Scheduling consent: per path and schedule in the plugin (§6.1), per path and content under `vaultore agent` (§6.2) |
 | An approved scheduled note changing under `vaultore agent` | The approval is bound to the content and re-checked when a run is due (§6.2) |
-| Sync delivering an approval for `vaultore agent` | Approvals are kept outside the vault (§6.2) |
+| Sync delivering an approval, or turning scheduling on | Both runners keep their scheduling consent outside the vault, per machine (§6.1, §6.2) |
 | The plugin and the CLI running one note at once | One run lock per note, outside the vault, shared by both runners (ore-implementation, "One run per note") |
 
 ### 8.2 Not Mitigated

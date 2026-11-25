@@ -29,6 +29,8 @@ import {
   lateAfterMs,
   readMachineSettings,
   writeMachineSettings,
+  pluginSchedulesStore,
+  vaultKeyFor,
   readSlotRecord,
   recordMissedSlots,
   computeNextRun,
@@ -41,6 +43,7 @@ import type {
   PlatformAdapter,
   PlatformRequest,
   PlatformResponse,
+  PluginSchedules,
   RunLock,
   ScheduledSlot,
   SlotClaim,
@@ -61,13 +64,6 @@ interface VaultOreSettings {
   // SecretComponent. The keys themselves never enter data.json.
   openaiSecretName: string;
   anthropicSecretName: string;
-  // Master switch for scheduled runs. Off by default: enabling the plugin, or
-  // a note arriving through sync, must not start anything unattended.
-  runScheduledWorkflows: boolean;
-  // Notes the user approved to run on a schedule: note path → the exact
-  // schedule approved. A changed schedule no longer matches and needs a new
-  // approval. Kept here rather than in the notes, which sync can rewrite.
-  scheduleApprovals: Record<string, string>;
   // Days of scheduled-run history kept outside the vault, 0 to 30; blank is
   // 30. 0 keeps each run for a day only, which stops a second runner (#255).
   scheduleHistoryDays?: number;
@@ -96,8 +92,6 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   outputRoot: "_vaultore",
   openaiSecretName: "",
   anthropicSecretName: "",
-  runScheduledWorkflows: false,
-  scheduleApprovals: {},
 };
 
 type SecretNameSetting = "openaiSecretName" | "anthropicSecretName";
@@ -109,8 +103,21 @@ const SECRET_SETTINGS: Record<string, { setting: SecretNameSetting; label: strin
   "anthropic.apiKey": { setting: "anthropicSecretName", label: "Anthropic API key" },
 };
 
+// Settings that no longer exist, dropped from data.json on load.
 // enableWarmPool: a "future feature" toggle that never did anything.
 const REMOVED_SETTINGS = ["enableWarmPool"];
+
+// The scheduling switch and approvals moved to this machine's user tree
+// (#276): consent a synced data.json must not grant, so they are read for
+// nothing but the upgrade notice. They stay in data.json, written back as
+// found: an older plugin on another computer that sync reaches keeps
+// scheduling until it is upgraded, and each upgraded computer sees that
+// scheduling was on. A later release drops them (#286).
+const LEGACY_SCHEDULE_SETTINGS = ["runScheduledWorkflows", "scheduleApprovals"];
+
+// Obsidian's per-device storage for this vault, which sync does not carry:
+// set once the upgrade notice was shown on this computer.
+const SCHEDULING_MOVED_NOTICE_KEY = "vaultore-scheduling-moved-notice-shown";
 
 const SCHEDULER_DEBOUNCE_MS = 2000;
 
@@ -553,8 +560,11 @@ export default class VaultOrePlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    await this.loadMachineSettings();
     this.adapter = new ObsidianAdapter(this);
+    // After the adapter: a file that cannot be used is logged through it.
+    await this.loadMachineSettings();
+    await this.loadSchedules();
+    this.noticeSchedulingMoved();
 
     // The run commands are offered only on workflow notes, so the palette
     // does not show them on every Markdown note in the vault.
@@ -657,18 +667,92 @@ export default class VaultOrePlugin extends Plugin {
     const settings = {
       ...DEFAULT_SETTINGS,
       ...(data ?? {}),
-      // A fresh object, so approving a note never mutates DEFAULT_SETTINGS.
-      scheduleApprovals: { ...(data?.scheduleApprovals ?? {}) },
     };
-    // Settings that no longer exist, dropped so data.json stops carrying them.
+    let dropped = false;
     for (const key of REMOVED_SETTINGS) {
+      if (key in settings) dropped = true;
       delete (settings as Record<string, unknown>)[key];
     }
+    const legacy: Record<string, unknown> = {};
+    for (const key of LEGACY_SCHEDULE_SETTINGS) {
+      if (Object.prototype.hasOwnProperty.call(settings, key)) {
+        legacy[key] = (settings as Record<string, unknown>)[key];
+        delete (settings as Record<string, unknown>)[key];
+      }
+    }
+    this.legacyScheduleSettings = legacy;
     this.settings = settings;
+    if (dropped) await this.saveSettings();
+  }
+
+  // The old scheduling keys as data.json holds them, written back unchanged
+  // on every save and read for nothing else (LEGACY_SCHEDULE_SETTINGS).
+  private legacyScheduleSettings: Record<string, unknown> = {};
+
+  /** Whether data.json says scheduling was on before it moved to each computer (#276). */
+  get scheduledBeforeUpgrade(): boolean {
+    return this.legacyScheduleSettings["runScheduledWorkflows"] === true;
+  }
+
+  /**
+   * Says once on this computer that scheduling is off here since it moved to
+   * each computer, when data.json says it was on and it is not on here yet.
+   * Stays until dismissed: a schedule that stopped is not seen otherwise.
+   */
+  private noticeSchedulingMoved(): void {
+    if (!this.scheduledBeforeUpgrade || this.schedules.runScheduledWorkflows) return;
+    if (this.app.loadLocalStorage(SCHEDULING_MOVED_NOTICE_KEY) !== null) return;
+    new Notice(
+      "VaultOre: scheduled workflows are now turned on for each account on each computer, and are off for yours here. " +
+        "To run them here, turn them on and approve your notes under Settings → VaultOre → Scheduled workflows.",
+      0
+    );
+    this.app.saveLocalStorage(SCHEDULING_MOVED_NOTICE_KEY, true);
+  }
+
+  // This machine's scheduling consent for the vault: "Run scheduled
+  // workflows" and the approved notes, in the user tree (#276). Off with
+  // nothing approved until read, and when it cannot be read.
+  schedules: PluginSchedules = { runScheduledWorkflows: false, approvals: {} };
+  private schedulesStore = pluginSchedulesStore();
+
+  /** Reads this machine's scheduling consent for the vault. */
+  async loadSchedules(): Promise<void> {
+    try {
+      this.schedules = await this.schedulesStore.forVault(await vaultKeyFor(await this.adapter.getVaultRoot()));
+    } catch (err) {
+      this.schedules = { runScheduledWorkflows: false, approvals: {} };
+      this.adapter.log("warn", errorMessage(err));
+      new Notice(`VaultOre: scheduled workflows stay off. ${errorMessage(err)}`);
+    }
+  }
+
+  // Changes run one after another: the store's file lock refuses a second
+  // writer rather than waiting, and a delete and a rename, or two quick
+  // clicks, would otherwise collide within this process.
+  private schedulesQueue: Promise<void> = Promise.resolve();
+
+  /** Changes this machine's scheduling consent, then re-arms. A change that cannot be saved is told and not applied. */
+  private changeSchedules(change: (entry: PluginSchedules) => void): Promise<void> {
+    const next = this.schedulesQueue.then(() => this.applyScheduleChange(change));
+    this.schedulesQueue = next;
+    return next;
+  }
+
+  private async applyScheduleChange(change: (entry: PluginSchedules) => void): Promise<void> {
+    try {
+      const key = await vaultKeyFor(await this.adapter.getVaultRoot());
+      await this.schedulesStore.update(key, change);
+      this.schedules = await this.schedulesStore.forVault(key);
+    } catch (err) {
+      this.adapter.log("warn", errorMessage(err));
+      new Notice(`VaultOre: could not save the scheduling setting. ${errorMessage(err)}`);
+    }
+    this.refreshScheduledWorkflows();
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    await this.saveData({ ...this.settings, ...this.legacyScheduleSettings });
   }
 
   // How late a scheduled run may start, in minutes; undefined is the default.
@@ -831,7 +915,7 @@ export default class VaultOrePlugin extends Plugin {
       notes.push({
         path: file.path,
         schedule,
-        approvedSchedule: this.settings.scheduleApprovals[file.path],
+        approvedSchedule: this.schedules.approvals[file.path],
         error,
         nextRun: entry?.cronExpression === schedule ? entry.nextRun : undefined,
       });
@@ -840,26 +924,27 @@ export default class VaultOrePlugin extends Plugin {
   }
 
   async setRunScheduledWorkflows(enabled: boolean): Promise<void> {
-    this.settings.runScheduledWorkflows = enabled;
-    await this.saveSettings();
-    this.refreshScheduledWorkflows();
+    await this.changeSchedules((entry) => {
+      entry.runScheduledWorkflows = enabled;
+    });
   }
 
   /** Approve a note's schedule, or withdraw the approval with null. */
   async setScheduleApproval(path: string, schedule: string | null): Promise<void> {
-    if (schedule === null) {
-      delete this.settings.scheduleApprovals[path];
-    } else {
-      this.settings.scheduleApprovals[path] = schedule;
-    }
-    await this.saveSettings();
-    this.refreshScheduledWorkflows();
+    await this.changeSchedules((entry) => {
+      if (schedule === null) {
+        delete entry.approvals[path];
+      } else {
+        entry.approvals[path] = schedule;
+      }
+    });
   }
 
   private async dropScheduleApproval(path: string): Promise<void> {
-    if (!(path in this.settings.scheduleApprovals)) return;
-    delete this.settings.scheduleApprovals[path];
-    await this.saveSettings();
+    if (!(path in this.schedules.approvals)) return;
+    await this.changeSchedules((entry) => {
+      delete entry.approvals[path];
+    });
   }
 
   // The note's schedule, or undefined when it is not a scheduled workflow.
@@ -876,8 +961,8 @@ export default class VaultOrePlugin extends Plugin {
   // True when the switch is on, the user approved this exact schedule for the
   // path, and the note still carries it.
   private isApprovedSchedule(path: string, schedule: string): boolean {
-    if (!this.settings.runScheduledWorkflows) return false;
-    if (this.settings.scheduleApprovals[path] !== schedule) return false;
+    if (!this.schedules.runScheduledWorkflows) return false;
+    if (this.schedules.approvals[path] !== schedule) return false;
     const file = this.app.vault.getAbstractFileByPath(path);
     return file instanceof TFile && this.scheduleOf(file) === schedule;
   }
@@ -894,7 +979,7 @@ export default class VaultOrePlugin extends Plugin {
         this.reportInvalidSchedule(note.path, note.schedule, note.error);
         continue;
       }
-      if (this.settings.runScheduledWorkflows && note.approvedSchedule === note.schedule) {
+      if (this.schedules.runScheduledWorkflows && note.approvedSchedule === note.schedule) {
         wanted.set(note.path, note.schedule);
       }
     }
@@ -1249,6 +1334,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
       const value = this.plugin.settings[key];
       return value === undefined ? "" : String(value);
     }
+    if (key === "runScheduledWorkflows") return this.plugin.schedules.runScheduledWorkflows;
     return (this.plugin.settings as unknown as Record<string, unknown>)[key];
   }
 
@@ -1382,8 +1468,11 @@ class VaultOreSettingsTab extends PluginSettingTab {
       {
         name: "Run scheduled workflows",
         desc:
-          "Off by default. When on, a workflow note runs on its schedule while Obsidian " +
-          "is open, but only if you approved it below.",
+          "Off by default, and set for each account on each computer. When on, a workflow note runs on its schedule while Obsidian " +
+          "is open, but only if you approved it below." +
+          (this.plugin.scheduledBeforeUpgrade && !this.plugin.schedules.runScheduledWorkflows
+            ? " Before this version, scheduling was on for this vault; it is now off until you turn it on here."
+            : ""),
         control: { type: "toggle", key: "runScheduledWorkflows" },
       },
       this.numericSetting(
@@ -1397,7 +1486,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
         "lateAfterMinutes",
         "Late after",
         "Minutes a scheduled run may start late and still run, from 2 to 60; later, it is listed as missed. " +
-          "For this computer, shared with vaultore agent (vaultore schedules late-after). Blank is 2.",
+          "For your account on this computer, shared with vaultore agent (vaultore schedules late-after). Blank is 2.",
         "2"
       ),
     ];
@@ -1493,7 +1582,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
     if (!approved) {
       return `${schedule}. Not approved, so it does not run.`;
     }
-    if (!this.plugin.settings.runScheduledWorkflows) {
+    if (!this.plugin.schedules.runScheduledWorkflows) {
       return `${schedule}. Approved; runs once "Run scheduled workflows" is on.`;
     }
     if (!note.nextRun) {

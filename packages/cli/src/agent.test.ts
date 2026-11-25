@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApprovalStoreError } from "./approvals";
+import { VaultStateStoreError } from "@vaultore/core";
 import {
 	createApprovedRunner,
 	createSingleFlightRunner,
@@ -195,7 +195,7 @@ describe("createApprovedRunner", () => {
 	it("does not run anything while the approvals file cannot be used", async () => {
 		const { run, ran, refused } = setup({
 			approvals: async () => {
-				throw new ApprovalStoreError("Cannot use the approvals file /state/approvals.json");
+				throw new VaultStateStoreError("Cannot use the approvals file /state/approvals.json");
 			},
 		});
 

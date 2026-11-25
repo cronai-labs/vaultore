@@ -8,6 +8,15 @@ export const requestUrl = vi.fn();
 
 export class Plugin {
   app: any = {
+    // Obsidian's per-device storage for the vault, which sync does not carry.
+    localStorage: {} as Record<string, unknown>,
+    loadLocalStorage(key: string): unknown {
+      return Object.prototype.hasOwnProperty.call(this.localStorage, key) ? this.localStorage[key] : null;
+    },
+    saveLocalStorage(key: string, data: unknown): void {
+      if (data === null) delete this.localStorage[key];
+      else this.localStorage[key] = data;
+    },
     vault: {
       adapter: {
         read: async () => "",

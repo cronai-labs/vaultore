@@ -1,9 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nodeTimers } from "../testing/timers";
 import type { Timers } from "../types";
 import { WorkflowScheduler, computeNextRun } from "./index";
 
 describe("WorkflowScheduler", () => {
+  // A fixed clock in the middle of a minute: a tick fires every occurrence
+  // that is due (#269), so a test whose "now" crossed a minute boundary under
+  // the real clock found a second every-minute occurrence and failed in CI.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-25T13:40:30.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("registers workflows and ticks when due", () => {
     const scheduler = new WorkflowScheduler({ timers: nodeTimers });
     const entry = scheduler.register("Workflows/test.md", "* * * * *");

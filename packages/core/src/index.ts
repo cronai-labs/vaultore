@@ -164,6 +164,10 @@ export {
   MAX_LATE_AFTER_MINUTES,
 } from "./settings/machine-settings";
 export type { MachineSettings, MachineSettingsOptions } from "./settings/machine-settings";
+export { VaultStateStore, VaultStateStoreError, vaultKeyFor, isRecord, own } from "./settings/vault-state-store";
+export type { VaultStateStoreSpec, VaultStateStoreOps } from "./settings/vault-state-store";
+export { pluginSchedulesStore, pluginSchedulesPath, PLUGIN_SCHEDULES_FILE } from "./settings/plugin-schedules";
+export type { PluginSchedules, PluginSchedulesOptions } from "./settings/plugin-schedules";
 
 export type {
   ClaimSlotOptions,

@@ -31,7 +31,7 @@ vaultore/
 │   │   ├── providers/       #   OpenAI and Anthropic
 │   │   ├── scheduler/       #   cron ticks; the schedule record (slot-record.ts)
 │   │   ├── lock/            #   run locks; where per-machine state lives
-│   │   ├── settings/        #   settings both runners share on one machine
+│   │   ├── settings/        #   per-machine settings and consent stores in the user tree
 │   │   ├── types/           #   types, defaults, the front matter schema
 │   │   ├── vault/           #   exported vault helpers (#45)
 │   │   └── fixtures/, testing/
