@@ -183,7 +183,8 @@ What holds for both runners:
   It is recorded when a runner looks again and said once (Obsidian as a notice, the agent on
   stderr). Catch it up, one run for all the missed occurrences, or dismiss it: "Catch up" and
   "Dismiss" under **Missed runs** in the settings, or `vaultore schedules catch-up | dismiss
-  <note.md>`. A failed catch-up is not retried.
+  <note.md>`. A failed catch-up is not retried. A note Obsidian runs is caught up only while
+  "Run scheduled workflows" is on.
 - **Late is more than two minutes**: an occurrence that would start later than that, because the
   computer was asleep at its time, is not run but listed as missed. "Late after" (2 to 60
   minutes) changes that for the computer, for both runners; `vaultore schedules late-after`

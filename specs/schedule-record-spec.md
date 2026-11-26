@@ -94,7 +94,7 @@ For a gap:
 | Event | Missed | Dismissed | Catching up | Done |
 |---|---|---|---|---|
 | The user dismisses it | → Dismissed | refused: "already dismissed" | refused: "being caught up" | refused: "already caught up" |
-| The user catches it up | → Catching up; the note runs once, as a run by hand (no schedule approval needed, the run's own permissions apply) | refused: "dismissed" | refused, as Dismissed | refused, as Dismissed |
+| The user catches it up | → Catching up; the note runs once, unattended, with the permissions of its schedule approval; refused before the gap is taken when no approval covers the note, or when Obsidian runs it and Run scheduled workflows is off ([permissions-spec §6.3](permissions-spec.md#63-unattended-permissions)) | refused: "dismissed" | refused, as Dismissed | refused, as Dismissed |
 | A runner looks for gaps | none: the gap is decided | none | none | none |
 | Retention ends | removed | removed | kept while its resolver runs | removed |
 

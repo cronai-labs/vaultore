@@ -42,6 +42,7 @@ import {
 	VERSION,
 	approvalCovers,
 	approvalOf,
+	catchUpRefusal,
 	bindingOf,
 	describeRun,
 	errorMessage,
@@ -700,6 +701,8 @@ async function catchUpApproval(vaultRoot: string, path: string, content: string)
 	if (approval === undefined) {
 		return `it is not approved to run on schedule on this computer; approve it first: vaultore schedules approve ${path}`;
 	}
+	const refused = catchUpRefusal(schedules, approval);
+	if (refused !== undefined) return refused;
 	const binding = bindingOf(schedules, approval.owner);
 	if (!approvalCovers(approval, note, binding)) return changedReason(path, reviewApproval(approval, note));
 	return { approval, binding };

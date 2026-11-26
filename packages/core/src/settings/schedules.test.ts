@@ -8,6 +8,7 @@ import {
 	ApprovalAnswerError,
 	approveNote,
 	approvedPermissions,
+	catchUpRefusal,
 	coveredPermissions,
 	legacyApprovalsPath,
 	noteScheduleState,
@@ -186,6 +187,23 @@ describe("whether a runner runs a note", () => {
 		expect(revokeNote(schedules, NOTE.path)).toBe(true);
 		expect(revokeNote(schedules, NOTE.path)).toBe(false);
 		expect(noteScheduleState("agent", schedules, NOTE).state).toBe("not-approved");
+	});
+});
+
+describe("a catch-up follows the owner's scheduling (#307)", () => {
+	const approval = (owner: "obsidian" | "agent") => ({ owner, schedule: "0 9 * * *", hash: "h", approvedAt: "2026-11-26T00:00:00.000Z" });
+	const schedules = (on: boolean): VaultSchedules => ({ obsidianScheduling: on, obsidianBinding: "strict", notes: {} });
+
+	it("refuses a note Obsidian runs while Run scheduled workflows is off", () => {
+		expect(catchUpRefusal(schedules(false), approval("obsidian"))).toMatch(/Run scheduled workflows is off/);
+	});
+
+	it("allows it while the switch is on", () => {
+		expect(catchUpRefusal(schedules(true), approval("obsidian"))).toBeUndefined();
+	});
+
+	it("allows a note the agent runs, whatever the switch, as it stays scheduled while the agent is stopped", () => {
+		expect(catchUpRefusal(schedules(false), approval("agent"))).toBeUndefined();
 	});
 });
 

@@ -57,6 +57,7 @@ vi.mock("@vaultore/core", async () => {
     noteScheduleState: actual.noteScheduleState,
     approveNote: actual.approveNote,
     approvalOf: actual.approvalOf,
+    catchUpRefusal: actual.catchUpRefusal,
     approvalCovers: actual.approvalCovers,
     approvedPermissions: actual.approvedPermissions,
     bindingOf: actual.bindingOf,
@@ -1508,6 +1509,64 @@ describe("scheduled workflows", () => {
 
       expect(executor.runWorkflow).not.toHaveBeenCalled();
     });
+  });
+
+  // #307: a revoke written while the file is unreadable must not be missed.
+  describe("a schedules file that turns unreadable", () => {
+    it("stops every scheduled run, says so once, and resumes once it can be read", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+      await toggle("Run scheduled workflows", true);
+      await choose("Workflows/daily.md", "obsidian");
+      expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
+      const good = readFileSync(machineSettings.schedules, "utf8");
+      writeFileSync(machineSettings.schedules, "{broken");
+      Notice.shown.length = 0;
+      const run = vi.spyOn(plugin as any, "runWorkflow").mockResolvedValue(undefined);
+
+      await (plugin as any).runWorkflowByPath("Workflows/daily.md", { schedule: "0 18 * * *", slot: new Date() });
+      await plugin.reloadSchedules();
+
+      expect(run).not.toHaveBeenCalled();
+      expect(armed()).toEqual([]);
+      expect(Notice.shown.filter((m) => m.includes("scheduled workflows stopped"))).toHaveLength(1);
+      expect(row("Run scheduled workflows").desc).toMatch(/Stopped: the schedules cannot be read \(.*schedules\.json/);
+
+      writeFileSync(machineSettings.schedules, good);
+      await plugin.reloadSchedules();
+      expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
+      expect(row("Run scheduled workflows").desc).not.toMatch(/Stopped/);
+    });
+
+    it("catches nothing up from what it read before", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+      await toggle("Run scheduled workflows", true);
+      await choose("Workflows/daily.md", "obsidian");
+      writeFileSync(machineSettings.schedules, "{broken");
+      const run = vi.spyOn(plugin as any, "runWorkflow").mockResolvedValue(undefined);
+      const gap = { note: "Workflows/daily.md", slot: new Date(), schedule: "0 18 * * *" } as never;
+      Notice.shown.length = 0;
+
+      await plugin.catchUpMissedRun(gap);
+
+      expect(run).not.toHaveBeenCalled();
+      expect(Notice.shown.at(-1)).toMatch(/^VaultOre: not catching up Workflows\/daily\.md: the schedules cannot be read \(.*schedules\.json/);
+    });
+  });
+
+  // #307: nothing is scheduled while the switch is off, so nothing is missed.
+  it("does not catch up a note Obsidian runs while Run scheduled workflows is off", async () => {
+    useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+    await choose("Workflows/daily.md", "obsidian");
+    expect(plugin.schedules.obsidianScheduling).toBe(false);
+    const run = vi.spyOn(plugin as any, "runWorkflow").mockResolvedValue(undefined);
+    Notice.shown.length = 0;
+
+    await plugin.catchUpMissedRun({ note: "Workflows/daily.md", slot: new Date(), schedule: "0 18 * * *" } as never);
+
+    expect(run).not.toHaveBeenCalled();
+    expect(Notice.shown.at(-1)).toBe(
+      "VaultOre: not catching up Workflows/daily.md: Obsidian runs it on schedule, and Run scheduled workflows is off on this computer; turn it on first, or dismiss its missed runs"
+    );
   });
 
   describe("handing a note to vaultore agent", () => {

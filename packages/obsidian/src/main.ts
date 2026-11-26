@@ -35,6 +35,7 @@ import {
   noteScheduleState,
   approveNote,
   approvalOf,
+  catchUpRefusal,
   approvalCovers,
   approvedPermissions,
   bindingOf,
@@ -841,6 +842,10 @@ export default class VaultOrePlugin extends Plugin {
   // runner that owns it, in the user tree. Off with nothing approved until
   // read, and when it cannot be read.
   schedules: VaultSchedules = { obsidianScheduling: false, obsidianBinding: "strict", notes: {} };
+  // Why the schedules file could not be read when last read; while set, the
+  // plugin holds no approvals, so nothing runs on schedule or catches up
+  // (#307). Said once per reason.
+  schedulesError: string | undefined;
   private schedulesStore: VaultStateStore<VaultSchedules> | undefined;
   // A change of a file vaultore changes too waits a moment for it, rather
   // than failing a click (#291).
@@ -868,10 +873,12 @@ export default class VaultOrePlugin extends Plugin {
     try {
       const store = await this.openSchedulesStore();
       this.schedules = await store.forVault(await vaultKeyFor(await this.adapter.getVaultRoot()));
+      this.schedulesError = undefined;
     } catch (err) {
       this.schedules = { obsidianScheduling: false, obsidianBinding: "strict", notes: {} };
-      this.adapter.log("warn", errorMessage(err));
-      new Notice(`VaultOre: scheduled workflows stay off. ${errorMessage(err)}`);
+      this.schedulesError = errorMessage(err);
+      this.adapter.log("warn", this.schedulesError);
+      new Notice(`VaultOre: scheduled workflows stay off. ${this.schedulesError}`);
     }
     await this.refreshAgentStatus();
     await this.refreshScheduledNow();
@@ -1149,17 +1156,28 @@ export default class VaultOrePlugin extends Plugin {
 
   /**
    * Reads the schedules file again, as vaultore agent and `vaultore schedules`
-   * change it too, and re-arms when it changed. A file that cannot be read now
-   * keeps what was read last; loadSchedules says why at the next start.
+   * change it too, and re-arms when it changed. A file that cannot be read
+   * now holds no approvals: what was read last may have been revoked since,
+   * so nothing runs on it until the file can be read again (#307).
    */
   async reloadSchedules(): Promise<void> {
     let next: VaultSchedules;
     try {
       const store = await this.openSchedulesStore();
       next = await store.forVault(await vaultKeyFor(await this.adapter.getVaultRoot()));
+      if (this.schedulesError !== undefined) {
+        this.schedulesError = undefined;
+        this.settingsTab?.update();
+      }
     } catch (err) {
-      this.adapter.log("warn", `Could not read the schedules again: ${errorMessage(err)}`);
-      return;
+      next = { obsidianScheduling: false, obsidianBinding: "strict", notes: {} };
+      const message = errorMessage(err);
+      if (message !== this.schedulesError) {
+        this.schedulesError = message;
+        this.adapter.log("warn", `Could not read the schedules again: ${message}`);
+        new Notice(`VaultOre: scheduled workflows stopped until the schedules can be read again. ${message}`);
+        this.settingsTab?.update();
+      }
     }
     if (JSON.stringify(next) === JSON.stringify(this.schedules)) return;
     this.schedules = next;
@@ -1414,9 +1432,12 @@ export default class VaultOrePlugin extends Plugin {
     let unattended: UnattendedApproval;
     try {
       await this.reloadSchedules();
+      if (this.schedulesError !== undefined) throw new Error(`the schedules cannot be read (${this.schedulesError})`);
       const note = await this.readNoteNow(file.path);
       const approval = approvalOf(this.schedules, file.path);
       if (approval === undefined) throw new Error("it is not approved to run on schedule; approve it under Scheduled workflows first");
+      const refused = catchUpRefusal(this.schedules, approval);
+      if (refused !== undefined) throw new Error(refused);
       const binding = bindingOf(this.schedules, approval.owner);
       if (!approvalCovers(approval, note, binding)) {
         throw new Error("it changed since it was approved; review it under Scheduled workflows first");
@@ -1849,6 +1870,9 @@ class VaultOreSettingsTab extends PluginSettingTab {
           "is open, but only if you approved it below." +
           (this.plugin.scheduledBeforeUpgrade && !this.plugin.schedules.obsidianScheduling
             ? " Before this version, scheduling was on for this vault; it is now off until you turn it on here."
+            : "") +
+          (this.plugin.schedulesError !== undefined
+            ? ` Stopped: the schedules cannot be read (${this.plugin.schedulesError}).`
             : ""),
         control: { type: "toggle", key: "runScheduledWorkflows" },
       },
