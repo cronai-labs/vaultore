@@ -170,6 +170,8 @@ export { VaultStateStore, VaultStateStoreError, vaultKeyFor, isRecord, own } fro
 export type { VaultStateStoreSpec, VaultStateStoreOps } from "./settings/vault-state-store";
 export { pluginSchedulesStore, pluginSchedulesPath, PLUGIN_SCHEDULES_FILE } from "./settings/plugin-schedules";
 export type { PluginSchedules, PluginSchedulesOptions } from "./settings/plugin-schedules";
+export { readDecisionDevice, deviceFilePath } from "./settings/device";
+export type { DecisionDevice, DecisionDeviceOptions } from "./settings/device";
 
 export type {
   ClaimSlotOptions,

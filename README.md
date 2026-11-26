@@ -207,8 +207,7 @@ paths share the approvals, the record and the locks. Running once beyond one acc
 
 What sync carries depends on your sync. iCloud, Nextcloud, Syncthing and Obsidian Sync with
 plugin settings on carry `.obsidian/plugins/vaultore/data.json`, which holds the plugin's other
-settings and its permission decisions; decisions bound to the device that made them are
-[#284](https://github.com/cronai-labs/vaultore/issues/284). Run records and the result callouts
+settings and its permission decisions. A permission decision applies only on the account and computer that made it, so a note that arrives through sync asks again on each computer; **Permission answers from other devices** in the plugin, or `vaultore permissions other-devices apply`, lets answers from elsewhere apply too: where they disagree a deny wins, and an answer taken over is kept as this computer's own, so turning the setting off does not withdraw it. Run records and the result callouts
 in notes travel with the vault, so two computers write into the same notes.
 
 **Let one computer schedule:** approve the note there only, in Obsidian or for the agent.
@@ -295,19 +294,19 @@ vaultore schedules log [<workflow.md>] [--vault <dir>]
 vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--yes] [--quiet]
 vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
 vaultore schedules late-after [<minutes> | default]
+vaultore permissions other-devices [apply | ask]
 vaultore --version | --help
 ```
 
 - Settings come from `<vault>/.vaultore/config.json`: `defaultProvider`, `defaultModel`,
   `aiTemperature`, `aiMaxTokens`, `aiTimeoutSeconds`, `runtimeEngine`, `outputRoot`, and the
-  stored `permissionDecisions`. API keys come from the environment
+  stored `deviceDecisions`. API keys come from the environment
   (`VAULTORE_OPENAI_APIKEY` or `OPENAI_API_KEY`, `VAULTORE_ANTHROPIC_APIKEY` or
   `ANTHROPIC_API_KEY`).
 - `--config-dir <name>`: when Obsidian is set to use another config folder than `.obsidian`,
   name it, so that it is skipped when looking for workflows and hidden from cells.
-- Permissions at `ask` are denied unless you pass `--yes`, and the decision is stored in the
-  config file. A `deny` stored that way sticks until the note changes
-  ([#28](https://github.com/cronai-labs/vaultore/issues/28)).
+- Permissions at `ask` are denied for the run unless you pass `--yes`; `--yes` grants them, and
+  that answer is stored in the config file, for this account on this computer, until the note changes. A run without `--yes` stores nothing. `vaultore permissions other-devices apply` lets decisions made on another computer apply here.
 - `vaultore agent` is a scheduler daemon. **It runs a scheduled note only after
   `vaultore schedules approve <note.md>`**, and only while the note's frontmatter and cells are
   what you approved: an edit to either, including one that arrives through sync, stops it until
@@ -339,7 +338,8 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | **Outside the vault**, per account (`~/.config/vaultore/`; `%APPDATA%\vaultore\` on Windows) | | |
 | `locks/` | One lock file per running note, removed when the run ends | both runners |
 | `slots/` | What each scheduled occurrence came to, and missed runs; 30 days at most | both runners |
-| `settings.json` | "Late after", for your account on this computer | both runners |
+| `settings.json` | "Late after" and "Permission answers from other devices", for your account on this computer | both runners |
+| `device.json` | This account's device: what a permission decision is bound to (a random id and key) | both runners |
 | `obsidian-schedules.json` and `.lock` | **Run scheduled workflows** and the plugin's approvals, per vault | the plugin |
 | `approvals.json`, `approvals.json.lock` | The agent's schedule approvals | `vaultore schedules approve` |
 | **Elsewhere** | | |

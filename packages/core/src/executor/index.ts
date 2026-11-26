@@ -4,6 +4,7 @@
  * BRICK-004/005/006: Executes cells and persists outputs
  */
 
+import { timingSafeEqual } from "node:crypto";
 import {
   Cell,
   CellOutput,
@@ -22,6 +23,7 @@ import {
 } from "../types";
 import { detectRuntimes, execContainer } from "../runtime";
 import { errorMessage } from "../errors";
+import { isRecord, vaultKeyFor } from "../settings/vault-state-store";
 import {
   OutputSerializer,
   TemplateInterpolator,
@@ -527,11 +529,69 @@ interface RunContext {
   outputRoot: string;
 }
 
-/** A stored decision, bound to the content it was given for (permissions-spec §5.3). */
-type StoredDecision = WorkflowPermissions & {
+/**
+ * A stored decision, bound to the content it was given for (permissions-spec
+ * §5.3). Before #284, one per note, under `vaultore.permissionDecisions`;
+ * that key is still read when decisions from other devices apply, and never
+ * written, so an older runner elsewhere keeps its own.
+ */
+type StoredDecision = Partial<WorkflowPermissions> & {
   workflowHash?: string;
   grantedAt?: string;
 };
+
+/**
+ * A decision bound to the device it was made on as well (#284): kept under
+ * `vaultore.deviceDecisions`, per note and then per device id, so that two
+ * computers sharing a vault each keep their own. `mac` covers the vault, the
+ * note, the device, the content hash and the answers.
+ */
+type DeviceDecision = StoredDecision & { mac?: string };
+type DeviceDecisions = Record<string, Record<string, DeviceDecision>>;
+
+const PERMISSION_KEYS = ["network", "buildNetwork", "vaultRead", "vaultWrite"] as const;
+
+/** What a decision's MAC is made over, in one canonical text. */
+function decisionText(vault: string, path: string, device: string, decision: StoredDecision): string {
+  const answers = Object.fromEntries(PERMISSION_KEYS.map((key) => [key, decision[key] ?? null]));
+  return canonicalJson({
+    format: "vaultore.permission-decision",
+    version: 1,
+    vault,
+    path,
+    device,
+    workflowHash: decision.workflowHash ?? null,
+    grantedAt: decision.grantedAt ?? null,
+    answers,
+  });
+}
+
+function sameMac(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/**
+ * Several decisions as one, per permission: a deny in any of them wins over
+ * an allow. Undefined when there are none.
+ */
+function strictest(decisions: StoredDecision[]): StoredDecision | undefined {
+  if (decisions.length === 0) return undefined;
+  const merged: StoredDecision = {};
+  for (const key of PERMISSION_KEYS) {
+    const answers = decisions.map((decision) => decision[key]);
+    if (answers.includes("deny")) merged[key] = "deny";
+    else if (answers.includes("allow")) merged[key] = "allow";
+  }
+  return merged;
+}
+
+/** An own property only, from a record read out of a file. */
+function ownEntry<T>(record: unknown, key: string): T | undefined {
+  if (typeof record !== "object" || record === null) return undefined;
+  return Object.prototype.hasOwnProperty.call(record, key) ? (record as Record<string, T>)[key] : undefined;
+}
 
 /**
  * What a permission decision is bound to: the frontmatter as written (keys
@@ -585,43 +645,102 @@ async function resolvePermissions(
     ...DEFAULT_PERMISSIONS,
     ...frontmatter.permissions,
   };
-
-  const stored =
-    platform.getSetting<Record<string, StoredDecision>>("vaultore.permissionDecisions") ?? {};
-
-  // A decision applies only to the content it was given for. Without this, one
-  // grant covered every later version of the file at that path — an edit
-  // arriving through sync, or another note saved under the same name. A
-  // decision stored before hashes existed has none and is asked again.
-  const previous = stored[workflowPath];
-  const current = previous?.workflowHash === workflowHash ? previous : undefined;
   const resolved: WorkflowPermissions = { ...merged };
+  const asked = PERMISSION_KEYS.filter((key) => merged[key] === "ask");
 
-  for (const key of Object.keys(merged) as (keyof WorkflowPermissions)[]) {
-    if (merged[key] !== "ask") continue;
+  // Only an `ask` is answered and stored. A note that asks nothing needs no
+  // device and leaves the stored decisions as they are.
+  if (asked.length > 0) {
+    const device = await platform.decisionDevice();
+    // The vault's real path, so that a vault opened through a symbolic link
+    // is the same vault, as for the run locks and the approvals.
+    const vault = await vaultKeyFor(await platform.getVaultRoot());
+    // Read out of a file anyone who can write the vault can change: anything
+    // that is not a record is no decision.
+    const storedValue = platform.getSetting<unknown>("vaultore.deviceDecisions");
+    const stored: DeviceDecisions = isRecord(storedValue) ? (storedValue as DeviceDecisions) : {};
+    const noteValue = ownEntry<unknown>(stored, workflowPath);
+    const forNote: Record<string, DeviceDecision> = isRecord(noteValue) ? (noteValue as Record<string, DeviceDecision>) : {};
 
-    if (current?.[key] && current[key] !== "ask") {
-      resolved[key] = current[key];
-      continue;
+    // A decision applies only to the content it was given for (#69), and
+    // only on the device that made it (#284): one whose MAC does not verify
+    // was not made here, or was changed since, and counts as undecided.
+    const mineValue = ownEntry<unknown>(forNote, device.id);
+    const mine = isRecord(mineValue) ? (mineValue as DeviceDecision) : undefined;
+    let current: StoredDecision | undefined;
+    if (mineValue !== undefined) {
+      const expected = mine === undefined ? "" : device.sign(decisionText(vault, workflowPath, device.id, mine));
+      if (mine !== undefined && typeof mine.mac === "string" && sameMac(mine.mac, expected)) {
+        if (mine.workflowHash === workflowHash) current = mine;
+      } else {
+        platform.log("warn", `The stored permission decision for ${workflowPath} was not made here or was changed; asking again`);
+      }
     }
-
-    if (!platform.confirm) {
-      resolved[key] = "deny";
-      continue;
-    }
-
-    const approved = await platform.confirm(
-      `VaultOre permission request: ${key} for ${workflowPath}. Allow?`
+    // Turned on in this machine's settings, never by the vault: decisions
+    // made on other devices, and one stored before decisions carried a
+    // device, apply too. Where they disagree, a deny wins, whatever order
+    // the file lists them in.
+    const elsewhere = strictest(
+      [
+        ...Object.entries(forNote)
+          .filter(([id]) => id !== device.id)
+          .map(([, decision]) => decision as unknown),
+        ownEntry<unknown>(platform.getSetting("vaultore.permissionDecisions"), workflowPath),
+      ].filter(
+        (decision): decision is StoredDecision => isRecord(decision) && decision["workflowHash"] === workflowHash
+      )
     );
-    resolved[key] = approved ? "allow" : "deny";
-  }
+    if (current === undefined && elsewhere !== undefined) {
+      if (device.acceptOtherDevices) {
+        current = elsewhere;
+      } else {
+        // Said once per run, so that an upgrade that asks again is explained.
+        platform.log(
+          "info",
+          `An answer for ${workflowPath} given on another device, or before answers were kept per device, does not apply here; ` +
+            "asking again. Permission answers from other devices (vaultore permissions other-devices) changes that"
+        );
+      }
+    }
 
-  stored[workflowPath] = {
-    ...resolved,
-    workflowHash,
-    grantedAt: current?.grantedAt ?? new Date().toISOString(),
-  };
-  await platform.setSetting("vaultore.permissionDecisions", stored);
+    // The answers to keep: given now, or kept before. A permission nobody
+    // could be asked about is denied for this run only, so that a later run
+    // that can ask (the CLI with --yes) is not bound by a deny nobody gave.
+    const answered: (typeof PERMISSION_KEYS)[number][] = [];
+    for (const key of asked) {
+      const answer = current?.[key];
+      if (answer === "allow" || answer === "deny") {
+        resolved[key] = answer;
+        answered.push(key);
+        continue;
+      }
+      const approved = platform.confirm
+        ? await platform.confirm(`VaultOre permission request: ${key} for ${workflowPath}. Allow?`)
+        : undefined;
+      resolved[key] = approved === true ? "allow" : "deny";
+      if (approved === undefined) {
+        platform.log("warn", `${key} for ${workflowPath} is denied for this run: nobody could be asked, and nothing was kept`);
+        continue;
+      }
+      answered.push(key);
+    }
+
+    const decision: StoredDecision = {
+      ...Object.fromEntries(answered.map((key) => [key, resolved[key]])),
+      workflowHash,
+      grantedAt: (current === mine ? mine?.grantedAt : undefined) ?? new Date().toISOString(),
+    };
+    const entry: DeviceDecision = { ...decision, mac: device.sign(decisionText(vault, workflowPath, device.id, decision)) };
+    // Without a prototype, so that a note path such as "__proto__" is an
+    // entry like any other.
+    const nextForNote = Object.assign(Object.create(null) as Record<string, DeviceDecision>, forNote);
+    nextForNote[device.id] = entry;
+    const next = Object.assign(Object.create(null) as DeviceDecisions, stored);
+    next[workflowPath] = nextForNote;
+    if (answered.length > 0 && JSON.stringify(mine) !== JSON.stringify(entry)) {
+      await platform.setSetting("vaultore.deviceDecisions", next);
+    }
+  }
 
   return {
     network: resolved.network === "allow",

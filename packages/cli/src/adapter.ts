@@ -21,8 +21,18 @@ import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
-import { DEFAULT_CONFIG_DIR, acquireRunLock, claimSlot, describeHolder, errorMessage, resolveInVaultRoot } from "@vaultore/core";
+import {
+	DEFAULT_CONFIG_DIR,
+	acquireRunLock,
+	claimSlot,
+	describeHolder,
+	errorMessage,
+	readDecisionDevice,
+	resolveInVaultRoot,
+} from "@vaultore/core";
 import type {
+	DecisionDevice,
+	DecisionDeviceOptions,
 	PlatformAdapter,
 	PlatformRequest,
 	PlatformResponse,
@@ -75,6 +85,8 @@ export interface NodeAdapterOptions {
 	slotDirectory?: string;
 	/** How often claims prune the record, at most. Default: core's hour. Tests pass 0. */
 	slotPruneIntervalMs?: number;
+	/** Where the device file and the shared settings are. Default: core's. Tests pass their own. */
+	device?: DecisionDeviceOptions;
 }
 
 export class NodeAdapter implements PlatformAdapter {
@@ -95,6 +107,7 @@ export class NodeAdapter implements PlatformAdapter {
 	private readonly runLockDirectory: string | undefined;
 	private readonly keepDays: number | undefined;
 	private readonly slotDirectory: string | undefined;
+	private readonly deviceOptions: DecisionDeviceOptions;
 	private readonly slotPruneIntervalMs: number | undefined;
 	/** SKIP_DIRS plus the configured and the default config folder. */
 	private readonly skipDirs: ReadonlySet<string>;
@@ -111,6 +124,7 @@ export class NodeAdapter implements PlatformAdapter {
 		this.runLockDirectory = options.runLockDirectory;
 		this.keepDays = options.keepDays;
 		this.slotDirectory = options.slotDirectory;
+		this.deviceOptions = options.device ?? {};
 		this.slotPruneIntervalMs = options.slotPruneIntervalMs;
 		this.config = this.loadConfig();
 	}
@@ -203,6 +217,11 @@ export class NodeAdapter implements PlatformAdapter {
 
 	// ── Settings ──────────────────────────────────────────────────────────
 
+	/** This account's device on this computer, shared with the plugin (#284). */
+	decisionDevice(): Promise<DecisionDevice> {
+		return readDecisionDevice(this.deviceOptions);
+	}
+
 	getSetting<T>(key: string): T | undefined {
 		const short = key.startsWith("vaultore.") ? key.slice("vaultore.".length) : key;
 		if (short in this.overrides) return this.overrides[short] as T;
@@ -251,15 +270,16 @@ export class NodeAdapter implements PlatformAdapter {
 		stream.write(`[vaultore:${type}] ${message}\n`);
 	}
 
-	async confirm(message: string): Promise<boolean> {
+	/** `--yes` answers yes; without it nobody is asked, so there is no answer to keep. */
+	async confirm(message: string): Promise<boolean | undefined> {
 		if (this.assumeYes) {
 			process.stderr.write(`[vaultore] auto-approved (--yes): ${message}\n`);
 			return true;
 		}
 		process.stderr.write(
-			`[vaultore] denied (non-interactive, pass --yes to grant): ${message}\n`
+			`[vaultore] denied for this run (non-interactive, pass --yes to grant): ${message}\n`
 		);
-		return false;
+		return undefined;
 	}
 
 	log(level: "debug" | "info" | "warn" | "error", message: string, data?: unknown): void {

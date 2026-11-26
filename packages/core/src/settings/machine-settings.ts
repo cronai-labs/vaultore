@@ -17,6 +17,12 @@ export interface MachineSettings {
 	 * Absent: 2. Later, the occurrence is a missed run (#269).
 	 */
 	lateAfterMinutes?: number;
+	/**
+	 * Whether permission decisions made on other devices, or stored before
+	 * decisions carried a device, apply here too (#284). Absent: false. Here
+	 * and not in the vault, so that a synced file cannot turn it on.
+	 */
+	decisionsFromOtherDevices?: boolean;
 }
 
 export const MIN_LATE_AFTER_MINUTES = 2;
@@ -84,6 +90,14 @@ export async function readMachineSettings(options: MachineSettingsOptions = {}):
 		}
 		settings.lateAfterMinutes = raw["lateAfterMinutes"];
 	}
+	if (raw["decisionsFromOtherDevices"] !== undefined) {
+		if (typeof raw["decisionsFromOtherDevices"] !== "boolean") {
+			throw new Error(
+				`${path}: decisionsFromOtherDevices must be true or false, got ${JSON.stringify(raw["decisionsFromOtherDevices"])}`
+			);
+		}
+		settings.decisionsFromOtherDevices = raw["decisionsFromOtherDevices"];
+	}
 	return settings;
 }
 
@@ -103,6 +117,9 @@ export async function writeMachineSettings(
 			`Late after must be a whole number of minutes from ${MIN_LATE_AFTER_MINUTES} to ${MAX_LATE_AFTER_MINUTES}, ` +
 				`got ${String(changes.lateAfterMinutes)}`
 		);
+	}
+	if (changes.decisionsFromOtherDevices !== undefined && typeof changes.decisionsFromOtherDevices !== "boolean") {
+		throw new Error(`decisionsFromOtherDevices must be true or false, got ${String(changes.decisionsFromOtherDevices)}`);
 	}
 	const raw = await readObject(path);
 	for (const [key, value] of Object.entries(changes)) {
