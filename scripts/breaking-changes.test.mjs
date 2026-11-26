@@ -69,6 +69,21 @@ test("the changelog lists breaking changes first, with the footer's text", (t) =
 	assert.doesNotMatch(earlier, /Breaking changes/);
 });
 
+// GitHub wraps the description at 72 columns, so a longer footer spans lines;
+// the entry is one line, as an Upgrade-Note's is (#288).
+test("a breaking change's text is one line however GitHub wrapped it", (t) => {
+	const { release } = changelogFor(t, [
+		"fix(obsidian)!: scheduling stays on this computer (#285)\n\n" +
+			"BREAKING CHANGE: The switch and the approvals now belong to your account\n" +
+			"on each computer. Turn it on and approve your notes again.",
+	]);
+
+	assert.match(
+		release,
+		/### Breaking changes\n\n- \*\*obsidian:\*\* The switch and the approvals now belong to your account on each computer\. Turn it on and approve your notes again\.\n/,
+	);
+});
+
 // A squash commit as GitHub writes it: the description wrapped at 72 columns,
 // so the footer spans lines, and list items above it that begin with "- #".
 const BODY_WITH_UPGRADE_NOTE = [
