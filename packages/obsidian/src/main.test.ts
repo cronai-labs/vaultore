@@ -801,6 +801,9 @@ describe("VaultOrePlugin", () => {
         });
 
         it("are what a late tick finds, instead of a run", async () => {
+          // Between minutes 15 and 18 of an hour, the 15-minute occurrence
+          // would fall inside the window and run: the clock is pinned.
+          vi.setSystemTime(new Date("2026-11-24T10:40:00.000Z"));
           const look = vi.spyOn(plugin, "lookForMissedRuns").mockResolvedValue(undefined);
           const run = vi.spyOn(plugin as any, "runWorkflowByPath").mockResolvedValue(undefined);
           const scheduler = (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
