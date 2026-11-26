@@ -159,3 +159,25 @@ export function createSkipReporter(
 		);
 	};
 }
+
+/**
+ * Runs a rescan that may fail without ending the agent (#313): a vault
+ * unreadable for a moment (a network share, a disk unmounted) would otherwise
+ * be an unhandled rejection. A failed rescan leaves the notes armed as they
+ * were and is tried again at the next one; its reason is written once, and
+ * again when it changes, and recovery is written once.
+ */
+export function createGuardedRescan(rescan: () => Promise<void>, write: (line: string) => void): () => Promise<void> {
+	let failing: string | undefined;
+	return async () => {
+		try {
+			await rescan();
+			if (failing !== undefined) write("rescanning works again");
+			failing = undefined;
+		} catch (err) {
+			const message = errorMessage(err);
+			if (message !== failing) write(`could not rescan the vault: ${message}; the notes stay armed as they were, and it is tried again at the next rescan`);
+			failing = message;
+		}
+	};
+}
