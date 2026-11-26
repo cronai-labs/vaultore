@@ -224,8 +224,8 @@ code on the host.
 ### 5.1 When a Prompt Appears
 
 At the start of each run, every permission the frontmatter sets to `ask` is looked up in the stored decisions. A stored `allow` or `deny`
-for the same note and the same content (§5.3) is used. Otherwise the user is asked, once per
-permission.
+for the same note, the same content and this device (§5.3) is used. Otherwise the user is asked, once per
+permission. A note that asks nothing reads and stores no decision.
 
 ### 5.2 The Prompt
 
@@ -240,25 +240,30 @@ needed it fail.
 
 ### 5.3 Stored Decisions
 
-After the prompts, the resolved values of all four permissions are stored per note path, with
-the hash of the content they were given for:
+After the prompts, the answers to the permissions at `ask` are stored per note path and then per **device**, with the hash of the content they were given for and a MAC:
 
 ```json
 {
   "Workflows/link-digest.md": {
-    "network": "allow",
-    "buildNetwork": "deny",
-    "vaultWrite": "allow",
-    "vaultRead": "allow",
-    "workflowHash": "<sha256>",
-    "grantedAt": "2026-10-15T08:00:00.000Z"
+    "<device id>": {
+      "network": "allow",
+      "workflowHash": "<sha256>",
+      "grantedAt": "2026-10-15T08:00:00.000Z",
+      "mac": "<hmac-sha256>"
+    }
   }
 }
 ```
 
-They are kept as `permissionDecisions` in the plugin's settings
-(`.obsidian/plugins/vaultore/data.json`) or in the CLI's `<vault>/.vaultore/config.json`; both
-are hidden from cells.
+They are kept as `deviceDecisions` in the plugin's settings (`.obsidian/plugins/vaultore/data.json`) or in the CLI's `<vault>/.vaultore/config.json`; both are hidden from cells.
+
+**The device** is an account on a computer ([#284](https://github.com/cronai-labs/vaultore/issues/284)): `device.json` in VaultOre's folder for the account (`~/.config/vaultore/`, `%APPDATA%\vaultore\` on Windows), outside every vault, made on first use and shared by the plugin and the CLI. It holds a random public `id` and a random secret `key`, and nothing about the machine. Two runners that make it at once agree on one. A device file that cannot be read is an error naming it, and a note that asks is not run; it is never replaced silently, as a new one withdraws every decision made here.
+
+**The MAC** is HMAC-SHA256 with the device's key over the vault's path, the note's path, the device id, `workflowHash`, `grantedAt` and the answers. A decision applies only when its MAC verifies. So one written by anyone who can only write the vault, one changed from `deny` to `allow`, and one copied to another note, vault or device are not decisions: the user is asked again, and the log says so. Each device keeps its own entry, so computers that share a vault do not replace each other's answers.
+
+**Decisions from other devices** apply only when this machine's `settings.json` (beside `device.json`, not in the vault, so sync cannot turn it on) sets `decisionsFromOtherDevices: true`: in the plugin, **Permission answers from other devices**; in the CLI, `vaultore permissions other-devices apply`. Then a decision from another device for the same content applies, and after it one stored before decisions carried a device. A value other than `true` or `false` is an error naming the file.
+
+**Stored before #284,** decisions were one per note under `permissionDecisions`. That key is read only when decisions from other devices apply, and never written, so an older runner on another computer keeps its own until it is updated.
 
 `workflowHash` is the SHA-256 of the note's frontmatter as written (including keys the
 schema does not know) and each cell's attributes and source, with object keys sorted. Line
@@ -270,7 +275,9 @@ setting ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
 
 - the frontmatter or any cell changes (the hash differs), including an edit arriving through
   sync or another note saved under the same path;
-- the stored decision has no hash (stored before hashes were introduced).
+- the stored decision has no hash (stored before hashes were introduced);
+- the decision was made on another device, or before decisions carried a device, unless decisions from other devices apply;
+- its MAC does not verify.
 
 A stored `deny` is reused like an `allow`. In the CLI this means one run without `--yes` keeps
 the permission denied for that content, even on later runs with `--yes`
@@ -402,6 +409,7 @@ workflow is granted `network`.
 | Resource exhaustion | Memory, CPU and timeout limits; a process limit on Docker, Podman and Colima |
 | Privilege escalation in the container | Non-root user, no capabilities, `no-new-privileges` (not on Apple) |
 | A note changing after it was granted `ask` permissions | Decisions bound to the content (§5.3) |
+| A decision arriving through sync, or written into the vault by someone who can write it | Decisions bound to the device that made them, with a MAC whose key is outside the vault (§5.3) |
 | A synced or renamed note running unattended | Scheduling consent: per path and schedule in the plugin (§6.1), per path and content under `vaultore agent` (§6.2) |
 | An approved scheduled note changing under `vaultore agent` | The approval is bound to the content and re-checked when a run is due (§6.2) |
 | Sync delivering an approval, or turning scheduling on | Both runners keep their scheduling consent outside the vault, per machine (§6.1, §6.2) |
@@ -463,7 +471,10 @@ Merge frontmatter permissions over the defaults
   │
   ▼
 For each permission at "ask":
-  stored decision for this path with the same content hash?
+  stored decision for this path, this device and the same content hash, whose MAC verifies?
+    yes → use it
+  else, with decisions from other devices on: one from another device,
+  or one stored before decisions carried a device, for the same content hash?
     yes → use it
     no  → prompt (plugin modal; CLI: --yes allows, else deny)
   │

@@ -17,6 +17,8 @@ vi.mock("../runtime", () => ({
 
 import { execContainer } from "../runtime";
 import { memoryRunLocks } from "../testing/run-locks";
+import { testDecisionDevice } from "../testing/decision-device";
+import type { DecisionDevice } from "../settings/device";
 
 const SECRET = "the contents of a private note";
 
@@ -45,7 +47,12 @@ function vault(
 ) {
 	const settings = new Map<string, unknown>();
 	const reads: string[] = [];
+	const devices = { current: testDecisionDevice(), reads: 0 };
 	const platform = {
+		decisionDevice: async (): Promise<DecisionDevice> => {
+			devices.reads += 1;
+			return devices.current;
+		},
 		platform: "cli",
 		configDir,
 		readFile: async (path: string) => {
@@ -84,7 +91,7 @@ function vault(
 		},
 		log: () => undefined,
 	} as unknown as PlatformAdapter;
-	return { platform, files, reads, settings };
+	return { platform, files, reads, settings, devices };
 }
 
 let requests: string[];
@@ -365,6 +372,156 @@ describe("grants are bound to the note's content (#69)", () => {
 		});
 		await s.runNote(GRANTED);
 		expect(s.prompts).toHaveLength(1);
+	});
+});
+
+describe("decisions are bound to the device that made them (#284)", () => {
+	const GRANTED = note(
+		"  network: ask\n  buildNetwork: deny\n  vaultRead: allow",
+		"```ore:ai id=summary\nSay hello.\n```"
+	);
+	const HERE = "a".repeat(32);
+	const THERE = "b".repeat(32);
+
+	/** One vault and its settings, as sync shares them, run on whichever device is current. */
+	function shared(answer = true) {
+		const v = vault({ "Private/secret.md": SECRET });
+		const prompts: string[] = [];
+		(v.platform as { confirm?: unknown }).confirm = async (message: string) => {
+			prompts.push(message);
+			return answer;
+		};
+		async function runOn(id: string, content = GRANTED, options: { acceptOtherDevices?: boolean } = {}) {
+			v.devices.current = testDecisionDevice(id, options);
+			v.files["wf.md"] = content;
+			const workflow = await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content });
+			return workflow.outputs.get("summary")?.meta.status;
+		}
+		const stored = () => v.settings.get("vaultore.deviceDecisions") as Record<string, Record<string, Record<string, unknown>>>;
+		return { ...v, prompts, runOn, stored };
+	}
+
+	it("keeps the answer for this device, with a MAC, and does not ask here again", async () => {
+		const s = shared();
+		await s.runOn(HERE);
+		await s.runOn(HERE);
+
+		expect(s.prompts).toHaveLength(1);
+		const entry = s.stored()["wf.md"]?.[HERE];
+		expect(entry).toMatchObject({ network: "allow", workflowHash: expect.any(String), grantedAt: expect.any(String) });
+		expect(entry?.["mac"]).toMatch(/^[0-9a-f]{64}$/);
+	});
+
+	it("asks again on another device that has the same vault, and denies there when nobody can be asked", async () => {
+		const s = shared();
+		await s.runOn(HERE);
+		await s.runOn(THERE);
+		expect(s.prompts).toHaveLength(2);
+
+		delete (s.platform as { confirm?: unknown }).confirm;
+		const third = "c".repeat(32);
+		expect(await s.runOn(third)).toBe("error");
+		expect(requests).toHaveLength(2);
+	});
+
+	it("keeps each device's answer, so two devices sharing a vault each ask once", async () => {
+		const s = shared();
+		for (const id of [HERE, THERE, HERE, THERE, HERE]) await s.runOn(id);
+
+		expect(s.prompts).toHaveLength(2);
+		expect(Object.keys(s.stored()["wf.md"] ?? {}).sort()).toEqual([HERE, THERE]);
+	});
+
+	it.each([
+		["planted for this device without its key", (entry: Record<string, unknown>) => ({ ...entry, mac: "0".repeat(64) })],
+		["changed from deny to allow", (entry: Record<string, unknown>) => ({ ...entry, network: "allow" })],
+	])("asks again for an answer %s, and says why in the log", async (_what, tamper) => {
+		const s = shared(false);
+		const logs: string[] = [];
+		(s.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
+		await s.runOn(HERE);
+		const decisions = s.stored();
+		decisions["wf.md"]![HERE] = tamper(decisions["wf.md"]![HERE]!);
+		s.settings.set("vaultore.deviceDecisions", decisions);
+
+		await s.runOn(HERE);
+
+		expect(s.prompts).toHaveLength(2);
+		expect(logs).toContain("The stored permission decision for wf.md was not made here or was changed; asking again");
+	});
+
+	it("asks again for an answer copied to another note", async () => {
+		const s = shared();
+		await s.runOn(HERE);
+		const decisions = s.stored();
+		decisions["other.md"] = decisions["wf.md"]!;
+		s.settings.set("vaultore.deviceDecisions", decisions);
+		s.files["other.md"] = GRANTED;
+
+		await new WorkflowExecutor().runWorkflow({ platform: s.platform, workflowPath: "other.md", content: GRANTED });
+
+		expect(s.prompts).toHaveLength(2);
+	});
+
+	it("neither reads the device nor stores anything for a note that asks nothing", async () => {
+		const s = shared();
+		await s.runOn(HERE, note("  network: deny\n  vaultRead: allow", "```ore:ai id=summary\nSay hello.\n```"));
+
+		expect(s.devices.reads).toBe(0);
+		expect(s.settings.has("vaultore.deviceDecisions")).toBe(false);
+	});
+
+	it("does not run a note that asks when the device cannot be read, and says why", async () => {
+		const s = shared();
+		(s.platform as { decisionDevice: unknown }).decisionDevice = async () => {
+			throw new Error("Cannot use VaultOre's device file /x/device.json: it is not JSON");
+		};
+		s.files["wf.md"] = GRANTED;
+
+		await expect(
+			new WorkflowExecutor().runWorkflow({ platform: s.platform, workflowPath: "wf.md", content: GRANTED })
+		).rejects.toThrow("Cannot use VaultOre's device file");
+		expect(requests).toHaveLength(0);
+		expect(s.prompts).toHaveLength(0);
+	});
+
+	it("never writes the decisions stored before #284, and keeps them for an older runner", async () => {
+		const s = shared();
+		const legacy = { "wf.md": { network: "deny", workflowHash: "x" } };
+		s.settings.set("vaultore.permissionDecisions", legacy);
+		await s.runOn(HERE);
+
+		expect(s.settings.get("vaultore.permissionDecisions")).toBe(legacy);
+	});
+
+	describe("with answers from other devices turned on in this machine's settings", () => {
+		it("applies an answer given on another device for the same content", async () => {
+			const s = shared();
+			await s.runOn(THERE);
+			await s.runOn(HERE, GRANTED, { acceptOtherDevices: true });
+
+			expect(s.prompts).toHaveLength(1);
+			expect(Object.keys(s.stored()["wf.md"] ?? {}).sort()).toEqual([HERE, THERE]);
+		});
+
+		it("applies an answer stored before answers carried a device, for the same content", async () => {
+			const s = shared();
+			await s.runOn(THERE);
+			const hash = s.stored()["wf.md"]![THERE]!["workflowHash"];
+			s.settings.set("vaultore.deviceDecisions", {});
+			s.settings.set("vaultore.permissionDecisions", { "wf.md": { network: "allow", workflowHash: hash } });
+
+			expect(await s.runOn(HERE, GRANTED, { acceptOtherDevices: true })).toBe("success");
+			expect(s.prompts).toHaveLength(1);
+		});
+
+		it("still asks when the content changed since", async () => {
+			const s = shared();
+			await s.runOn(THERE);
+			await s.runOn(HERE, GRANTED.replace("Say hello.", "Say goodbye."), { acceptOtherDevices: true });
+
+			expect(s.prompts).toHaveLength(2);
+		});
 	});
 });
 

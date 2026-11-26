@@ -112,10 +112,12 @@ note yourself: withdraw its approval in the plugin, and
 
 - Cloud runs are non-interactive: any permission still at `ask` resolves
   to **deny** (same fail-closed rule as `vaultore run` without `--yes`).
-- Users pre-grant per-workflow decisions in `.vaultore/config.json`
-  (`permissionDecisions`), which syncs with the vault. A decision is bound to
-  a hash of the note's frontmatter and cells, so after an edit a permission
-  at `ask` resolves to deny until it is granted again (permissions-spec §5.3).
+- Decisions stored in the vault (`deviceDecisions` in `.vaultore/config.json`)
+  are bound to a hash of the note's frontmatter and cells, and to the device
+  that made them (permissions-spec §5.3, #284). A cloud runner is another
+  device: a decision made on the user's computer does not apply there unless
+  the runner is set to apply decisions from other devices, which trusts
+  whoever can write the vault. How a user grants a cloud run is open.
 - CronAI must never widen a permission beyond what the note's frontmatter
   requests.
 

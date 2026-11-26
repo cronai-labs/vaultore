@@ -10,6 +10,7 @@
 import { z } from "zod";
 import type { RunLock } from "../lock/run-lock";
 import type { SlotClaim } from "../scheduler/slot-record";
+import type { DecisionDevice } from "../settings/device";
 
 // =============================================================================
 // PERMISSION TYPES
@@ -585,6 +586,13 @@ export interface PlatformAdapter {
   // Settings
   getSetting<T>(key: string): T | undefined;
   setSetting<T>(key: string, value: T): Promise<void>;
+
+  /**
+   * This account's device on this computer, which a stored permission
+   * decision is bound to (#284). Read only for a note with an `ask`
+   * permission. Both runners return core's `readDecisionDevice()`.
+   */
+  decisionDevice(): Promise<DecisionDevice>;
 
   // Secrets
   getSecret(key: string): Promise<string | undefined>;

@@ -19,7 +19,11 @@ const machineSettings = vi.hoisted(() => {
   const { tmpdir } = require("node:os") as typeof import("node:os");
   const { join } = require("node:path") as typeof import("node:path");
   const dir = mkdtempSync(join(tmpdir(), "vaultore-plugin-settings-"));
-  return { path: join(dir, "settings.json"), schedules: join(dir, "obsidian-schedules.json") };
+  return {
+    path: join(dir, "settings.json"),
+    schedules: join(dir, "obsidian-schedules.json"),
+    device: join(dir, "device.json"),
+  };
 });
 vi.mock("@vaultore/core", async () => {
   const actual = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
@@ -39,6 +43,9 @@ vi.mock("@vaultore/core", async () => {
     isLateSlot: actual.isLateSlot,
     lateAfterMs: actual.lateAfterMs,
     readMachineSettings: () => actual.readMachineSettings({ path: machineSettings.path }),
+    // The device a permission decision is bound to (#284), likewise.
+    readDecisionDevice: () =>
+      actual.readDecisionDevice({ devicePath: machineSettings.device, settingsPath: machineSettings.path }),
     // The scheduling consent, likewise in the test's own file (#276); the
     // vault key is the root as given, as the test vaults need not exist.
     pluginSchedulesStore: () => actual.pluginSchedulesStore({ path: machineSettings.schedules }),
@@ -86,6 +93,7 @@ describe("VaultOrePlugin", () => {
   beforeEach(async () => {
     rmSync(machineSettings.path, { force: true });
     rmSync(machineSettings.schedules, { force: true });
+    rmSync(machineSettings.device, { force: true });
     vi.useFakeTimers();
     // Core's timers come from window; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
@@ -274,6 +282,37 @@ describe("VaultOrePlugin", () => {
       await late.changeHandler!("");
       expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({});
       expect(scheduler.lateAfterMs).toBe(2 * 60_000);
+    });
+
+    // Answers given on other devices apply here only when this machine's
+    // file says so (#284), never data.json, which sync carries.
+    it("stores Permission answers from other devices in the machine's file, which the device reads", async () => {
+      const toggle = at(row("Permission answers from other devices").toggles);
+      expect(toggle.value).toBe(false);
+      const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
+
+      await toggle.changeHandler!(true);
+      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({ decisionsFromOtherDevices: true });
+      expect((await adapter.decisionDevice()).acceptOtherDevices).toBe(true);
+      expect((plugin.settings as unknown as Record<string, unknown>)["decisionsFromOtherDevices"]).toBeUndefined();
+
+      await toggle.changeHandler!(false);
+      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({});
+      expect((await adapter.decisionDevice()).acceptOtherDevices).toBe(false);
+    });
+
+    it("keeps the device's decisions in data.json beside the earlier ones, which it writes back unchanged", async () => {
+      const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
+      const legacy = { "wf.md": { network: "allow", workflowHash: "x" } };
+      plugin.settings.permissionDecisions = legacy;
+
+      await adapter.setSetting("vaultore.deviceDecisions", { "wf.md": { a: { network: "allow" } } });
+      await plugin.saveSettings();
+
+      const saved = vi.mocked(plugin.saveData).mock.lastCall?.[0] as Record<string, unknown>;
+      expect(saved["deviceDecisions"]).toEqual({ "wf.md": { a: { network: "allow" } } });
+      expect(saved["permissionDecisions"]).toEqual(legacy);
+      expect(adapter.getSetting("vaultore.deviceDecisions")).toEqual({ "wf.md": { a: { network: "allow" } } });
     });
 
     // vaultore schedules late-after changed it: Obsidian follows within a minute.
@@ -964,6 +1003,7 @@ describe("scheduled workflows", () => {
   beforeEach(async () => {
     rmSync(machineSettings.path, { force: true });
     rmSync(machineSettings.schedules, { force: true });
+    rmSync(machineSettings.device, { force: true });
     vi.useFakeTimers();
     // The plugin debounces with window.setTimeout; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
