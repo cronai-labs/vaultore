@@ -6,12 +6,10 @@ import { LockHeldError, acquireLock } from "../lock";
 import type { LockHolder, LockOptions } from "../lock";
 
 /**
- * A runner's per-vault state on this machine, outside the vault: one file in
- * the user tree holds every vault's entry, keyed by the vault's real path.
- * What lives here is consent a synced file must not grant (#171, #276): the
- * agent's schedule approvals (`approvals.json`), the plugin's scheduling
- * switch and approvals (`obsidian-schedules.json`). Each runner has its own
- * file; only the store is shared.
+ * Per-vault state on this machine, outside the vault: one file in the user
+ * tree holds every vault's entry, keyed by the vault's real path. What lives
+ * here is consent a synced file must not grant (#171, #276): the schedule
+ * approvals both runners read (`schedules.json`, #301).
  */
 
 /** The file cannot be read, used or changed. The message names it. */
@@ -51,6 +49,8 @@ interface StateFile<V> {
 	format: string;
 	version: number;
 	vaults: Record<string, V>;
+	/** The files whose entries were copied in once (`importFrom`), so none is copied twice. */
+	imported?: string[];
 }
 
 /**
@@ -120,7 +120,12 @@ export class VaultStateStore<V> {
 			} else {
 				vaults[vaultKey] = entry;
 			}
-			const next: StateFile<V> = { format: this.spec.format, version: this.spec.version, vaults };
+			const next: StateFile<V> = {
+				format: this.spec.format,
+				version: this.spec.version,
+				vaults,
+				...(file.imported ? { imported: file.imported } : {}),
+			};
 			if (JSON.stringify(next) === before) return false;
 
 			await this.write(next);
@@ -131,29 +136,52 @@ export class VaultStateStore<V> {
 	}
 
 	/**
-	 * Copies another file of the same kind into this one's place, once: only
-	 * while this file does not exist, decided under its lock. Once written, the
-	 * file is never removed (an empty one lists no vaults), so a later import
-	 * changes nothing, also after every entry was taken away again. The other
-	 * file is read and checked as this one is, and left as it is. Returns
-	 * whether anything was copied.
+	 * Copies the entries of another file into this one, once per file: this
+	 * file records the other's path when it copies it, decided under its lock,
+	 * so a later call changes nothing, also after every copied entry was taken
+	 * away again. `merge` adds what one vault's entry in the other file holds
+	 * to that vault's entry here; it decides what an entry already here keeps.
+	 * The other file is read and checked as its own store reads it, and left as
+	 * it is. Returns whether anything was copied.
 	 */
-	async importOnce(from: VaultStateStore<V>): Promise<boolean> {
+	async importFrom<W>(from: VaultStateStore<W>, merge: (into: V, entry: W) => void): Promise<boolean> {
 		// Checked first without the lock, so that a command that only reads,
-		// once the move is done or when there is nothing to move, creates no
+		// once the copy is done or when there is nothing to copy, creates no
 		// folder and takes no lock; decided again under it.
-		if ((await exists(this.file)) || !(await exists(from.file))) return false;
+		if (!(await exists(from.file)) || (await this.hasImported(from.file))) return false;
 		await fs.mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
 		const release = await this.lock();
 		try {
-			if (await exists(this.file)) return false;
+			const file = await this.read();
+			if (file.imported?.includes(from.file)) return false;
 			if (!(await exists(from.file))) return false;
-			const file = await from.read();
-			await this.write({ format: this.spec.format, version: this.spec.version, vaults: file.vaults });
+			const source = await from.readVaults();
+			const vaults: Record<string, V> = Object.assign(Object.create(null) as Record<string, V>, file.vaults);
+			for (const [vault, entry] of Object.entries(source)) {
+				const into = this.spec.copy(own(vaults, vault));
+				merge(into, entry);
+				if (this.spec.isEmpty(into)) delete vaults[vault];
+				else vaults[vault] = into;
+			}
+			await this.write({
+				format: this.spec.format,
+				version: this.spec.version,
+				vaults,
+				imported: [...(file.imported ?? []), from.file],
+			});
 			return true;
 		} finally {
 			await release();
 		}
+	}
+
+	/** Every vault's entry, as checked when read. */
+	async readVaults(): Promise<Record<string, V>> {
+		return (await this.read()).vaults;
+	}
+
+	private async hasImported(path: string): Promise<boolean> {
+		return (await this.read()).imported?.includes(path) ?? false;
 	}
 
 	private async read(): Promise<StateFile<V>> {
@@ -187,6 +215,10 @@ export class VaultStateStore<V> {
 		}
 		const vaults = parsed["vaults"];
 		if (!isRecord(vaults)) throw this.unusable("it has no list of vaults");
+		const imported = parsed["imported"];
+		if (imported !== undefined && (!Array.isArray(imported) || !imported.every((item) => typeof item === "string"))) {
+			throw this.unusable("its list of imported files is not a list of paths");
+		}
 		for (const [vault, entry] of Object.entries(vaults)) {
 			const reason = this.spec.invalid(entry, vault);
 			if (reason !== undefined) throw this.unusable(reason);

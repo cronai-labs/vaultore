@@ -21,7 +21,7 @@ vaultore run Workflows/digest.md --vault ~/notes     # headless run
 vaultore run Workflows/digest.md --cell fetch --yes  # single cell, auto-grant asks
 vaultore list --vault ~/notes                        # discover workflow notes
 vaultore schedules approve Workflows/digest.md       # let the agent run this note
-vaultore schedules list --vault ~/notes              # scheduled notes and their approval
+vaultore schedules list --vault ~/notes              # scheduled notes, who runs them, and their approval
 vaultore agent --vault ~/notes                       # headless scheduler daemon
 vaultore schedules export --out schedules.json       # CronAI handover manifest
 ```
@@ -33,7 +33,7 @@ Conventions that differ from the plugin, on purpose:
 | Settings | Obsidian settings UI | `<vault>/.vaultore/config.json` |
 | Secrets | Obsidian secret storage | Environment (`VAULTORE_OPENAI_APIKEY`, `OPENAI_API_KEY`, …) |
 | Permission prompts | Modal dialog | Non-interactive: denied for the run unless `--yes`, which is stored; decisions persist to config, bound to the note's content and this device |
-| Scheduling | Only notes the user approved (path and schedule), while Obsidian is open | `vaultore agent` runs only notes approved with `vaultore schedules approve` (path and content); the approvals are kept outside the vault |
+| Scheduling | Only notes approved for Obsidian (path and schedule), while Obsidian is open | `vaultore agent` runs only notes approved for it (path and content); one file outside the vault holds both runners' approvals, one per note |
 
 The same workflow note produces the same run either way — outputs, run
 JSON, and artifact indexes are written by shared core code.
@@ -46,13 +46,13 @@ rescans (every 300 seconds unless `--rescan` says otherwise). **A note runs
 only after `vaultore schedules approve <note.md>`**, and only while its
 frontmatter and cells are what was approved; the agent reads the note and
 the approvals again when a run is due, and names every scheduled note it
-does not run. Its approvals are separate from the plugin's and are kept
-outside the vault, so on a server that syncs the vault an approval cannot
-arrive with it ([permissions spec](../specs/permissions-spec.md) §6.2; where
-exactly: [README](../README.md#where-vaultore-keeps-things)). It skips a
-scheduled run while the previous run of the same note is still going. Run
-it under systemd or launchd to keep it alive, with the same user and the
-same `--state-dir` you approved with.
+does not run. A note is approved for the agent or for Obsidian, never both,
+in one file both read, kept outside the vault, so on a server that syncs the
+vault an approval cannot arrive with it ([permissions spec](../specs/permissions-spec.md) §6;
+where exactly: [README](../README.md#where-vaultore-keeps-things)). One agent
+runs a vault at a time. It skips a scheduled run while the previous run of
+the same note is still going. Run it under systemd or launchd to keep it
+alive, as the user you approved with.
 
 ### Embedding as a library
 

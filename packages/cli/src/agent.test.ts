@@ -102,17 +102,22 @@ const scheduled = (path: string, hash: string, schedule = "0 9 * * *"): Schedule
 	schedule,
 	hash,
 });
-const approval = (hash: string) => ({
+const approval = (hash: string, owner: "agent" | "obsidian" = "agent") => ({
+	owner,
 	hash,
 	schedule: "0 9 * * *",
 	approvedAt: "2026-11-09T00:00:00.000Z",
+});
+const schedules = (notes: Record<string, ReturnType<typeof approval>>, obsidianScheduling = false) => ({
+	obsidianScheduling,
+	notes,
 });
 
 describe("planRegistrations", () => {
 	it("registers approved notes and skips the others with the reason", () => {
 		const plan = planRegistrations(
 			[scheduled("ok.md", "h1"), scheduled("new.md", "h2"), scheduled("edited.md", "h4")],
-			{ "ok.md": approval("h1"), "edited.md": approval("h3") }
+			schedules({ "ok.md": approval("h1"), "edited.md": approval("h3") })
 		);
 
 		expect(plan.register.map((note) => note.path)).toEqual(["ok.md"]);
@@ -123,17 +128,26 @@ describe("planRegistrations", () => {
 	});
 
 	it("registers nothing without approvals", () => {
-		const plan = planRegistrations([scheduled("a.md", "h1")], {});
+		const plan = planRegistrations([scheduled("a.md", "h1")], schedules({}));
 
 		expect(plan.register).toEqual([]);
 		expect(plan.skipped).toEqual([{ path: "a.md", reason: "it is not approved" }]);
+	});
+
+	// Obsidian's to run (#301): left out, and nothing said about it.
+	it("leaves out notes handed to Obsidian, without a reason to report", () => {
+		const plan = planRegistrations([scheduled("a.md", "h1")], schedules({ "a.md": approval("h1", "obsidian") }, true));
+
+		expect(plan.register).toEqual([]);
+		expect(plan.skipped).toEqual([]);
+		expect(plan.delegated.map((note) => note.path)).toEqual(["a.md"]);
 	});
 });
 
 describe("createApprovedRunner", () => {
 	function setup(options: {
 		note?: () => Promise<{ note: ScheduledNote; content: string }>;
-		approvals?: () => Promise<Record<string, ReturnType<typeof approval>>>;
+		schedules?: () => Promise<ReturnType<typeof schedules>>;
 	}) {
 		const ran: Array<[string, string]> = [];
 		const refused: Array<[string, string]> = [];
@@ -141,7 +155,7 @@ describe("createApprovedRunner", () => {
 			readNote:
 				options.note ??
 				(async () => ({ note: scheduled("a.md", "h1"), content: "the content checked" })),
-			approvals: options.approvals ?? (async () => ({ "a.md": approval("h1") })),
+			schedules: options.schedules ?? (async () => schedules({ "a.md": approval("h1") })),
 			run: async (path, content) => {
 				ran.push([path, content]);
 			},
@@ -171,7 +185,7 @@ describe("createApprovedRunner", () => {
 	});
 
 	it("does not run a note whose approval was revoked since the last rescan", async () => {
-		const { run, ran, refused } = setup({ approvals: async () => ({}) });
+		const { run, ran, refused } = setup({ schedules: async () => schedules({}) });
 
 		await run("a.md");
 
@@ -194,21 +208,30 @@ describe("createApprovedRunner", () => {
 
 	it("does not run anything while the approvals file cannot be used", async () => {
 		const { run, ran, refused } = setup({
-			approvals: async () => {
-				throw new VaultStateStoreError("Cannot use the approvals file /state/approvals.json");
+			schedules: async () => {
+				throw new VaultStateStoreError("Cannot use the schedules file /state/schedules.json");
 			},
 		});
 
 		await run("a.md");
 
 		expect(ran).toEqual([]);
-		expect(refused).toEqual([["a.md", "Cannot use the approvals file /state/approvals.json"]]);
+		expect(refused).toEqual([["a.md", "Cannot use the schedules file /state/schedules.json"]]);
+	});
+
+	it("does not run a note handed to Obsidian since the last rescan", async () => {
+		const { run, ran, refused } = setup({ schedules: async () => schedules({ "a.md": approval("h1", "obsidian") }, true) });
+
+		await run("a.md");
+
+		expect(ran).toEqual([]);
+		expect(refused).toEqual([["a.md", "it is handed to Obsidian"]]);
 	});
 
 	it("lets a failing run fail, so the caller reports it as a failed run", async () => {
 		const run = createApprovedRunner({
 			readNote: async () => ({ note: scheduled("a.md", "h1"), content: "c" }),
-			approvals: async () => ({ "a.md": approval("h1") }),
+			schedules: async () => schedules({ "a.md": approval("h1") }),
 			run: async () => {
 				throw new Error("engine down");
 			},
@@ -270,6 +293,17 @@ describe("createSkipReporter", () => {
 		report({ registered: 0, skipped: [] });
 
 		expect(lines).toEqual(["no scheduled workflow found, so nothing will run"]);
+	});
+
+	it("says every scheduled note is Obsidian's when all are handed to it", () => {
+		const lines: string[] = [];
+		const report = createSkipReporter((line) => lines.push(line));
+
+		report({ registered: 0, skipped: [], delegated: 2 });
+
+		expect(lines).toEqual([
+			"every scheduled workflow is handed to Obsidian, so nothing runs here; hand one to the agent with: vaultore schedules approve <note.md>",
+		]);
 	});
 
 	it("is silent once everything scheduled is approved", () => {

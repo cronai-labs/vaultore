@@ -66,16 +66,22 @@ describe("parseArgs", () => {
 		expect(() => parseArgs(["run", "wf.md", "--vaultt=/vault"])).toThrow(/unknown option --vaultt/);
 	});
 
+	it("refuses --state-dir, saying where the approvals are now (#301)", () => {
+		expect(() => parseArgs(["agent", "--state-dir", "/s"])).toThrow(
+			/--state-dir was removed: the schedule approvals are in ~\/\.config\/vaultore\/schedules\.json/
+		);
+	});
+
 	it("accepts every flag the commands read", () => {
 		const { flags } = parseArgs([
-			"--vault", "/vault", "--config-dir", ".cfg", "--state-dir", "/state", "--cell", "a",
+			"--vault", "/vault", "--config-dir", ".cfg", "--owner", "obsidian", "--cell", "a",
 			"--rescan", "60", "--out", "m.json",
 			"--skip-deps", "--yes", "--quiet", "--help", "--version",
 		]);
 		expect(flags).toEqual({
 			vault: "/vault",
 			"config-dir": ".cfg",
-			"state-dir": "/state",
+			owner: "obsidian",
 			cell: "a",
 			rescan: "60",
 			out: "m.json",

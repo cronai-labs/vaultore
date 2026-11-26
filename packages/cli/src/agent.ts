@@ -5,8 +5,8 @@
  * import.
  */
 
-import { classifyScheduleApproval, errorMessage } from "@vaultore/core";
-import type { VaultApprovals } from "./approvals";
+import { errorMessage, noteScheduleState, ownerName } from "@vaultore/core";
+import type { NoteScheduleState, VaultSchedules } from "@vaultore/core";
 import type { ScheduledNote } from "./schedules";
 
 /**
@@ -35,7 +35,7 @@ export function createSingleFlightRunner<A = void>(
 }
 
 // =============================================================================
-// APPROVALS (#116)
+// APPROVALS (#116, #301)
 // =============================================================================
 
 /** A scheduled note the agent does not run, and why. The reason completes "not running <path>: …". */
@@ -44,30 +44,41 @@ export interface SkippedNote {
 	reason: string;
 }
 
-const SKIP_REASONS = {
-	"not-approved": "it is not approved",
-	changed: "it changed since it was approved",
-} as const;
+/** Why the agent does not run a note; undefined when it does. */
+function skipReason(state: NoteScheduleState): string | undefined {
+	switch (state.state) {
+		case "approved":
+			return undefined;
+		case "not-approved":
+			return "it is not approved";
+		case "changed":
+			return "it changed since it was approved";
+		case "delegated":
+		case "off":
+			return `it is handed to ${ownerName(state.approval.owner)}`;
+	}
+}
 
 /**
- * Which scheduled notes to arm: those with an approval that matches the note
- * as it is now. The rest are skipped with the reason.
+ * Which scheduled notes to arm: those the agent owns, with an approval that
+ * matches the note as it is now (#301). Notes it does not own and nobody
+ * approved are skipped with the reason; notes handed to Obsidian are left out
+ * silently, as they are Obsidian's to run.
  */
 export function planRegistrations(
 	notes: ScheduledNote[],
-	approvals: VaultApprovals
-): { register: ScheduledNote[]; skipped: SkippedNote[] } {
+	schedules: VaultSchedules
+): { register: ScheduledNote[]; skipped: SkippedNote[]; delegated: ScheduledNote[] } {
 	const register: ScheduledNote[] = [];
 	const skipped: SkippedNote[] = [];
+	const delegated: ScheduledNote[] = [];
 	for (const note of notes) {
-		const state = classifyScheduleApproval(approvals, note.path, note.hash);
-		if (state === "approved") {
-			register.push(note);
-		} else {
-			skipped.push({ path: note.path, reason: SKIP_REASONS[state] });
-		}
+		const state = noteScheduleState("agent", schedules, note);
+		if (state.state === "approved") register.push(note);
+		else if (state.state === "delegated") delegated.push(note);
+		else skipped.push({ path: note.path, reason: skipReason(state) ?? "" });
 	}
-	return { register, skipped };
+	return { register, skipped, delegated };
 }
 
 /**
@@ -79,7 +90,7 @@ export function planRegistrations(
  */
 export function createApprovedRunner<A = void>(options: {
 	readNote: (path: string) => Promise<{ note: ScheduledNote; content: string }>;
-	approvals: () => Promise<VaultApprovals>;
+	schedules: () => Promise<VaultSchedules>;
 	run: (path: string, content: string, arg: A) => Promise<void>;
 	onRefuse: (path: string, reason: string) => void;
 }): (path: string, arg: A) => Promise<void> {
@@ -87,9 +98,9 @@ export function createApprovedRunner<A = void>(options: {
 		let content: string;
 		try {
 			const read = await options.readNote(path);
-			const state = classifyScheduleApproval(await options.approvals(), path, read.note.hash);
-			if (state !== "approved") {
-				options.onRefuse(path, SKIP_REASONS[state]);
+			const reason = skipReason(noteScheduleState("agent", await options.schedules(), read.note));
+			if (reason !== undefined) {
+				options.onRefuse(path, reason);
 				return;
 			}
 			content = read.content;
@@ -108,10 +119,10 @@ export function createApprovedRunner<A = void>(options: {
  */
 export function createSkipReporter(
 	write: (line: string) => void
-): (state: { registered: number; skipped: SkippedNote[] }) => void {
+): (state: { registered: number; skipped: SkippedNote[]; delegated?: number }) => void {
 	let last: string | undefined;
-	return ({ registered, skipped }) => {
-		const signature = JSON.stringify([registered === 0, skipped.map((s) => [s.path, s.reason])]);
+	return ({ registered, skipped, delegated = 0 }) => {
+		const signature = JSON.stringify([registered === 0, delegated > 0, skipped.map((s) => [s.path, s.reason])]);
 		if (signature === last) return;
 		last = signature;
 
@@ -120,7 +131,9 @@ export function createSkipReporter(
 		}
 		if (registered > 0) return;
 		write(
-			skipped.length > 0
+			delegated > 0 && skipped.length === 0
+				? "every scheduled workflow is handed to Obsidian, so nothing runs here; hand one to the agent with: vaultore schedules approve <note.md>"
+				: skipped.length > 0
 				? "no scheduled workflow is approved, so nothing will run; approve one with: vaultore schedules approve <note.md>"
 				: "no scheduled workflow found, so nothing will run"
 		);

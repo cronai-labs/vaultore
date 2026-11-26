@@ -365,6 +365,27 @@ async function readHolder(file: string): Promise<LockHolder | "unreadable" | "go
 	}
 }
 
+/**
+ * Who holds the lock at `lockPath`, read without taking or changing it:
+ * undefined when nobody does, or the holder file cannot be read. Whether that
+ * holder still runs is the caller's to judge (`holderGoneBecause`).
+ */
+export async function readLockHolder(lockPath: string): Promise<LockHolder | undefined> {
+	let names: string[];
+	try {
+		names = await fs.readdir(lockPath);
+	} catch (err) {
+		const code = codeOf(err);
+		if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+		throw err;
+	}
+	for (const name of names) {
+		const holder = await readHolder(join(lockPath, name));
+		if (holder !== "gone" && holder !== "unreadable") return holder;
+	}
+	return undefined;
+}
+
 /** Removes the directory if it is empty; does nothing when it is gone or in use. */
 async function removeIfEmpty(dir: string): Promise<void> {
 	try {
