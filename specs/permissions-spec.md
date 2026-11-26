@@ -232,9 +232,11 @@ permission. A note that asks nothing reads and stores no decision.
 
 - **Obsidian plugin:** a modal per permission, "VaultOre permission request: `<permission>`
   for `<path>`. Allow?", with **Allow** and **Deny**. Closing it denies.
-- **CLI:** non-interactive. With `--yes` the answer is `allow`. Without it nobody is asked: the
-  permission is denied for this run and nothing is stored, so a later run with `--yes` is asked
-  and can allow. Either is printed to stderr.
+- **CLI:** non-interactive. With `--yes` the answer to a permission not answered yet is `allow`;
+  an answer kept for this content, given here or in Obsidian, is used as it is, a deny included,
+  and the run says so ([#310](https://github.com/cronai-labs/vaultore/issues/310)). Without
+  `--yes` nobody is asked: the permission is denied for this run and nothing is stored, so a
+  later run with `--yes` is asked and can allow. Either is printed to stderr.
 - **No way to ask** (an adapter without `confirm`): denied for this run, nothing stored.
 
 A denied permission does not stop the run: it runs without that permission, and cells that
@@ -283,8 +285,8 @@ setting ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
 - it was given on another computer or for another account, or kept by an earlier version (in `data.json` or `config.json`).
 
 A stored `deny` is reused like an `allow`; only an answer a person gave (a modal, or `--yes`) is
-stored. There is no command or setting to clear decisions
-([#28](https://github.com/cronai-labs/vaultore/issues/28)); remove the note's entry from
+stored. There is no command or setting to forget an answer yet
+([#322](https://github.com/cronai-labs/vaultore/issues/322)); remove the note's entry from
 `answers.json`.
 
 ---

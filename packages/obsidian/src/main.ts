@@ -1724,7 +1724,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
             name: "Default runtime engine",
             desc:
               "Container runtime used for cell execution. A workflow that sets " +
-              "'engine:' in its frontmatter overrides this.",
+              "runtime.engine in its frontmatter overrides this.",
             control: {
               type: "dropdown",
               key: "runtimeEngine",
@@ -1932,7 +1932,8 @@ class VaultOreSettingsTab extends PluginSettingTab {
       this.numericSetting(
         "scheduleHistoryDays",
         "Scheduled-run history",
-        `Days to keep what each scheduled run came to, shared with vaultore agent, from 0 to ${MAX_KEEP_DAYS}. ` +
+        `Days Obsidian keeps what each scheduled run came to, from 0 to ${MAX_KEEP_DAYS}; the record is shared ` +
+          "with vaultore agent, which keeps its own number of days (--keep-days), and the shorter one wins. " +
           "0 keeps each run for a day only. Blank keeps 30.",
         String(MAX_KEEP_DAYS)
       ),

@@ -37,7 +37,7 @@ vaultore/
 │   │   └── fixtures/, testing/
 │   ├── obsidian/src/main.ts # the plugin: ObsidianAdapter, settings tab, permission modal
 │   └── cli/src/             # cli.ts (the command), adapter.ts (NodeAdapter), agent.ts,
-│                            # schedules.ts, approvals.ts, scan.ts, args.ts
+│                            # schedules.ts, scan.ts, args.ts
 ├── fixtures/canonical/      # workflow notes that are also acceptance tests
 ├── specs/                   # what VaultOre does: one spec per topic
 ├── docs/                    # guides, internals, designs, decisions, roadmap (docs/index.md)

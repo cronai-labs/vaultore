@@ -81,7 +81,11 @@ ends. For each scheduled run it writes a small record in `~/.config/vaultore/slo
 (`%APPDATA%\vaultore\slots`), so that one occurrence of a schedule runs once in either runner,
 kept for 30 days at most (the "Scheduled-run history" setting shortens it). The "Late after"
 setting, shared by both runners, is kept in `~/.config/vaultore/settings.json`
-(`%APPDATA%\vaultore\settings.json`). It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
+(`%APPDATA%\vaultore\settings.json`). Your consent is kept there too, never in the vault, so
+that sync cannot grant it: "Run scheduled workflows" and the notes you approved to run on
+schedule, with their permissions, in `schedules.json`; your answers to notes' permission
+requests in `answers.json`. While `vaultore agent` runs a vault, it holds a lock file in
+`agents/`. It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
 install locations (macOS: `/usr/local/bin`, `/opt/homebrew/bin`,
 `/Applications/Docker.app/Contents/Resources/bin/docker`; Linux: `/usr/bin`; Windows: the
 Docker Desktop and Podman folders under `C:\Program Files`), and starts it. The engine mounts
@@ -231,8 +235,9 @@ The defaults ([permissions spec](specs/permissions-spec.md), the single source):
 **The mount enforces them.** A container cell sees the whole vault read-only, the whole vault
 read-write, only its own run directory, or nothing, depending on `vaultRead` and `vaultWrite`.
 Obsidian's config folder (`.obsidian/`, or the folder Obsidian is set to use instead), which
-holds the plugin and its settings, and `.vaultore/`, which holds the CLI's settings and stored
-permission decisions, are hidden from every cell.
+holds the plugin and its settings, and `.vaultore/`, which holds the CLI's settings, are hidden
+from every cell; so is VaultOre's own folder (`~/.config/vaultore`) in a vault that holds it,
+such as a vault at your home folder.
 
 **Containers are hardened** on every engine: read-only root filesystem, a `noexec` `/tmp`, no
 Linux capabilities, a non-root user, no network unless granted, and memory and CPU limits.
@@ -266,8 +271,6 @@ are used for the provider request only, not passed to containers.
 - **Several computers on one synced vault** each run a scheduled note; let one schedule
   ([above](#several-computers-one-synced-vault)). The same holds for several accounts on one
   computer and for a vault on a network drive ([#287](https://github.com/cronai-labs/vaultore/issues/287)).
-- **Switching the provider keeps the default model** of the other provider; AI cells then fail
-  with a message saying so, until you change the model.
 - **The Apple `container` engine** is covered by unit tests only, not yet by runs against a
   real installation.
 
@@ -303,8 +306,8 @@ vaultore --version | --help
   `ANTHROPIC_API_KEY`).
 - `--config-dir <name>`: when Obsidian is set to use another config folder than `.obsidian`,
   name it, so that it is skipped when looking for workflows and hidden from cells.
-- In `vaultore run`, permissions at `ask` are denied for the run unless you pass `--yes`; `--yes` grants them, and
-  that answer is kept for this account on this computer, until the note changes, in `~/.config/vaultore/answers.json`, which Obsidian uses too: an answer given in either applies in both. A run without `--yes` stores nothing.
+- In `vaultore run`, permissions at `ask` that are not answered yet are denied for the run unless you pass `--yes`; `--yes` allows them, and
+  that answer is kept for this account on this computer, until the note changes, in `~/.config/vaultore/answers.json`, which Obsidian uses too: an answer given in either applies in both, a Deny included, which `--yes` does not change. A run says which kept answer it used. A run without `--yes` stores nothing. There is no command yet to forget an answer ([#322](https://github.com/cronai-labs/vaultore/issues/322)); remove the note's entry from the file.
 - `vaultore agent` is a scheduler daemon. **It runs a scheduled note only after
   `vaultore schedules approve <note.md>`**, or **By the agent** in Obsidian's settings, and only while the note's frontmatter and cells are
   what you approved: an edit to either, including one that arrives through sync, stops it until

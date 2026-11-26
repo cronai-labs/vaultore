@@ -28,10 +28,12 @@ Everything in this section is in the code on `main`. The specs describe each par
 **Permissions** ([permissions spec](../specs/permissions-spec.md))
 
 - `network`, `vaultRead` and `vaultWrite` per workflow, enforced at the container: no vault
-  mount, the run directory only, the vault read-only, or the vault read-write. `.obsidian/` and
-  `.vaultore/` are hidden from cells.
-- A decision for `ask` is bound to the note's frontmatter and cells, and asked again when
-  either changes.
+  mount, the run directory only, the vault read-only, or the vault read-write. `.obsidian/`,
+  `.vaultore/` and VaultOre's own folder are hidden from cells.
+- An answer to `ask`, for a run started by hand, is bound to the note's frontmatter and cells,
+  asked again when either changes, and kept for the account on the computer, outside the vault,
+  shared by the plugin and the CLI. Scheduled runs and catch-ups never ask: they run with the
+  permissions given when the note was approved.
 
 **AI**
 
@@ -48,8 +50,12 @@ Everything in this section is in the code on `main`. The specs describe each par
 
 **Scheduling**
 
-- A cron `schedule:` in frontmatter. In the plugin nothing runs on a schedule until the user
-  turns on "Run scheduled workflows" and approves each note's exact schedule.
+- A cron `schedule:` in frontmatter. Nothing runs on a schedule until the user approves the
+  note for one runner on the computer, Obsidian or `vaultore agent`, answering its `ask`
+  permissions; for Obsidian, "Run scheduled workflows" must be on too. An approval binds the
+  note's content (in Obsidian, or only its schedule and permissions, by a setting) and is
+  reviewed when it changes, asking only about what changed. Approvals and the switch are kept
+  outside the vault, so sync turns nothing on.
 - One run at a time per note, and each scheduled occurrence at most once, across the plugin and
   the CLI; missed runs recorded, caught up or dismissed; "Late after" per computer
   ([schedule record](../specs/schedule-record-spec.md)).
@@ -81,6 +87,29 @@ Everything in this section is in the code on `main`. The specs describe each par
   shell cells and raw writes through the mount stay exposed
   ([#124](https://github.com/cronai-labs/vaultore/issues/124)).
 
+## Next, in order
+
+What would help most now, in order; an item moves when its issue moves. VaultOre works, and
+few people can reach it yet, so reaching people comes first, then trust in what it keeps, then
+more computers, then more power in a workflow.
+
+1. **Reaching people:** the CLI on npm ([#112](https://github.com/cronai-labs/vaultore/issues/112)),
+   a one-command install into a vault and a demo vault
+   ([#47](https://github.com/cronai-labs/vaultore/issues/47)), and the listing's screenshots
+   ([#157](https://github.com/cronai-labs/vaultore/issues/157)).
+2. **Seeing and changing what VaultOre keeps:** forgetting a kept answer
+   ([#322](https://github.com/cronai-labs/vaultore/issues/322)), showing and removing its state
+   ([#275](https://github.com/cronai-labs/vaultore/issues/275)), `doctor` and `status`
+   ([#282](https://github.com/cronai-labs/vaultore/issues/282)).
+3. **Several computers:** a warning when two computers schedule one note
+   ([#274](https://github.com/cronai-labs/vaultore/issues/274)), one run per note beyond one
+   account ([#287](https://github.com/cronai-labs/vaultore/issues/287)), and signed sync of
+   answers and approvals ([#305](https://github.com/cronai-labs/vaultore/issues/305)).
+4. **More in a workflow:** checking a note without running it
+   ([#170](https://github.com/cronai-labs/vaultore/issues/170)), conditions and structured
+   outputs ([#80](https://github.com/cronai-labs/vaultore/issues/80)), Claude Code as a
+   provider ([#102](https://github.com/cronai-labs/vaultore/issues/102)).
+
 ## After 0.1.0
 
 Everything deliberately left out of the first release is in the
@@ -111,8 +140,9 @@ in principle; the order is not fixed. Grouped:
 
 - Write permission per path ([#108](https://github.com/cronai-labs/vaultore/issues/108)),
   choosing what a grant is bound to ([#70](https://github.com/cronai-labs/vaultore/issues/70)),
-  the remaining items of [#28](https://github.com/cronai-labs/vaultore/issues/28) (clearing
-  stored decisions, global caps).
+  forgetting a kept answer ([#322](https://github.com/cronai-labs/vaultore/issues/322)), and
+  syncing answers and approvals between computers, signed and enrolled
+  ([#305](https://github.com/cronai-labs/vaultore/issues/305)).
 - Sandbox options beyond containers: an OS process sandbox, embeddable microVMs, the WASM tier
   ([#103](https://github.com/cronai-labs/vaultore/issues/103);
   [sandbox spec](../specs/sandbox-spec.md)).
@@ -144,6 +174,8 @@ in principle; the order is not fixed. Grouped:
 
 Not committed to; no issue yet.
 
+- **Global caps** on what any workflow may be granted, whatever its note says (left over from
+  [#28](https://github.com/cronai-labs/vaultore/issues/28)).
 - **Parallel cells and a warm container pool**
   ([design](design/parallel-execution.md)).
 - **`ore:go`** with build caching ([Go cell spec](../specs/go-cell-spec.md)).
