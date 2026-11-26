@@ -297,6 +297,7 @@ vaultore schedules log [<workflow.md>] [--vault <dir>]
 vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--quiet]
 vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
 vaultore schedules late-after [<minutes> | default]
+vaultore permissions forget <workflow.md> [<permission>...] [--vault <dir>]
 vaultore --version | --help
 ```
 
@@ -307,7 +308,7 @@ vaultore --version | --help
 - `--config-dir <name>`: when Obsidian is set to use another config folder than `.obsidian`,
   name it, so that it is skipped when looking for workflows and hidden from cells.
 - In `vaultore run`, permissions at `ask` that are not answered yet are denied for the run unless you pass `--yes`; `--yes` allows them, and
-  that answer is kept for this account on this computer, until the note changes, in `~/.config/vaultore/answers.json`, which Obsidian uses too: an answer given in either applies in both, a Deny included, which `--yes` does not change. A run says which kept answer it used. A run without `--yes` stores nothing. There is no command yet to forget an answer ([#322](https://github.com/cronai-labs/vaultore/issues/322)); remove the note's entry from the file.
+  that answer is kept for this account on this computer, until the note changes, in `~/.config/vaultore/answers.json`, which Obsidian uses too: an answer given in either applies in both, a Deny included, which `--yes` does not change. A run says which kept answer it used. A run without `--yes` stores nothing. `vaultore permissions forget <note.md> [<permission>...]` forgets a note's answers, or those named, so that the next run asks again; in Obsidian, the command **Forget permission answers for this note** does the same.
 - `vaultore agent` is a scheduler daemon. **It runs a scheduled note only after
   `vaultore schedules approve <note.md>`**, or **By the agent** in Obsidian's settings, and only while the note's frontmatter and cells are
   what you approved: an edit to either, including one that arrives through sync, stops it until

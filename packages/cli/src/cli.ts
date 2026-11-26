@@ -62,6 +62,7 @@ import {
 	createSkipReporter,
 	planRegistrations,
 } from "./agent";
+import { forgetNoteAnswers, permissionNamesFrom } from "./permissions";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 import {
 	answersFrom,
@@ -102,6 +103,7 @@ Usage:
   vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--quiet]
   vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
   vaultore schedules late-after [<minutes> | default]
+  vaultore permissions forget <workflow.md> [<permission>...] [--vault <dir>]
   vaultore --version | --help
 
 Options:
@@ -149,7 +151,9 @@ An answer to a note's "ask" permission in 'vaultore run' is kept for the
 note's content, for this account on this computer, outside the vault in
 ~/.config/vaultore/answers.json, which Obsidian uses too: an answer given in
 either counts in both. A note that arrives through sync, or was answered on
-another computer, is asked again, so without --yes it is denied.
+another computer, is asked again, so without --yes it is denied. A kept
+answer, a Deny included, is used as it is; 'permissions forget' forgets a
+note's answers, or those named, so that the next run asks again.
 
 Secrets are read from the environment:
   VAULTORE_OPENAI_APIKEY (or OPENAI_API_KEY)
@@ -660,6 +664,31 @@ async function cmdSchedulesDismiss(args: ParsedArgs): Promise<number> {
  * machine: the file both runners read (Obsidian's "Late after"). A running
  * agent follows a change within a minute.
  */
+/** `vaultore permissions forget <note.md> [<permission>...]` (#322). */
+async function cmdPermissionsForget(args: ParsedArgs): Promise<number> {
+	const [noteArg, ...names] = args.positional;
+	let notePath: string;
+	let permissions;
+	const vaultRoot = vaultRootFrom(args.flags);
+	try {
+		if (noteArg === undefined) throw new Error("name the note whose answers to forget");
+		notePath = toVaultRelative(vaultRoot, noteArg, { vaultExplicit: hasExplicitVault(args.flags) });
+		permissions = permissionNamesFrom(names);
+	} catch (err) {
+		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
+		return 2;
+	}
+	const adapter = new NodeAdapter({ vaultRoot, quiet: true });
+	const line = await forgetNoteAnswers({
+		store: adapter.permissionAnswers(),
+		vaultKey: await vaultKeyFor(vaultRoot),
+		notePath,
+		names: permissions,
+	});
+	process.stdout.write(line + "\n");
+	return 0;
+}
+
 async function cmdSchedulesLateAfter(args: ParsedArgs): Promise<number> {
 	let line: string;
 	try {
@@ -797,6 +826,12 @@ async function main(): Promise<number> {
 			if (sub === "dismiss") return cmdSchedulesDismiss(args);
 			if (sub === "late-after") return cmdSchedulesLateAfter(args);
 			process.stderr.write(`error: unknown schedules subcommand '${sub ?? ""}'\n\n` + usage());
+			return 2;
+		}
+		case "permissions": {
+			const sub = args.positional.shift();
+			if (sub === "forget") return cmdPermissionsForget(args);
+			process.stderr.write(`error: unknown permissions subcommand '${sub ?? ""}'\n\n` + usage());
 			return 2;
 		}
 		default:

@@ -46,6 +46,7 @@ vi.mock("@vaultore/core", async () => {
     lateAfterMs: actual.lateAfterMs,
     readMachineSettings: () => actual.readMachineSettings({ path: machineSettings.path }),
     // The permission answers of runs started by hand (#299), likewise.
+    forgetAnswers: actual.forgetAnswers,
     answersStore: (options: import("@vaultore/core").AnswersStoreOptions) =>
       actual.answersStore({ ...options, path: machineSettings.answers }),
     // The scheduling consent, likewise in the test's own file (#276); the
@@ -143,14 +144,15 @@ describe("VaultOrePlugin", () => {
   }
 
   describe("onload", () => {
-    it("registers three commands", () => {
-      expect(plugin.addCommand).toHaveBeenCalledTimes(3);
+    it("registers four commands", () => {
+      expect(plugin.addCommand).toHaveBeenCalledTimes(4);
 
       const calls = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls;
       const ids = calls.map((c: any[]) => c[0].id);
       expect(ids).toContain("run-all");
       expect(ids).toContain("run-cell");
       expect(ids).toContain("run-cell-only");
+      expect(ids).toContain("forget-permission-answers");
     });
 
     it("registers a settings tab", () => {
@@ -1534,6 +1536,26 @@ describe("scheduled workflows", () => {
 
       expect(executor.runWorkflow).not.toHaveBeenCalled();
     });
+  });
+
+  // #322: a kept answer, a Deny included, is used until the note changes.
+  it("forgets a note's kept answers from the command, and says what it forgot", async () => {
+    const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
+    // The mock keys a vault by its root as given.
+    const key = await adapter.getVaultRoot();
+    await adapter.permissionAnswers().update(key, (entry) => {
+      entry.notes["wf.md"] = { workflowHash: "h", grantedAt: "t", network: "deny" };
+    });
+    Notice.shown.length = 0;
+
+    await plugin.forgetPermissionAnswers("wf.md");
+    await plugin.forgetPermissionAnswers("wf.md");
+
+    expect((await adapter.permissionAnswers().forVault(key)).notes).toEqual({});
+    expect(Notice.shown).toEqual([
+      "VaultOre: forgot the answers to network for wf.md; its next run asks again",
+      "VaultOre: no permission answers kept for wf.md on this computer",
+    ]);
   });
 
   // #307: a revoke written while the file is unreadable must not be missed.
