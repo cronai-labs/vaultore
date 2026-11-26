@@ -7,39 +7,39 @@
 	"types": "./src/index.ts",
 	"exports": {
 		".": {
+			"types": "./src/index.ts",
 			"import": "./dist/index.mjs",
-			"require": "./dist/index.js",
-			"types": "./src/index.ts"
+			"require": "./dist/index.js"
 		},
 		"./parser": {
+			"types": "./src/parser/index.ts",
 			"import": "./dist/parser/index.mjs",
-			"require": "./dist/parser/index.js",
-			"types": "./src/parser/index.ts"
+			"require": "./dist/parser/index.js"
 		},
 		"./executor": {
+			"types": "./src/executor/index.ts",
 			"import": "./dist/executor/index.mjs",
-			"require": "./dist/executor/index.js",
-			"types": "./src/executor/index.ts"
+			"require": "./dist/executor/index.js"
 		},
 		"./runtime": {
+			"types": "./src/runtime/index.ts",
 			"import": "./dist/runtime/index.mjs",
-			"require": "./dist/runtime/index.js",
-			"types": "./src/runtime/index.ts"
+			"require": "./dist/runtime/index.js"
 		},
 		"./providers": {
+			"types": "./src/providers/index.ts",
 			"import": "./dist/providers/index.mjs",
-			"require": "./dist/providers/index.js",
-			"types": "./src/providers/index.ts"
+			"require": "./dist/providers/index.js"
 		},
 		"./scheduler": {
+			"types": "./src/scheduler/index.ts",
 			"import": "./dist/scheduler/index.mjs",
-			"require": "./dist/scheduler/index.js",
-			"types": "./src/scheduler/index.ts"
+			"require": "./dist/scheduler/index.js"
 		},
 		"./vault": {
+			"types": "./src/vault/index.ts",
 			"import": "./dist/vault/index.mjs",
-			"require": "./dist/vault/index.js",
-			"types": "./src/vault/index.ts"
+			"require": "./dist/vault/index.js"
 		}
 	},
 	"files": [
