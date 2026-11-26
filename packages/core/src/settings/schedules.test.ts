@@ -214,7 +214,7 @@ describe("since when a note is scheduled (#308)", () => {
 	const withNote = (owner: "obsidian" | "agent"): VaultSchedules => ({
 		obsidianScheduling: false,
 		obsidianBinding: "strict",
-		notes: { "a.md": { owner, schedule: "0 9 * * *", hash: "h", approvedAt } },
+		notes: { "a.md": { owner, schedule: "0 9 * * *", hash: "h", approvedAt, permissions: first() } },
 	});
 
 	it("notes when Run scheduled workflows is turned on, and only then", () => {
@@ -418,6 +418,22 @@ describe("the agent's approvals of 0.4.x", () => {
 		expect(told).toEqual([]);
 		expect((await schedulesStore({ path }).forVault("/v")).notes).toEqual({});
 		expect(JSON.parse(readFileSync(`${path}.imports.json`, "utf8")).imports[0].from).toBe(legacy);
+	});
+
+	it("does not mark an old file it cannot read as copied, so each open says so (#328)", async () => {
+		writeFileSync(legacy, "{broken");
+
+		await expect(openSchedules({ path, legacyApprovals: legacy })).rejects.toThrow(/approvals file/);
+		await expect(openSchedules({ path, legacyApprovals: legacy })).rejects.toThrow(/approvals file/);
+	});
+
+	it("gives no start of scheduling for an approval copied from 0.4.x (#328)", () => {
+		const schedules: VaultSchedules = {
+			obsidianScheduling: false,
+			obsidianBinding: "strict",
+			notes: { "a.md": { owner: "agent", schedule: "0 9 * * *", hash: "h", approvedAt: "2026-10-01T00:00:00.000Z" } },
+		};
+		expect(scheduledSince(schedules, "a.md")).toBeUndefined();
 	});
 
 	it("refuses a marker it cannot read, and copies nothing", async () => {

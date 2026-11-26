@@ -427,11 +427,14 @@ export function setObsidianScheduling(schedules: VaultSchedules, on: boolean, no
  * was approved, and for a note Obsidian runs, since "Run scheduled
  * workflows" was turned on, whichever is later. Undefined while it is not
  * scheduled: no approval, or Obsidian's and the switch off. A note the agent
- * runs is scheduled while the agent is stopped (#308).
+ * runs is scheduled while the agent is stopped (#308). Undefined too for an
+ * approval copied from 0.4.x: the runner's arming time bounds its look.
  */
 export function scheduledSince(schedules: VaultSchedules, path: string): Date | undefined {
 	const approval = approvalOf(schedules, path);
-	if (approval === undefined) return undefined;
+	// Copied from 0.4.x, which kept no record of what ran: its approval time
+	// says nothing about which runs were missed (#328).
+	if (approval === undefined || approval.permissions === undefined) return undefined;
 	const approved = new Date(approval.approvedAt);
 	if (Number.isNaN(approved.getTime())) return undefined;
 	if (approval.owner === "agent") return approved;

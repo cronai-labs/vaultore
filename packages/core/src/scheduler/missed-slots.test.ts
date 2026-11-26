@@ -280,6 +280,23 @@ describe("what the record keeps", () => {
 		expect(gaps.map((g) => [g.slot.toISOString(), g.count])).toEqual([[expected[0]!.toISOString(), 1]]);
 	});
 
+	// #328: 0.4.x kept no record, so an approval it gave says nothing about which runs ran.
+	it("records no gap for an approval of 0.4.x on its first look after the upgrade", async () => {
+		const { scheduledSince } = await import("../settings/schedules");
+		const now = at("2026-11-24T15:20:00Z");
+		const since = scheduledSince(
+			{ obsidianScheduling: false, obsidianBinding: "strict", notes: { [NOTE]: { owner: "agent", schedule: HOURLY, hash: "h", approvedAt: "2026-10-01T00:00:00.000Z" } } },
+			NOTE
+		);
+
+		const gaps = await recordMissedSlots({
+			vaultRoot, notePath: NOTE, schedule: HOURLY, by: "vaultore agent", directory: slots, now, armedAt: now,
+			...(since ? { scheduledSince: since } : {}),
+		});
+
+		expect(gaps).toEqual([]);
+	});
+
 	it("dismisses the gaps of a note deleted since", async () => {
 		await ran(at("2026-11-24T10:15:00Z"));
 		await look(at("2026-11-24T15:20:00Z"));

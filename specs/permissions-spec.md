@@ -307,6 +307,7 @@ A `schedule:` in frontmatter does not by itself make a note run unattended, in t
     "vaults": {
       "/home/me/notes": {
         "obsidianScheduling": true,
+        "obsidianSchedulingSince": "2026-11-26T08:00:00.000Z",
         "obsidianBinding": "strict",
         "notes": {
           "Workflows/digest.md": {
@@ -327,7 +328,7 @@ A `schedule:` in frontmatter does not by itself make a note run unattended, in t
   }
   ```
 
-  `hash` is the hash a permission decision is bound to (§5.3: the frontmatter as written and each cell's attributes and source). `obsidianBinding` missing is `strict`.
+  `hash` is the hash a permission decision is bound to (§5.3: the frontmatter as written and each cell's attributes and source). `obsidianBinding` missing is `strict`. `obsidianSchedulingSince` is when **Run scheduled workflows** was last turned on, absent while it is off: the notes the plugin runs are scheduled from then, so no run before it is missed ([schedule record](schedule-record-spec.md), [#308](https://github.com/cronai-labs/vaultore/issues/308)). An approval copied from 0.4.x gives no such start, as 0.4.x kept no record of what ran (#328).
 - **When an approval applies,** checked when the owner arms the note, when a run is due, and by the executor against the content it runs:
   - its `permissions` cover the note as it is: each permission the frontmatter sets has the value held, from the frontmatter, and each `ask` has an answer (§6.3). Always, whoever owns the note;
   - owned by the agent: while `hash` is the note's, so a changed schedule, permission or cell withdraws it; an output callout written by a run, or an edit to the prose, does not;
