@@ -25,7 +25,8 @@ The plugin and the CLI each implement `PlatformAdapter` and call the same execut
 | `ask` permissions | Modal | Deny, or allow with `--yes` |
 | Run lock | `acquireRunLock` as `Obsidian` | `acquireRunLock` as `vaultore run`, `vaultore agent` or `vaultore schedules catch-up` |
 | Schedule record | `claimSlot` as `Obsidian`, pruned by the "Scheduled-run history" setting | `claimSlot` as `vaultore agent`, pruned by `--keep-days` |
-| Scheduling | Approved notes only, while Obsidian is open; an approval is a path and a schedule, in `obsidian-schedules.json` outside the vault (`pluginSchedulesStore`) | `vaultore agent`, approved notes only; an approval is a path and the note's content hash, in `approvals.json` outside the vault, beside the rest of its state (`--state-dir` names another folder) |
+| Scheduling | Notes approved for Obsidian, while Obsidian is open; such an approval binds the path and the schedule | `vaultore agent`, notes approved for it; such an approval binds the path and the note's content hash, and the agent holds a lock per vault (`acquireAgentLock`) |
+| Approvals | One per note, naming its owner, in `schedules.json` outside the vault (`openSchedules`, `noteScheduleState`) | the same file |
 
 ## Core modules
 
@@ -38,7 +39,7 @@ The plugin and the CLI each implement `PlatformAdapter` and call the same execut
 | `providers` | Requests to OpenAI and Anthropic, through the adapter's `request` (core has no transport of its own); model/provider check; timeouts | `createProviderFromSettings`, `assertModelMatchesProvider`, `DEFAULT_MODELS` |
 | `scheduler` | Cron registrations, a 60-second tick, due runs handed to a callback with the occurrence that came due; whether a note still has its schedule approval; the schedule record, which lets each occurrence run at most once across the plugin and the CLI, in `~/.config/vaultore/slots`, and records the occurrences no runner fired as missed runs to catch up or dismiss | `WorkflowScheduler`, `computeNextRun`, `classifyScheduleApproval`, `claimSlot`, `readSlotRecord`, `SlotTakenError`, `recordMissedSlots`, `catchUpMissedSlot`, `dismissMissedSlots` |
 | `lock` | A lock between VaultOre processes on one machine: the approvals file's, and one run lock per note, shared by the plugin and the CLI, in `~/.config/vaultore/locks` | `acquireLock`, `acquireRunLock`, `RunLockHeldError` |
-| `settings` | This machine's settings both runners must share (`settings.json`: the late threshold), and the per-vault consent stores in the user tree: the agent's approvals and the plugin's scheduling switch and approvals | `readMachineSettings`, `writeMachineSettings`, `VaultStateStore`, `pluginSchedulesStore` |
+| `settings` | This machine's settings both runners must share (`settings.json`: the late threshold), and the per-vault schedule approvals both runners read, one per note with its owner (`schedules.json`) | `readMachineSettings`, `writeMachineSettings`, `VaultStateStore`, `openSchedules`, `noteScheduleState` |
 | `vault` | `createVaultAPI`, `generateRuntimeScript`: exported, but the executor injects its own copy (`buildTypeScriptRuntime`), and the two have diverged ([#45](https://github.com/cronai-labs/vaultore/issues/45)) | |
 
 ## The steps of a run

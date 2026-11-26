@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NodeAdapter } from "./adapter";
-import { ApprovalStore, vaultKeyFor } from "./approvals";
+import { schedulesStore, vaultKeyFor } from "@vaultore/core";
+import type { VaultSchedules, VaultStateStore } from "@vaultore/core";
 import { discoverWorkflows } from "./scan";
 import {
 	approveSchedules,
@@ -33,7 +34,7 @@ ${code}
 let root: string;
 let vault: string;
 let adapter: NodeAdapter;
-let store: ApprovalStore;
+let store: VaultStateStore<VaultSchedules>;
 let key: string;
 
 const NOW = "2026-11-09T12:00:00.000Z";
@@ -43,7 +44,7 @@ const write = (path: string, content: string): void => {
 };
 const readNote = (path: string): Promise<string> => adapter.readFile(path);
 const approve = (paths: string[]) =>
-	approveSchedules({ paths, readNote, store, vaultKey: key, now: () => NOW });
+	approveSchedules({ paths, readNote, store, vaultKey: key, now: () => new Date(NOW) });
 const revoke = (paths: string[]) => revokeSchedules({ paths, store, vaultKey: key });
 const listing = async () => {
 	const discovered = await discoverWorkflows(adapter);
@@ -55,7 +56,7 @@ beforeEach(async () => {
 	vault = join(root, "vault");
 	mkdirSync(vault);
 	adapter = new NodeAdapter({ vaultRoot: vault, quiet: true });
-	store = new ApprovalStore(join(root, "state"));
+	store = schedulesStore({ path: join(root, "state", "schedules.json") });
 	key = await vaultKeyFor(vault);
 });
 
@@ -101,12 +102,13 @@ describe("schedules approve", () => {
 
 		expect(result.ok).toBe(true);
 		expect(result.lines).toEqual([
-			"approved Workflows/daily.md [0 9 * * 1-5]",
+			"approved Workflows/daily.md [0 9 * * 1-5] for vaultore agent",
 			`stored in ${store.file}`,
 		]);
 		const { note: read } = await readScheduledNote(readNote, "Workflows/daily.md");
 		expect(await store.forVault(key)).toEqual({
-			"Workflows/daily.md": { hash: read.hash, schedule: "0 9 * * 1-5", approvedAt: NOW },
+			obsidianScheduling: false,
+			notes: { "Workflows/daily.md": { owner: "agent", hash: read.hash, schedule: "0 9 * * 1-5", approvedAt: NOW } },
 		});
 	});
 
@@ -120,11 +122,11 @@ describe("schedules approve", () => {
 			readNote,
 			store,
 			vaultKey: key,
-			now: () => "2027-01-01T00:00:00.000Z",
+			now: () => new Date("2027-01-01T00:00:00.000Z"),
 		});
 
 		expect(result.ok).toBe(true);
-		expect(result.lines).toEqual(["already approved daily.md [0 9 * * 1-5]"]);
+		expect(result.lines).toEqual(["already approved daily.md [0 9 * * 1-5] for vaultore agent"]);
 		expect(readFileSync(store.file, "utf8")).toBe(before);
 	});
 
@@ -138,11 +140,11 @@ describe("schedules approve", () => {
 			readNote,
 			store,
 			vaultKey: key,
-			now: () => "2027-01-01T00:00:00.000Z",
+			now: () => new Date("2027-01-01T00:00:00.000Z"),
 		});
 
 		expect(result.lines[0]).toBe(
-			`approved daily.md [0 9 * * 1-5] (replaces the approval of ${NOW})`
+			`approved daily.md [0 9 * * 1-5] for vaultore agent (replaces the approval of ${NOW})`
 		);
 		expect((await listing()).map((entry) => entry.state)).toEqual(["approved"]);
 	});
@@ -158,14 +160,39 @@ describe("schedules approve", () => {
 			"not approving manual.md: it has no schedule",
 			"nothing was approved",
 		]);
-		expect(await store.forVault(key)).toEqual({});
+		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, notes: {} });
 	});
 
 	it("keeps another vault's approvals apart", async () => {
 		write("daily.md", note("0 9 * * 1-5"));
 		await approve(["daily.md"]);
 
-		expect(await store.forVault("/some/other/vault")).toEqual({});
+		expect(await store.forVault("/some/other/vault")).toEqual({ obsidianScheduling: false, notes: {} });
+	});
+
+	// One approval per note on this computer (#301).
+	it("approves for Obsidian with --owner obsidian, saying it runs once Obsidian's scheduling is on", async () => {
+		write("daily.md", note("0 9 * * 1-5"));
+
+		const result = await approveSchedules({ paths: ["daily.md"], readNote, store, vaultKey: key, owner: "obsidian", now: () => new Date(NOW) });
+
+		expect(result.lines).toEqual([
+			"approved daily.md [0 9 * * 1-5] for Obsidian",
+			'  Obsidian runs it once "Run scheduled workflows" is on in VaultOre\'s settings',
+			`stored in ${store.file}`,
+		]);
+		expect((await store.forVault(key)).notes["daily.md"]?.owner).toBe("obsidian");
+	});
+
+	it("hands a note over to the other runner, keeping one approval", async () => {
+		write("daily.md", note("0 9 * * 1-5"));
+		await approve(["daily.md"]);
+
+		const result = await approveSchedules({ paths: ["daily.md"], readNote, store, vaultKey: key, owner: "obsidian", now: () => new Date(NOW) });
+
+		expect(result.lines[0]).toBe("approved daily.md [0 9 * * 1-5] for Obsidian (handed over from vaultore agent)");
+		expect(Object.keys((await store.forVault(key)).notes)).toEqual(["daily.md"]);
+		expect((await listing()).map((entry) => [entry.path, entry.owner, entry.state])).toEqual([["daily.md", "obsidian", "off"]]);
 	});
 });
 
@@ -177,8 +204,8 @@ describe("schedules revoke", () => {
 		const result = await revoke(["daily.md"]);
 
 		expect(result.ok).toBe(true);
-		expect(result.lines).toEqual(["revoked daily.md", `stored in ${store.file}`]);
-		expect(await store.forVault(key)).toEqual({});
+		expect(result.lines).toEqual(["revoked daily.md (was run by vaultore agent)", `stored in ${store.file}`]);
+		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, notes: {} });
 	});
 
 	it("says so when there was nothing to revoke, and that is not an error", async () => {
@@ -193,8 +220,8 @@ describe("schedules revoke", () => {
 		await approve(["daily.md"]);
 		rmSync(join(vault, "daily.md"));
 
-		expect((await revoke(["daily.md"])).lines[0]).toBe("revoked daily.md");
-		expect(await store.forVault(key)).toEqual({});
+		expect((await revoke(["daily.md"])).lines[0]).toBe("revoked daily.md (was run by vaultore agent)");
+		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, notes: {} });
 	});
 });
 
@@ -235,8 +262,8 @@ describe("schedules list", () => {
 		await approve(["approved.md"]);
 
 		expect(formatScheduleList(await listing())).toEqual([
-			"approved                approved.md [0 9 * * 1-5]",
-			"not approved            new.md [*/5 * * * *]",
+			"runs                       vaultore agent  approved.md [0 9 * * 1-5]",
+			"not approved                               new.md [*/5 * * * *]",
 		]);
 	});
 

@@ -6,8 +6,8 @@
  *   vaultore run <workflow.md>       run a workflow headless
  *   vaultore list                    list workflow notes in the vault
  *   vaultore agent                   headless scheduler daemon
- *   vaultore schedules list          scheduled notes and whether the agent may run them
- *   vaultore schedules approve       let the agent run a scheduled note
+ *   vaultore schedules list          scheduled notes, who runs them, and whether they run
+ *   vaultore schedules approve       let the agent, or Obsidian, run a scheduled note
  *   vaultore schedules revoke        withdraw that
  *   vaultore schedules export        emit the CronAI handover manifest
  *   vaultore schedules log           what each scheduled run came to
@@ -24,10 +24,13 @@ import { clearInterval, setInterval } from "node:timers";
 import {
 	RunLockHeldError,
 	SlotTakenError,
+	acquireAgentLock,
 	catchUpMissedSlot,
 	dismissMissedSlots,
 	isLateSlot,
 	lateAfterMs,
+	legacyApprovalsPath,
+	openSchedules,
 	readMachineSettings,
 	machineSettingsPath,
 	readSlotRecord,
@@ -39,8 +42,9 @@ import {
 	errorMessage,
 	runSucceeded,
 	summarizeRun,
+	vaultKeyFor,
 } from "@vaultore/core";
-import type { ScheduledSlot, SlotClaim } from "@vaultore/core";
+import type { ScheduledSlot, SlotClaim, VaultSchedules, VaultStateStore } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import {
 	createApprovedRunner,
@@ -48,12 +52,11 @@ import {
 	createSkipReporter,
 	planRegistrations,
 } from "./agent";
-import { legacyStateDir, openApprovalStore, resolveStateDir, vaultKeyFor } from "./approvals";
-import type { ApprovalStore } from "./approvals";
 import { otherDevices } from "./permissions";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 import {
 	approveSchedules,
+	ownerFrom,
 	formatScheduleList,
 	formatSlotLog,
 	lateAfter,
@@ -80,10 +83,10 @@ function usage(): string {
 Usage:
   vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
   vaultore list [--vault <dir>] [--config-dir <name>]
-  vaultore agent [--vault <dir>] [--config-dir <name>] [--state-dir <dir>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--quiet]
-  vaultore schedules list [--vault <dir>] [--config-dir <name>] [--state-dir <dir>]
-  vaultore schedules approve <workflow.md>... [--vault <dir>] [--state-dir <dir>]
-  vaultore schedules revoke <workflow.md>... [--vault <dir>] [--state-dir <dir>]
+  vaultore agent [--vault <dir>] [--config-dir <name>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--quiet]
+  vaultore schedules list [--vault <dir>] [--config-dir <name>]
+  vaultore schedules approve <workflow.md>... [--owner agent|obsidian] [--vault <dir>]
+  vaultore schedules revoke <workflow.md>... [--vault <dir>]
   vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
   vaultore schedules log [<workflow.md>] [--vault <dir>]
   vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--yes] [--quiet]
@@ -97,10 +100,7 @@ Options:
                       relative <workflow.md> resolves against it.
   --config-dir <name> The vault's Obsidian config folder, if overridden
                       (default: .obsidian). Hidden from cells.
-  --state-dir <dir>   Where this machine keeps the agent's schedule approvals
-                      (default: ~/.config/vaultore, beside the run locks and
-                      the schedule record; on Windows %APPDATA%\\vaultore).
-                      Outside the vault, so that sync cannot deliver an approval.
+  --owner <runner>    Who runs the notes approved: agent (default) or obsidian.
   --cell <id>         Run a single cell (with its dependencies)
   --skip-deps         With --cell: skip dependency cells
   --yes               Auto-grant "ask" permissions (non-interactive default: deny).
@@ -111,9 +111,13 @@ Options:
   --out <file>        Write manifest to a file instead of stdout
   --quiet             Suppress info/debug output
 
-The agent runs a scheduled note only after 'vaultore schedules approve', and
-only while the note's front matter and cells are what was approved. Each
-occurrence of a schedule runs at most once, in the agent or in Obsidian;
+A scheduled note runs on this computer in one runner: the one it is approved
+for, with 'vaultore schedules approve' or in Obsidian's settings. The
+approvals are in ~/.config/vaultore/schedules.json (%APPDATA%\\vaultore on
+Windows), outside the vault, so that sync cannot deliver one; both runners
+read it. The agent runs a note approved for it only while the note's front
+matter and cells are what was approved, and one agent runs a vault at a time.
+Each occurrence of a schedule runs at most once, in the agent or in Obsidian;
 'vaultore schedules log' shows what each one came to. Occurrences no runner
 fired (the machine slept, nothing was running) are recorded as missed runs;
 'schedules catch-up' runs the note once for them, 'schedules dismiss' closes
@@ -285,8 +289,23 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	// Before anything is armed: an approvals file that cannot be used stops the
 	// agent here (the error names the file) rather than running as if nothing
 	// were approved.
-	const { store, vaultKey } = await openApprovals(args.flags, vaultRoot);
+	const { store, vaultKey } = await openSchedulesFor(vaultRoot);
 	await store.forVault(vaultKey);
+	// One agent per vault: a second one is refused, naming the first (#301).
+	// Held while the agent runs, so Obsidian can tell that it does.
+	let releaseAgentLock: () => Promise<void>;
+	try {
+		releaseAgentLock = await acquireAgentLock({
+			vaultKey,
+			onStale: (holder, why) =>
+				process.stderr.write(
+					`[vaultore:agent] took over the agent lock of process ${holder.pid}, which took it at ${holder.since}, ${why}\n`
+				),
+		});
+	} catch (err) {
+		process.stderr.write(`error: ${errorMessage(err)}\n`);
+		return 1;
+	}
 
 	const adapter = new NodeAdapter({
 		vaultRoot,
@@ -307,7 +326,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	// a note this agent may not run leaves the slot to the plugin (#255).
 	const runApproved = createApprovedRunner<ScheduledSlot>({
 		readNote: (path) => readScheduledNote((notePath) => adapter.readFile(notePath), path),
-		approvals: () => store.forVault(vaultKey),
+		schedules: () => store.forVault(vaultKey),
 		run: async (path, content, scheduled) => {
 			try {
 				process.stdout.write(`[vaultore:agent] running ${path}\n`);
@@ -400,9 +419,9 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		});
 		// An approvals file that cannot be used leaves nothing armed. Said once,
 		// and again when the reason changes.
-		let approvals;
+		let schedules;
 		try {
-			approvals = await store.forVault(vaultKey);
+			schedules = await store.forVault(vaultKey);
 			storeError = undefined;
 		} catch (err) {
 			scheduler.replace([]);
@@ -412,7 +431,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 			return;
 		}
 
-		const plan = planRegistrations(await scheduledNotes(discovered), approvals);
+		const plan = planRegistrations(await scheduledNotes(discovered), schedules);
 		// Notes armed already keep their next run, so a slot that came due since
 		// the last tick still fires (#255).
 		const { invalid, armed } = scheduler.replace(
@@ -430,7 +449,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		if (armed.length > 0) scheduler.tick();
 		const registered = plan.register.length - invalid.length;
 		process.stdout.write(`[vaultore:agent] ${registered} scheduled workflow(s) registered\n`);
-		reportSkips({ registered, skipped: plan.skipped });
+		reportSkips({ registered, skipped: plan.skipped, delegated: plan.delegated.length });
 	};
 
 	await rescan();
@@ -465,8 +484,10 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 			clearInterval(rescanTimer);
 			clearInterval(lateTimer);
 			scheduler.stop();
-			process.stdout.write("\n[vaultore:agent] stopped\n");
-			resolveExit();
+			void releaseAgentLock().finally(() => {
+				process.stdout.write("\n[vaultore:agent] stopped\n");
+				resolveExit();
+			});
 		};
 		process.once("SIGINT", stop);
 		process.once("SIGTERM", stop);
@@ -475,19 +496,16 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	return 0;
 }
 
-/** The approvals file for this invocation, and the key of this vault in it. */
-async function openApprovals(
-	flags: ParsedArgs["flags"],
-	vaultRoot: string
-): Promise<{ store: ApprovalStore; vaultKey: string }> {
-	const flag = flags["state-dir"];
-	const stateDir = resolveStateDir({ flag, env: process.env, platform: process.platform });
-	const legacyDir =
-		flag === undefined ? legacyStateDir({ env: process.env, platform: process.platform, homedir: homedir() }) : undefined;
-	const store = await openApprovalStore(stateDir, legacyDir, {
+/**
+ * The schedules file both runners read (#301), with the agent's approvals of
+ * 0.4.x copied in once, and the key of this vault in it.
+ */
+async function openSchedulesFor(vaultRoot: string): Promise<{ store: VaultStateStore<VaultSchedules>; vaultKey: string }> {
+	const store = await openSchedules({
+		legacyApprovals: legacyApprovalsPath({ env: process.env, platform: process.platform, homedir: homedir() }),
 		onImported: (from, to) =>
 			process.stderr.write(
-				`[vaultore] copied the agent's approvals from ${from} to ${to}, beside the rest of VaultOre's state; ` +
+				`[vaultore] copied the agent's approvals from ${from} to ${to}, which Obsidian reads too; ` +
 					`the old file is no longer read and can be removed\n`
 			),
 	});
@@ -515,8 +533,8 @@ function notePathsFrom(args: ParsedArgs, vaultRoot: string): string[] | undefine
 
 async function cmdSchedulesList(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
-	const { store, vaultKey } = await openApprovals(args.flags, vaultRoot);
-	const approvals = await store.forVault(vaultKey);
+	const { store, vaultKey } = await openSchedulesFor(vaultRoot);
+	const schedules = await store.forVault(vaultKey);
 
 	const adapter = new NodeAdapter({ vaultRoot, configDir: configDirFrom(args.flags), quiet: true });
 	const outputRoot = adapter.getSetting<string>("vaultore.outputRoot");
@@ -525,7 +543,7 @@ async function cmdSchedulesList(args: ParsedArgs): Promise<number> {
 		onSkip: reportSkipped("[vaultore]"),
 	});
 
-	const entries = listSchedules(await scheduledNotes(discovered), approvals);
+	const entries = listSchedules(await scheduledNotes(discovered), schedules);
 	for (const line of formatScheduleList(entries)) {
 		process.stdout.write(`${line}\n`);
 	}
@@ -613,7 +631,14 @@ async function cmdSchedulesApprove(args: ParsedArgs): Promise<number> {
 	const paths = notePathsFrom(args, vaultRoot);
 	if (paths === undefined) return 2;
 
-	const { store, vaultKey } = await openApprovals(args.flags, vaultRoot);
+	let owner;
+	try {
+		owner = ownerFrom(args.flags["owner"]);
+	} catch (err) {
+		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
+		return 2;
+	}
+	const { store, vaultKey } = await openSchedulesFor(vaultRoot);
 	const adapter = new NodeAdapter({ vaultRoot, configDir: configDirFrom(args.flags), quiet: true });
 	return printResult(
 		await approveSchedules({
@@ -621,6 +646,7 @@ async function cmdSchedulesApprove(args: ParsedArgs): Promise<number> {
 			readNote: (path) => adapter.readFile(path),
 			store,
 			vaultKey,
+			owner,
 		})
 	);
 }
@@ -630,7 +656,7 @@ async function cmdSchedulesRevoke(args: ParsedArgs): Promise<number> {
 	const paths = notePathsFrom(args, vaultRoot);
 	if (paths === undefined) return 2;
 
-	const { store, vaultKey } = await openApprovals(args.flags, vaultRoot);
+	const { store, vaultKey } = await openSchedulesFor(vaultRoot);
 	return printResult(await revokeSchedules({ paths, store, vaultKey }));
 }
 

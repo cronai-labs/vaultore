@@ -30,7 +30,14 @@ import {
   readDecisionDevice,
   readMachineSettings,
   writeMachineSettings,
-  pluginSchedulesStore,
+  openSchedules,
+  legacyApprovalsPath,
+  noteScheduleState,
+  approveNote,
+  revokeNote,
+  agentStatus,
+  grantHash,
+  own,
   vaultKeyFor,
   readSlotRecord,
   recordMissedSlots,
@@ -42,12 +49,17 @@ import {
   isWorkflowFrontmatter,
   resolveInVaultRoot,
 } from "@vaultore/core";
+import { homedir } from "node:os";
 import type {
   DecisionDevice,
   PlatformAdapter,
   PlatformRequest,
   PlatformResponse,
-  PluginSchedules,
+  AgentStatus,
+  NoteApproval,
+  ScheduleOwner,
+  VaultSchedules,
+  VaultStateStore,
   RunLock,
   ScheduledSlot,
   SlotClaim,
@@ -81,9 +93,8 @@ interface VaultOreSettings {
 export interface ScheduledNote {
   path: string;
   schedule: string;
-  // The schedule the user approved for this path, which may differ from the
-  // note's current one.
-  approvedSchedule?: string;
+  // The note's approval on this computer, whichever runner owns it (#301).
+  approval?: NoteApproval;
   // Why the schedule cannot run, when it is not a valid cron expression.
   error?: string;
   // Set while the note is armed.
@@ -632,11 +643,13 @@ export default class VaultOrePlugin extends Plugin {
     this.addSettingTab(this.settingsTab);
 
     this.scheduler.start();
-    // Each minute: missed runs the agent resolved, and a late threshold
-    // `vaultore schedules late-after` changed.
+    // Each minute: missed runs the agent resolved, a late threshold
+    // `vaultore schedules late-after` changed, and whether vaultore agent
+    // runs, for the notes handed to it: it may start or stop at any time (#301).
     this.timers.setInterval(() => {
       void this.recheckMissedRuns();
       void this.loadMachineSettings();
+      void this.reloadSchedules().then(() => this.refreshAgentStatus());
     }, 60 * 1000);
 
     // Defer the initial vault scan until the workspace layout (and metadata
@@ -719,7 +732,7 @@ export default class VaultOrePlugin extends Plugin {
    * Stays until dismissed: a schedule that stopped is not seen otherwise.
    */
   private noticeSchedulingMoved(): void {
-    if (!this.scheduledBeforeUpgrade || this.schedules.runScheduledWorkflows) return;
+    if (!this.scheduledBeforeUpgrade || this.schedules.obsidianScheduling) return;
     if (this.app.loadLocalStorage(SCHEDULING_MOVED_NOTICE_KEY) !== null) return;
     new Notice(
       "VaultOre: scheduled workflows are now turned on for each account on each computer, and are off for yours here. " +
@@ -729,20 +742,75 @@ export default class VaultOrePlugin extends Plugin {
     this.app.saveLocalStorage(SCHEDULING_MOVED_NOTICE_KEY, true);
   }
 
-  // This machine's scheduling consent for the vault: "Run scheduled
-  // workflows" and the approved notes, in the user tree (#276). Off with
-  // nothing approved until read, and when it cannot be read.
-  schedules: PluginSchedules = { runScheduledWorkflows: false, approvals: {} };
-  private schedulesStore = pluginSchedulesStore();
+  // This computer's schedules for the vault, shared with vaultore agent
+  // (#276, #301): "Run scheduled workflows" and each approved note with the
+  // runner that owns it, in the user tree. Off with nothing approved until
+  // read, and when it cannot be read.
+  schedules: VaultSchedules = { obsidianScheduling: false, notes: {} };
+  private schedulesStore: VaultStateStore<VaultSchedules> | undefined;
 
-  /** Reads this machine's scheduling consent for the vault. */
+  private async openSchedulesStore(): Promise<VaultStateStore<VaultSchedules>> {
+    this.schedulesStore ??= await openSchedules({
+      legacyApprovals: legacyApprovalsPath({ env: process.env, platform: process.platform, homedir: homedir() }),
+      onImported: (from, to) => {
+        this.adapter.log("info", `Copied vaultore agent's approvals from ${from} to ${to}`);
+        new Notice(
+          "VaultOre: the notes approved for vaultore agent are now listed under Settings → VaultOre → Scheduled workflows, " +
+            "and run by the agent as before."
+        );
+      },
+    });
+    return this.schedulesStore;
+  }
+
+  /** Reads this computer's schedules for the vault. */
   async loadSchedules(): Promise<void> {
     try {
-      this.schedules = await this.schedulesStore.forVault(await vaultKeyFor(await this.adapter.getVaultRoot()));
+      const store = await this.openSchedulesStore();
+      this.schedules = await store.forVault(await vaultKeyFor(await this.adapter.getVaultRoot()));
     } catch (err) {
-      this.schedules = { runScheduledWorkflows: false, approvals: {} };
+      this.schedules = { obsidianScheduling: false, notes: {} };
       this.adapter.log("warn", errorMessage(err));
       new Notice(`VaultOre: scheduled workflows stay off. ${errorMessage(err)}`);
+    }
+    await this.refreshAgentStatus();
+  }
+
+  // Whether vaultore agent runs this vault, for the notes handed to it
+  // (#301); undefined until read.
+  agentStatus: AgentStatus | undefined;
+  // The agent's own check of each note handed to it: whether the note is
+  // still what was approved. Read with the note's content, so kept apart.
+  agentNoteChanged = new Set<string>();
+  private agentStoppedNoticeShown = false;
+
+  /** Reads whether the agent runs this vault and which of its notes changed; says once when it does not run any of them. */
+  async refreshAgentStatus(): Promise<void> {
+    try {
+      this.agentStatus = await agentStatus({ vaultKey: await vaultKeyFor(await this.adapter.getVaultRoot()) });
+    } catch (err) {
+      this.adapter.log("warn", `Could not tell whether vaultore agent runs: ${errorMessage(err)}`);
+      this.agentStatus = undefined;
+    }
+    const changed = new Set<string>();
+    const handed = Object.entries(this.schedules.notes).filter(([, approval]) => approval.owner === "agent");
+    for (const [path, approval] of handed) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      try {
+        const workflow = new WorkflowParser().parse(await this.app.vault.read(file), path);
+        if ((await grantHash(workflow)) !== approval.hash) changed.add(path);
+      } catch {
+        changed.add(path);
+      }
+    }
+    this.agentNoteChanged = changed;
+    if (handed.length > 0 && this.agentStatus?.state === "stopped" && !this.agentStoppedNoticeShown) {
+      this.agentStoppedNoticeShown = true;
+      new Notice(
+        `VaultOre: ${handed.length} scheduled note(s) are handed to vaultore agent, which does not run this vault, so they do not run. ` +
+          "Start it, or run them in Obsidian under Settings → VaultOre → Scheduled workflows."
+      );
     }
   }
 
@@ -752,17 +820,18 @@ export default class VaultOrePlugin extends Plugin {
   private schedulesQueue: Promise<void> = Promise.resolve();
 
   /** Changes this machine's scheduling consent, then re-arms. A change that cannot be saved is told and not applied. */
-  private changeSchedules(change: (entry: PluginSchedules) => void): Promise<void> {
+  private changeSchedules(change: (entry: VaultSchedules) => void): Promise<void> {
     const next = this.schedulesQueue.then(() => this.applyScheduleChange(change));
     this.schedulesQueue = next;
     return next;
   }
 
-  private async applyScheduleChange(change: (entry: PluginSchedules) => void): Promise<void> {
+  private async applyScheduleChange(change: (entry: VaultSchedules) => void): Promise<void> {
     try {
       const key = await vaultKeyFor(await this.adapter.getVaultRoot());
-      await this.schedulesStore.update(key, change);
-      this.schedules = await this.schedulesStore.forVault(key);
+      const store = await this.openSchedulesStore();
+      await store.update(key, change);
+      this.schedules = await store.forVault(key);
     } catch (err) {
       this.adapter.log("warn", errorMessage(err));
       new Notice(`VaultOre: could not save the scheduling setting. ${errorMessage(err)}`);
@@ -915,7 +984,33 @@ export default class VaultOrePlugin extends Plugin {
       new Notice(message);
       return;
     }
+    // The schedules file is shared with vaultore agent (#301): a note handed
+    // to it, or revoked, since this note was armed does not run here.
+    await this.reloadSchedules();
+    if (!this.isApprovedSchedule(path, scheduled.schedule)) {
+      this.adapter.log("info", `Skipped the scheduled run of ${path}: it is no longer Obsidian's to run`);
+      return;
+    }
     await this.runWorkflow(file, scheduled);
+  }
+
+  /**
+   * Reads the schedules file again, as vaultore agent and `vaultore schedules`
+   * change it too, and re-arms when it changed. A file that cannot be read now
+   * keeps what was read last; loadSchedules says why at the next start.
+   */
+  async reloadSchedules(): Promise<void> {
+    let next: VaultSchedules;
+    try {
+      const store = await this.openSchedulesStore();
+      next = await store.forVault(await vaultKeyFor(await this.adapter.getVaultRoot()));
+    } catch (err) {
+      this.adapter.log("warn", `Could not read the schedules again: ${errorMessage(err)}`);
+      return;
+    }
+    if (JSON.stringify(next) === JSON.stringify(this.schedules)) return;
+    this.schedules = next;
+    this.refreshScheduledWorkflows();
   }
 
   private debouncedRefreshScheduledWorkflows(): void {
@@ -948,7 +1043,7 @@ export default class VaultOrePlugin extends Plugin {
       notes.push({
         path: file.path,
         schedule,
-        approvedSchedule: this.schedules.approvals[file.path],
+        ...(own(this.schedules.notes, file.path) ? { approval: own(this.schedules.notes, file.path) } : {}),
         error,
         nextRun: entry?.cronExpression === schedule ? entry.nextRun : undefined,
       });
@@ -958,25 +1053,46 @@ export default class VaultOrePlugin extends Plugin {
 
   async setRunScheduledWorkflows(enabled: boolean): Promise<void> {
     await this.changeSchedules((entry) => {
-      entry.runScheduledWorkflows = enabled;
+      entry.obsidianScheduling = enabled;
     });
   }
 
-  /** Approve a note's schedule, or withdraw the approval with null. */
-  async setScheduleApproval(path: string, schedule: string | null): Promise<void> {
+  /**
+   * Hands a note's schedule to a runner on this computer, as the note is now,
+   * or withdraws its approval with null (#301). The note is read: the agent's
+   * approval binds its content.
+   */
+  async setScheduleOwner(path: string, owner: ScheduleOwner | null): Promise<void> {
+    if (owner === null) {
+      await this.changeSchedules((entry) => {
+        revokeNote(entry, path);
+      });
+      await this.refreshAgentStatus();
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(path);
+    let note: { path: string; schedule: string; hash: string };
+    try {
+      if (!(file instanceof TFile)) throw new Error("it no longer exists");
+      // The schedule as the list shows it; the hash over what the note runs.
+      const schedule = this.scheduleOf(file);
+      if (schedule === undefined) throw new Error("it has no schedule");
+      const workflow = new WorkflowParser().parse(await this.app.vault.read(file), path);
+      note = { path, schedule, hash: await grantHash(workflow) };
+    } catch (err) {
+      new Notice(`VaultOre: could not approve ${path}: ${errorMessage(err)}`);
+      return;
+    }
     await this.changeSchedules((entry) => {
-      if (schedule === null) {
-        delete entry.approvals[path];
-      } else {
-        entry.approvals[path] = schedule;
-      }
+      approveNote(entry, note, owner);
     });
+    await this.refreshAgentStatus();
   }
 
   private async dropScheduleApproval(path: string): Promise<void> {
-    if (!(path in this.schedules.approvals)) return;
+    if (own(this.schedules.notes, path) === undefined) return;
     await this.changeSchedules((entry) => {
-      delete entry.approvals[path];
+      revokeNote(entry, path);
     });
   }
 
@@ -991,11 +1107,10 @@ export default class VaultOrePlugin extends Plugin {
     return typeof schedule === "string" ? schedule : JSON.stringify(schedule);
   }
 
-  // True when the switch is on, the user approved this exact schedule for the
-  // path, and the note still carries it.
+  // True when the switch is on, the note is Obsidian's to run (#301), the user
+  // approved this exact schedule for the path, and the note still carries it.
   private isApprovedSchedule(path: string, schedule: string): boolean {
-    if (!this.schedules.runScheduledWorkflows) return false;
-    if (this.schedules.approvals[path] !== schedule) return false;
+    if (noteScheduleState("obsidian", this.schedules, { path, schedule, hash: "" }).state !== "approved") return false;
     const file = this.app.vault.getAbstractFileByPath(path);
     return file instanceof TFile && this.scheduleOf(file) === schedule;
   }
@@ -1012,7 +1127,7 @@ export default class VaultOrePlugin extends Plugin {
         this.reportInvalidSchedule(note.path, note.schedule, note.error);
         continue;
       }
-      if (this.schedules.runScheduledWorkflows && note.approvedSchedule === note.schedule) {
+      if (noteScheduleState("obsidian", this.schedules, { path: note.path, schedule: note.schedule, hash: "" }).state === "approved") {
         wanted.set(note.path, note.schedule);
       }
     }
@@ -1259,9 +1374,16 @@ function parseNumericSetting(key: NumericSetting, raw: string): number | undefin
   return Number.isFinite(parsed) && NUMERIC_SETTINGS[key].valid(parsed) ? parsed : null;
 }
 
-function isApproved(note: ScheduledNote): boolean {
-  return note.error === undefined && note.approvedSchedule === note.schedule;
+/** Who runs the note on this computer, as the row's dropdown shows it. */
+function ownerChoice(note: ScheduledNote): "off" | ScheduleOwner {
+  return note.approval?.owner ?? "off";
 }
+
+const OWNER_CHOICES: Record<"off" | ScheduleOwner, string> = {
+  off: "Off",
+  obsidian: "In Obsidian",
+  agent: "By the agent",
+};
 
 class VaultOreSettingsTab extends PluginSettingTab {
   plugin: VaultOrePlugin;
@@ -1379,7 +1501,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
       const value = this.plugin.settings[key];
       return value === undefined ? "" : String(value);
     }
-    if (key === "runScheduledWorkflows") return this.plugin.schedules.runScheduledWorkflows;
+    if (key === "runScheduledWorkflows") return this.plugin.schedules.obsidianScheduling;
     if (key === "decisionsFromOtherDevices") return this.plugin.decisionsFromOtherDevices;
     return (this.plugin.settings as unknown as Record<string, unknown>)[key];
   }
@@ -1524,7 +1646,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
         desc:
           "Off by default, and set for each account on each computer. When on, a workflow note runs on its schedule while Obsidian " +
           "is open, but only if you approved it below." +
-          (this.plugin.scheduledBeforeUpgrade && !this.plugin.schedules.runScheduledWorkflows
+          (this.plugin.scheduledBeforeUpgrade && !this.plugin.schedules.obsidianScheduling
             ? " Before this version, scheduling was on for this vault; it is now off until you turn it on here."
             : ""),
         control: { type: "toggle", key: "runScheduledWorkflows" },
@@ -1544,6 +1666,12 @@ class VaultOreSettingsTab extends PluginSettingTab {
         "2"
       ),
     ];
+
+    items.push({
+      name: "vaultore agent",
+      desc: this.describeAgent(),
+      searchable: false,
+    });
 
     const notes = this.plugin.getScheduledNotes();
     if (notes.length === 0) {
@@ -1569,16 +1697,15 @@ class VaultOreSettingsTab extends PluginSettingTab {
         searchable: false,
         // Rendered by hand: Obsidian does not redraw the description of the
         // row whose own control changed, even after update(), and this row's
-        // description follows its toggle.
+        // description follows its dropdown.
         render: (setting: Setting) => {
           setting.setDesc(this.describeSchedule(note));
-          setting.addToggle((toggle) => {
-            const approved = isApproved(note);
-            toggle.setValue(approved);
-            toggle.setDisabled(note.error !== undefined);
-            toggle.setTooltip(approved ? "Approved to run on schedule" : "Approve to run on schedule");
-            toggle.onChange(async (value) => {
-              await this.plugin.setScheduleApproval(note.path, value ? note.schedule : null);
+          setting.addDropdown((dropdown) => {
+            for (const [value, label] of Object.entries(OWNER_CHOICES)) dropdown.addOption(value, label);
+            dropdown.setValue(ownerChoice(note));
+            dropdown.setDisabled(note.error !== undefined);
+            dropdown.onChange(async (value) => {
+              await this.plugin.setScheduleOwner(note.path, value === "off" ? null : (value as ScheduleOwner));
               const current =
                 this.plugin.getScheduledNotes().find((entry) => entry.path === note.path) ?? note;
               setting.setDesc(this.describeSchedule(current));
@@ -1621,26 +1748,53 @@ class VaultOreSettingsTab extends PluginSettingTab {
     });
   }
 
+  // Whether vaultore agent runs this vault, for the notes handed to it (#301).
+  private describeAgent(): string {
+    const status = this.plugin.agentStatus;
+    const handed = Object.values(this.plugin.schedules.notes).filter((approval) => approval.owner === "agent").length;
+    const notes = handed === 1 ? "the note handed to it" : `the ${handed} notes handed to it`;
+    const run = handed === 1 ? "does not run" : "do not run";
+    if (status === undefined) return "Whether it runs this vault could not be read.";
+    if (status.state === "running") {
+      return `Runs this vault since ${new Date(status.holder.since).toLocaleString()} (process ${status.holder.pid})` +
+        (handed > 0 ? `, and with it ${notes}.` : "; no note is handed to it.");
+    }
+    if (status.state === "unknown") {
+      return `Holds this vault from ${status.holder.host}, which this computer cannot check.`;
+    }
+    return handed > 0
+      ? `Does not run this vault, so ${notes} ${run}. Start it with: vaultore agent --vault <this vault>.`
+      : "Does not run this vault. Notes set to \"By the agent\" run only while it does.";
+  }
+
   private describeSchedule(note: ScheduledNote): string {
-    const approved = isApproved(note);
     const schedule = `Schedule "${note.schedule}"`;
     if (note.error !== undefined) {
       return `${schedule} is invalid, so this note does not run: ${note.error}`;
     }
-    if (note.approvedSchedule !== undefined && !approved) {
+    const approval = note.approval;
+    if (approval === undefined) {
+      return `${schedule}. Not approved, so it does not run.`;
+    }
+    if (approval.owner === "agent") {
+      if (this.plugin.agentNoteChanged.has(note.path)) {
+        return `${schedule}. Handed to vaultore agent, but its frontmatter or a cell changed since; approve it again to run it.`;
+      }
+      return this.plugin.agentStatus?.state === "running"
+        ? `${schedule}. Runs in vaultore agent.`
+        : `${schedule}. Handed to vaultore agent, which does not run this vault now.`;
+    }
+    if (approval.schedule !== note.schedule) {
       return (
-        `Schedule changed from "${note.approvedSchedule}" to "${note.schedule}" since you ` +
+        `Schedule changed from "${approval.schedule}" to "${note.schedule}" since you ` +
         "approved it. Approve it again to run it."
       );
     }
-    if (!approved) {
-      return `${schedule}. Not approved, so it does not run.`;
-    }
-    if (!this.plugin.schedules.runScheduledWorkflows) {
-      return `${schedule}. Approved; runs once "Run scheduled workflows" is on.`;
+    if (!this.plugin.schedules.obsidianScheduling) {
+      return `${schedule}. Approved for Obsidian; runs once "Run scheduled workflows" is on.`;
     }
     if (!note.nextRun) {
-      return `${schedule}. Approved; not armed yet.`;
+      return `${schedule}. Approved for Obsidian; not armed yet.`;
     }
     return `${schedule}. Next run: ${note.nextRun.toLocaleString()}.`;
   }

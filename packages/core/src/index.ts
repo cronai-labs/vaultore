@@ -131,13 +131,12 @@ export type { AIProviderName } from "./providers";
 export {
   WorkflowScheduler,
   computeNextRun,
-  classifyScheduleApproval,
   lateAfterMs,
   MIN_LATE_AFTER_MS,
   MAX_LATE_AFTER_MS,
 } from "./scheduler";
 
-export type { DueWorkflow, Registration, ScheduleApproval, ScheduleApprovalState } from "./scheduler";
+export type { DueWorkflow, Registration, ScheduleApproval } from "./scheduler";
 
 export {
   GAP_MARGIN_MS,
@@ -168,8 +167,27 @@ export {
 export type { MachineSettings, MachineSettingsOptions } from "./settings/machine-settings";
 export { VaultStateStore, VaultStateStoreError, vaultKeyFor, isRecord, own } from "./settings/vault-state-store";
 export type { VaultStateStoreSpec, VaultStateStoreOps } from "./settings/vault-state-store";
-export { pluginSchedulesStore, pluginSchedulesPath, PLUGIN_SCHEDULES_FILE } from "./settings/plugin-schedules";
-export type { PluginSchedules, PluginSchedulesOptions } from "./settings/plugin-schedules";
+export {
+  schedulesStore,
+  schedulesPath,
+  openSchedules,
+  legacyApprovalsPath,
+  noteScheduleState,
+  approveNote,
+  revokeNote,
+  ownerName,
+  SCHEDULES_FILE,
+  SCHEDULE_OWNERS,
+} from "./settings/schedules";
+export type {
+  NoteApproval,
+  NoteScheduleState,
+  OpenSchedulesOptions,
+  ScheduleOwner,
+  ScheduledNoteNow,
+  SchedulesStoreOptions,
+  VaultSchedules,
+} from "./settings/schedules";
 export { readDecisionDevice, deviceFilePath } from "./settings/device";
 export type { DecisionDevice, DecisionDeviceOptions } from "./settings/device";
 
@@ -214,7 +232,12 @@ export {
   lastBootTime,
   LockHeldError,
   processIsAlive,
+  readLockHolder,
+  holderGoneBecause,
 } from "./lock";
+
+export { acquireAgentLock, agentStatus, agentLockPath, agentLockDirectory, AgentRunningError } from "./lock/agent-lock";
+export type { AgentLockOptions, AgentStatus } from "./lock/agent-lock";
 
 export type { LockHolder, LockOptions } from "./lock";
 

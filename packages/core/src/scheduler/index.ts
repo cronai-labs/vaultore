@@ -8,8 +8,7 @@ import { CronExpressionParser } from "cron-parser";
 import { ScheduledWorkflow, TimerHandle, Timers } from "../types";
 
 import { MAX_LATE_AFTER_MINUTES, MIN_LATE_AFTER_MINUTES } from "../settings/machine-settings";
-export { classifyScheduleApproval } from "./approvals";
-export type { ScheduleApproval, ScheduleApprovalState } from "./approvals";
+export type { ScheduleApproval } from "./approvals";
 
 export interface SchedulerOptions {
   /** Where the tick interval comes from: the platform's timers. */

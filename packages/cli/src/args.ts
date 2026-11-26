@@ -17,7 +17,14 @@ export interface ParsedArgs {
  * `--yes workflow.md` swallows the workflow path, and a value flag missing from
  * it loses its value to the positionals.
  */
-const VALUE_FLAGS = new Set(["vault", "config-dir", "state-dir", "cell", "rescan", "out", "keep-days"]);
+const VALUE_FLAGS = new Set(["vault", "config-dir", "owner", "cell", "rescan", "out", "keep-days"]);
+
+/** Flags that were removed, and what to do instead. */
+const REMOVED_FLAGS: Record<string, string> = {
+	"state-dir":
+		"--state-dir was removed: the schedule approvals are in ~/.config/vaultore/schedules.json, which Obsidian reads too; " +
+		"run the agent as the account whose approvals it should use",
+};
 
 /** Flags that take no value. */
 const BOOLEAN_FLAGS = new Set(["skip-deps", "yes", "quiet", "help", "version"]);
@@ -27,6 +34,8 @@ const BOOLEAN_FLAGS = new Set(["skip-deps", "yes", "quiet", "help", "version"]);
  * a mistyped `--yes` or `--quiet` would do nothing and say nothing.
  */
 function requireKnown(name: string): void {
+	const removed = REMOVED_FLAGS[name];
+	if (removed !== undefined) throw new Error(removed);
 	if (!VALUE_FLAGS.has(name) && !BOOLEAN_FLAGS.has(name)) {
 		throw new Error(`unknown option --${name}`);
 	}

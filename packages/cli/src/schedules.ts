@@ -1,7 +1,8 @@
 /**
  * @vaultore/cli - `vaultore schedules list | approve | revoke`
  *
- * The commands that say which scheduled notes `vaultore agent` may run. Kept
+ * The commands that say which scheduled notes run on this computer, and in
+ * which runner: `vaultore agent` or Obsidian (#301). Kept
  * out of cli.ts so they can be unit tested — cli.ts runs main() on import.
  */
 
@@ -9,16 +10,19 @@ import {
 	MAX_LATE_AFTER_MINUTES,
 	MIN_LATE_AFTER_MINUTES,
 	WorkflowParser,
-	classifyScheduleApproval,
+	approveNote,
 	computeNextRun,
 	errorMessage,
 	grantHash,
 	isLateAfterMinutes,
+	noteScheduleState,
+	own,
+	ownerName,
 	readMachineSettings,
+	revokeNote,
 	writeMachineSettings,
 } from "@vaultore/core";
-import type { ScheduleApprovalState, SlotEntry, Workflow } from "@vaultore/core";
-import type { ApprovalStore, VaultApprovals } from "./approvals";
+import type { ScheduleOwner, SlotEntry, VaultSchedules, VaultStateStore, Workflow } from "@vaultore/core";
 import type { DiscoveredWorkflow } from "./scan";
 
 const parser = new WorkflowParser();
@@ -84,57 +88,60 @@ export async function readScheduledNote(
 export interface ScheduleListEntry {
 	path: string;
 	schedule: string;
-	/** `no-note`: an approval whose path holds no scheduled workflow any more. */
-	state: ScheduleApprovalState | "no-note";
+	/** Who runs it on this computer, where it is approved. */
+	owner?: ScheduleOwner;
+	/**
+	 * Whether its owner runs it now (`noteScheduleState` from the owner's side);
+	 * `no-note`: an approval whose path holds no scheduled workflow any more.
+	 */
+	state: "approved" | "not-approved" | "changed" | "off" | "no-note";
 	/** When the approval was given, where there is one. */
 	approvedAt?: string;
 }
 
 /**
- * Every scheduled note with its state, in the order given, then the approvals
- * that no scheduled note answers to (deleted, renamed, or no longer scheduled).
+ * Every scheduled note with its owner and state, in the order given, then the
+ * approvals that no scheduled note answers to (deleted, renamed, or no longer
+ * scheduled).
  */
-export function listSchedules(notes: ScheduledNote[], approvals: VaultApprovals): ScheduleListEntry[] {
+export function listSchedules(notes: ScheduledNote[], schedules: VaultSchedules): ScheduleListEntry[] {
 	const entries: ScheduleListEntry[] = notes.map((note) => {
-		const state = classifyScheduleApproval(approvals, note.path, note.hash);
-		const approvedAt = state === "not-approved" ? undefined : approvals[note.path]?.approvedAt;
+		const approval = own(schedules.notes, note.path);
+		if (approval === undefined) return { path: note.path, schedule: note.schedule, state: "not-approved" };
+		const { state } = noteScheduleState(approval.owner, schedules, note);
 		return {
 			path: note.path,
 			schedule: note.schedule,
-			state,
-			...(approvedAt === undefined ? {} : { approvedAt }),
+			owner: approval.owner,
+			state: state === "delegated" ? "approved" : state,
+			approvedAt: approval.approvedAt,
 		};
 	});
 
 	const present = new Set(notes.map((note) => note.path));
-	for (const [path, approval] of Object.entries(approvals)) {
+	for (const [path, approval] of Object.entries(schedules.notes)) {
 		if (present.has(path)) continue;
-		entries.push({
-			path,
-			schedule: approval.schedule,
-			state: "no-note",
-			approvedAt: approval.approvedAt,
-		});
+		entries.push({ path, schedule: approval.schedule, owner: approval.owner, state: "no-note", approvedAt: approval.approvedAt });
 	}
 	return entries;
 }
 
 const STATE_LABELS: Record<ScheduleListEntry["state"], string> = {
-	approved: "approved",
+	approved: "runs",
 	"not-approved": "not approved",
 	changed: "changed since approval",
+	off: "Obsidian's scheduling off",
 	"no-note": "no scheduled note",
 };
 
-/** One line per entry, the state first. */
+/** One line per entry: the state, then who runs it, then the note. */
 export function formatScheduleList(entries: ScheduleListEntry[]): string[] {
 	if (entries.length === 0) return ["No scheduled workflow notes found."];
 	return entries.map((entry) => {
 		const approved =
-			entry.state === "changed" || entry.state === "no-note"
-				? ` (approved ${entry.approvedAt ?? "?"})`
-				: "";
-		return `${STATE_LABELS[entry.state].padEnd(24)}${entry.path} [${entry.schedule}]${approved}`;
+			entry.state === "changed" || entry.state === "no-note" ? ` (approved ${entry.approvedAt ?? "?"})` : "";
+		const owner = entry.owner === undefined ? "" : ownerName(entry.owner);
+		return `${STATE_LABELS[entry.state].padEnd(27)}${owner.padEnd(16)}${entry.path} [${entry.schedule}]${approved}`;
 	});
 }
 
@@ -148,20 +155,30 @@ export interface ScheduleCommandResult {
 	lines: string[];
 }
 
+/** `--owner`: who runs the notes approved; the agent unless given. */
+export function ownerFrom(flag: string | boolean | undefined): ScheduleOwner {
+	if (flag === undefined) return "agent";
+	if (flag === "agent" || flag === "obsidian") return flag;
+	throw new Error(`--owner takes agent or obsidian, got '${String(flag)}'`);
+}
+
 /**
- * Approve the notes as they are now. All of them or none: one refused note
- * (unreadable, no workflow, no schedule) leaves the approvals untouched.
- * Approving a note that is already approved as it is changes nothing.
+ * Approve the notes as they are now, to run in `owner`. All of them or none:
+ * one refused note (unreadable, no workflow, no schedule) leaves the approvals
+ * untouched. Approving a note already approved as it is, for the same owner,
+ * changes nothing; approving it for the other owner hands it over.
  */
 export async function approveSchedules(options: {
 	/** Vault-relative note paths. */
 	paths: string[];
 	readNote: (path: string) => Promise<string>;
-	store: ApprovalStore;
+	store: VaultStateStore<VaultSchedules>;
 	vaultKey: string;
-	now?: () => string;
+	owner?: ScheduleOwner;
+	now?: () => Date;
 }): Promise<ScheduleCommandResult> {
-	const now = options.now ?? (() => new Date().toISOString());
+	const now = options.now ?? (() => new Date());
+	const owner = options.owner ?? "agent";
 
 	const notes: ScheduledNote[] = [];
 	const refusals: string[] = [];
@@ -177,19 +194,24 @@ export async function approveSchedules(options: {
 	}
 
 	const lines: string[] = [];
-	const written = await options.store.update(options.vaultKey, (approvals) => {
+	const written = await options.store.update(options.vaultKey, (schedules) => {
 		for (const note of notes) {
-			const state = classifyScheduleApproval(approvals, note.path, note.hash);
-			if (state === "approved") {
-				lines.push(`already approved ${note.path} [${note.schedule}]`);
+			const before = own(schedules.notes, note.path);
+			if (before?.owner === owner && before.hash === note.hash && before.schedule === note.schedule) {
+				lines.push(`already approved ${note.path} [${note.schedule}] for ${ownerName(owner)}`);
 				continue;
 			}
 			const replaced =
-				state === "changed"
-					? ` (replaces the approval of ${approvals[note.path]?.approvedAt ?? "?"})`
-					: "";
-			approvals[note.path] = { hash: note.hash, schedule: note.schedule, approvedAt: now() };
-			lines.push(`approved ${note.path} [${note.schedule}]${replaced}`);
+				before === undefined
+					? ""
+					: before.owner !== owner
+						? ` (handed over from ${ownerName(before.owner)})`
+						: ` (replaces the approval of ${before.approvedAt})`;
+			approveNote(schedules, note, owner, now());
+			lines.push(`approved ${note.path} [${note.schedule}] for ${ownerName(owner)}${replaced}`);
+			if (owner === "obsidian" && !schedules.obsidianScheduling) {
+				lines.push(`  Obsidian runs it once "Run scheduled workflows" is on in VaultOre's settings`);
+			}
 		}
 	});
 	if (written) lines.push(`stored in ${options.store.file}`);
@@ -197,24 +219,25 @@ export async function approveSchedules(options: {
 }
 
 /**
- * Withdraw the approvals of the given paths. A path that has none is reported
- * and is no error: the state asked for is the state there is.
+ * Withdraw the approvals of the given paths, whoever owns them. A path that
+ * has none is reported and is no error: the state asked for is the state there
+ * is.
  */
 export async function revokeSchedules(options: {
 	/** Vault-relative note paths. The notes need not exist any more. */
 	paths: string[];
-	store: ApprovalStore;
+	store: VaultStateStore<VaultSchedules>;
 	vaultKey: string;
 }): Promise<ScheduleCommandResult> {
 	const lines: string[] = [];
-	const written = await options.store.update(options.vaultKey, (approvals) => {
+	const written = await options.store.update(options.vaultKey, (schedules) => {
 		for (const path of options.paths) {
-			if (!Object.prototype.hasOwnProperty.call(approvals, path)) {
+			const owner = own(schedules.notes, path)?.owner;
+			if (!revokeNote(schedules, path)) {
 				lines.push(`not approved: ${path}`);
 				continue;
 			}
-			delete approvals[path];
-			lines.push(`revoked ${path}`);
+			lines.push(`revoked ${path} (was run by ${ownerName(owner ?? "agent")})`);
 		}
 	});
 	if (written) lines.push(`stored in ${options.store.file}`);
