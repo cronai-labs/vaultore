@@ -109,6 +109,9 @@ describe("NodeAdapter config.json", () => {
 	it("keeps its lock outside the vault", async () => {
 		await adapterFor().setSetting("vaultore.outputRoot", "_out");
 		expect(readdirSync(join(base, "vault", ".vaultore"))).toEqual(["config.json"]);
+	});
+});
+
 // The plugin's answers on this device count for the CLI too (#299).
 describe("NodeAdapter.otherRunnerDecisions", () => {
 	it("reads the plugin's answers under the configured config folder", async () => {
