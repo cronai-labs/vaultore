@@ -54,7 +54,8 @@ vi.mock("@vaultore/core", async () => {
     dismissMissedSlots: (options: import("@vaultore/core").ResolveMissedOptions) =>
       actual.dismissMissedSlots({ ...options, directory: runLocks.slots }),
     WorkflowExecutor: class {
-      runWorkflow = vi.fn().mockResolvedValue({});
+      // A run with no cells, as the executor returns one.
+      runWorkflow = vi.fn().mockResolvedValue({ cells: [], outputs: new Map() });
     },
     WorkflowParser: class {
       parse = vi.fn().mockReturnValue({
