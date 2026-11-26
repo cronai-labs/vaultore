@@ -741,6 +741,44 @@ describe("the plugin and the CLI on one computer share their answers (#299)", ()
 		);
 	});
 
+	// A vault moved or renamed: every MAC is over the old path. One prompt
+	// heals both files, and no run keeps claiming to ask.
+	it("replaces this runner's entry that no longer verifies with the answer from the other runner's file", async () => {
+		const r = runner();
+		r.answer(true);
+		await r.run();
+		const fresh = r.stored();
+		const stale = structuredClone(fresh)!;
+		stale["wf.md"]![HERE]!["mac"] = "0".repeat(64);
+		r.settings.set("vaultore.deviceDecisions", stale);
+		r.otherRunner.current = { file: OTHER_FILE, decisions: fresh };
+		r.answer(undefined);
+
+		expect(await r.run()).toBe("success");
+		expect(r.logs).toContain(
+			"The stored permission decision for wf.md was not made here or was changed; replaced by this device's answer"
+		);
+		expect(r.stored()!["wf.md"]![HERE]!["mac"]).not.toBe("0".repeat(64));
+
+		r.logs.length = 0;
+		expect(await r.run()).toBe("success");
+		expect(r.prompts).toHaveLength(1);
+		expect(r.logs.filter((line) => line.includes("was not made here"))).toEqual([]);
+	});
+
+	it("says nothing of an entry in the other runner's file that no longer verifies, while an answer applies", async () => {
+		const r = runner();
+		r.answer(true);
+		await r.run();
+		const stale = structuredClone(r.stored())!;
+		stale["wf.md"]![HERE]!["mac"] = "0".repeat(64);
+		r.otherRunner.current = { file: OTHER_FILE, decisions: stale };
+		r.answer(undefined);
+
+		expect(await r.run()).toBe("success");
+		expect(r.logs.filter((line) => line.includes("was not made here"))).toEqual([]);
+	});
+
 	it("asks when the other runner's file cannot be read, and says so", async () => {
 		const r = runner();
 		r.answer(true);

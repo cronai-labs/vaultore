@@ -329,11 +329,11 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | Where | What | Written by |
 |---|---|---|
 | **In the vault** | | |
-| `.obsidian/plugins/vaultore/` | The plugin; `data.json` holds its settings and permission decisions | Obsidian, the plugin |
+| `.obsidian/plugins/vaultore/` | The plugin; `data.json` holds its settings and permission decisions, which the CLI on the same computer applies too | Obsidian, the plugin |
 | `_vaultore/` (the output folder setting) | `runs/<workflow>/<run id>/`: each run's record, each cell's JSON and Markdown; `runs/<workflow>/index.json` | both runners |
 | Your workflow notes | The `ore-output` callout under each cell that ran | both runners |
 | Wherever a workflow writes | What its cells write with `vault.write` or into the mounted vault | your workflows |
-| `.vaultore/` | Created by every run that may read the vault, so a cell cannot plant it; `config.json` holds the CLI's settings and permission decisions | both runners |
+| `.vaultore/` | Created by every run that may read the vault, so a cell cannot plant it; `config.json` holds the CLI's settings and permission decisions, which the plugin on the same computer applies too | both runners |
 | **Outside the vault**, per account (`~/.config/vaultore/`; `%APPDATA%\vaultore\` on Windows) | | |
 | `locks/` | One lock file per running note, removed when the run ends | both runners |
 | `slots/` | What each scheduled occurrence came to, and missed runs; 30 days at most | both runners |
@@ -368,7 +368,7 @@ if you want it gone:
    you need them.
 2. **The result callouts** in your workflow notes: they are part of the notes. Delete them in
    the notes, or keep them.
-3. **`.vaultore/`** in each vault.
+3. **`.vaultore/`** in each vault. Its `config.json` also holds permission answers the plugin applies; removed, the plugin asks again.
 4. **`~/.config/vaultore/`** (`%APPDATA%\vaultore\` on Windows): shared by the plugin and the
    CLI, so remove it once you use neither, after stopping `vaultore agent`. With
    `XDG_CONFIG_HOME` set, also an old `approvals.json` in `$XDG_CONFIG_HOME/vaultore` that VaultOre no longer reads.

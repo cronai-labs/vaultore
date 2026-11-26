@@ -258,7 +258,7 @@ After the prompts, the answers to the permissions at `ask` are stored per note p
 
 They are kept as `deviceDecisions` in the plugin's settings (`.obsidian/plugins/vaultore/data.json`) or in the CLI's `<vault>/.vaultore/config.json`; both are hidden from cells.
 
-**Both runners on one computer share their answers** ([#299](https://github.com/cronai-labs/vaultore/issues/299)): they share the device, so each reads the other's file as well as its own, at the start of a run that asks, and writes only its own. An answer in the other runner's file counts as one in the runner's own: this device's only when its MAC verifies, whatever the setting below says, and another device's only under that setting. Where this device's answers in the two files disagree, a deny wins, so a deny given in Obsidian also binds `vaultore run --yes` for that content. An answer read from the other runner's file is not copied into the runner's own. The CLI finds the plugin's file under `--config-dir`. A file of the other runner that cannot be read is no answers, and the log says so.
+**Both runners on one computer share their answers** ([#299](https://github.com/cronai-labs/vaultore/issues/299)): they share the device, so each reads the other's file as well as its own, at the start of a run that asks, and writes only its own. An answer in the other runner's file counts as one in the runner's own: this device's only when its MAC verifies, whatever the setting below says, and another device's only under that setting. Where this device's answers in the two files disagree, a deny wins, so a deny given in Obsidian also binds `vaultore run --yes` for that content. An answer read from the other runner's file is not copied into the runner's own, except to replace the runner's own entry for this device when its MAC no longer verifies (as after the vault was moved, the MAC being over its path): one answer then heals that file, and the log says so once. An entry in the other runner's file that does not verify is mentioned only when it leaves the run to ask; that runner replaces it on its next run. The CLI finds the plugin's file under `--config-dir`. A file of the other runner that cannot be read is no answers, and the log says so.
 
 **The device** is an account on a computer ([#284](https://github.com/cronai-labs/vaultore/issues/284)): `device.json` in VaultOre's folder for the account (`~/.config/vaultore/`, `%APPDATA%\vaultore\` on Windows), outside every vault, made on first use and shared by the plugin and the CLI. It holds a random public `id` and a random secret `key`, and nothing about the machine. Two runners that make it at once agree on one. A device file that cannot be read is an error naming it, and a note that asks is not run; it is never replaced silently, as a new one withdraws every decision made here.
 
@@ -286,8 +286,8 @@ setting ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
 
 A stored `deny` is reused like an `allow`; only an answer a person gave (a modal, or `--yes`) is
 stored. There is no command or setting to clear decisions
-([#28](https://github.com/cronai-labs/vaultore/issues/28)); remove the note's entry from the
-file above.
+([#28](https://github.com/cronai-labs/vaultore/issues/28)); remove the note's entry from both
+files above, as each runner also applies the other's (§5.2).
 
 ---
 

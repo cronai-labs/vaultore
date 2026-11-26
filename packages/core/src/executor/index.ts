@@ -678,16 +678,18 @@ async function resolvePermissions(
     // A decision applies only to the content it was given for (#69), and
     // only on the device that made it (#284): one whose MAC does not verify
     // was not made here, or was changed since, and counts as undecided.
-    const verified = (value: unknown, where: string): DeviceDecision | undefined => {
+    // Undefined for no entry, false for one that does not verify (as after
+    // the vault was moved: the MAC is over its path).
+    const verified = (value: unknown): DeviceDecision | false | undefined => {
       if (value === undefined) return undefined;
       const decision = isRecord(value) ? (value as DeviceDecision) : undefined;
       const expected = decision === undefined ? "" : device.sign(decisionText(vault, workflowPath, device.id, decision));
-      if (decision !== undefined && typeof decision.mac === "string" && sameMac(decision.mac, expected)) return decision;
-      platform.log("warn", `The ${where} permission decision for ${workflowPath} was not made here or was changed; asking again`);
-      return undefined;
+      return decision !== undefined && typeof decision.mac === "string" && sameMac(decision.mac, expected) ? decision : false;
     };
-    const mine = verified(ownEntry<unknown>(forNote, device.id), "stored");
-    const theirs = verified(ownEntry<unknown>(otherForNote, device.id), `other runner's (${other?.file ?? ""})`);
+    const mineChecked = verified(ownEntry<unknown>(forNote, device.id));
+    const theirsChecked = verified(ownEntry<unknown>(otherForNote, device.id));
+    const mine = mineChecked || undefined;
+    const theirs = theirsChecked || undefined;
     // This device's answers in both files, a deny winning where they differ.
     const thisDevice = [mine, theirs].filter((decision): decision is DeviceDecision => decision?.workflowHash === workflowHash);
     let current: StoredDecision | undefined = thisDevice.length === 1 && thisDevice[0] === mine ? mine : strictest(thisDevice);
@@ -709,18 +711,35 @@ async function resolvePermissions(
         (decision): decision is StoredDecision => isRecord(decision) && decision["workflowHash"] === workflowHash
       )
     );
+    if (current === undefined && elsewhere !== undefined && device.acceptOtherDevices) {
+      current = elsewhere;
+      keep = true;
+    }
+    // An entry that does not verify is said once it is known whether an
+    // answer applies anyway. This runner's own is then replaced, so that it
+    // is not said again on every run; the other runner's is its to replace,
+    // and is said only when it leaves the run to ask.
+    if (mineChecked === false) {
+      if (current !== undefined) keep = true;
+      platform.log(
+        "warn",
+        `The stored permission decision for ${workflowPath} was not made here or was changed; ` +
+          (current !== undefined ? "replaced by this device's answer" : "asking again")
+      );
+    }
+    if (theirsChecked === false && current === undefined) {
+      platform.log(
+        "warn",
+        `The other runner's (${other?.file ?? ""}) permission decision for ${workflowPath} was not made here or was changed; asking again`
+      );
+    }
     if (current === undefined && elsewhere !== undefined) {
-      if (device.acceptOtherDevices) {
-        current = elsewhere;
-        keep = true;
-      } else {
-        // Said once per run, so that an upgrade that asks again is explained.
-        platform.log(
-          "info",
-          `An answer for ${workflowPath} given on another device, or before answers were kept per device, does not apply here; ` +
-            "asking again. Permission answers from other devices (vaultore permissions other-devices) changes that"
-        );
-      }
+      // Said once per run, so that an upgrade that asks again is explained.
+      platform.log(
+        "info",
+        `An answer for ${workflowPath} given on another device, or before answers were kept per device, does not apply here; ` +
+          "asking again. Permission answers from other devices (vaultore permissions other-devices) changes that"
+      );
     }
 
     // The answers to keep: given now, or kept before. A permission nobody
