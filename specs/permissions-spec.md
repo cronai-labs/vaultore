@@ -223,7 +223,7 @@ code on the host.
 
 ### 5.1 When a Prompt Appears
 
-At the start of each run, every permission the frontmatter sets to `ask` is looked up in the stored decisions. A stored `allow` or `deny`
+At the start of each run started by hand, every permission the frontmatter sets to `ask` is looked up in the stored decisions. A scheduled run or a catch-up asks nothing: its permissions come from the note's schedule approval (§6.3). A stored `allow` or `deny`
 for the same note, the same content and this device (§5.3) is used. Otherwise the user is asked, once per
 permission. A note that asks nothing reads and stores no decision.
 
@@ -298,7 +298,7 @@ A `schedule:` in frontmatter does not by itself make a note run unattended, in t
 ### 6.0 The approvals
 
 - **Where:** `schedules.json` in VaultOre's folder for the account, beside the run locks and the schedule record: `~/.config/vaultore` from the account's home directory, not from `$HOME` or `$XDG_CONFIG_HOME`; on Windows `%APPDATA%\vaultore` (core `schedulesStore`). Outside every vault: anything inside a vault can arrive through sync, and an approval must not. Both runners read and write it; no flag moves it, so both always meet there. The user tree is the account's: another account on the same machine has its own ([#287](https://github.com/cronai-labs/vaultore/issues/287)).
-- **What:** per vault, keyed by its real path, the plugin's **Run scheduled workflows** and each approved note:
+- **What:** per vault, keyed by its real path, the plugin's **Run scheduled workflows**, what the plugin's approvals bind (`obsidianBinding`, §6.1), and each approved note with the permissions its unattended runs get (§6.3):
 
   ```json
   {
@@ -307,12 +307,19 @@ A `schedule:` in frontmatter does not by itself make a note run unattended, in t
     "vaults": {
       "/home/me/notes": {
         "obsidianScheduling": true,
+        "obsidianBinding": "strict",
         "notes": {
           "Workflows/digest.md": {
             "owner": "agent",
             "hash": "<sha256>",
             "schedule": "0 9 * * 1-5",
-            "approvedAt": "2026-11-09T12:00:00.000Z"
+            "approvedAt": "2026-11-09T12:00:00.000Z",
+            "permissions": {
+              "network": { "value": "allow", "source": "answer" },
+              "buildNetwork": { "value": "deny", "source": "frontmatter" },
+              "vaultRead": { "value": "allow", "source": "frontmatter" },
+              "vaultWrite": { "value": "deny", "source": "frontmatter" }
+            }
           }
         }
       }
@@ -320,28 +327,59 @@ A `schedule:` in frontmatter does not by itself make a note run unattended, in t
   }
   ```
 
-  `hash` is the hash a permission decision is bound to (§5.3: the frontmatter as written and each cell's attributes and source).
-- **When an approval applies,** checked when the owner arms the note and again when a run is due:
+  `hash` is the hash a permission decision is bound to (§5.3: the frontmatter as written and each cell's attributes and source). `obsidianBinding` missing is `strict`.
+- **When an approval applies,** checked when the owner arms the note, when a run is due, and by the executor against the content it runs:
+  - its `permissions` cover the note as it is: each permission the frontmatter sets has the value held, from the frontmatter, and each `ask` has an answer (§6.3). Always, whoever owns the note;
   - owned by the agent: while `hash` is the note's, so a changed schedule, permission or cell withdraws it; an output callout written by a run, or an edit to the prose, does not;
-  - owned by Obsidian: while **Run scheduled workflows** is on and `schedule` is the note's exact schedule string. An edit to its cells that leaves the schedule alone keeps it approved ([#219](https://github.com/cronai-labs/vaultore/issues/219)).
-- **Approving** a note for one runner replaces any approval it had, so handing it to the other runner is approving it there. Revoking takes it from both. A renamed or deleted note loses its approval in Obsidian; a note that arrives through sync has none.
+  - owned by Obsidian, `strict` (the default): as the agent's, while **Run scheduled workflows** is on;
+  - owned by Obsidian, `narrow`: while `schedule` is the note's exact schedule string and **Run scheduled workflows** is on. Its cells, image, engine and limits may change, and run unreviewed, as its cells' code may ([#219](https://github.com/cronai-labs/vaultore/issues/219)).
+- **Approving** a note for one runner replaces any approval it had, so handing it to the other runner is approving it there, with the same review (§6.3). Revoking takes it from both. A renamed or deleted note loses its approval in Obsidian; a note that arrives through sync has none.
 - **Changes** happen under a lock (`schedules.json.lock`, a directory holding one file that names the process, machine and start time), so two changes cannot each write what they read plus their own; a change that finds it held by a live process waits up to two seconds before it is refused, naming that process ([#291](https://github.com/cronai-labs/vaultore/issues/291)); the file is replaced by renaming a temporary file into place, so a reader sees the old list or the new one. A lock whose process no longer exists on this machine, or that was taken before the machine last started, is taken over and said; a lock that is held, held on another machine, or unreadable is never removed, and the error names it (`packages/core/src/lock/index.ts`). A file that cannot be read, or is not a schedules file, is an error that names it: the agent does not start, a running agent arms nothing until it can be read, the plugin keeps scheduling off and says so, and nothing is written over it.
-- **From 0.4.x:** the agent's approvals in `approvals.json` (in `$XDG_CONFIG_HOME/vaultore` when that was set, else `~/.config/vaultore` from `$HOME`; `%APPDATA%\vaultore` on Windows) are copied in as notes the agent owns, once: `schedules.json` records the file it copied, under its lock, so a revoke afterwards stays revoked. Both runners do it when they open the file, so whichever runs first after the upgrade carries them over; a note approved here already keeps its approval. The old file is left as it was and no longer read. The plugin's approvals of 0.4.x, in its `data.json`, are not carried over (§6.1).
+- **From 0.4.x:** an approval copied from 0.4.x holds no permissions; it applies to a note with no `ask`, its permissions being the frontmatter's, and asks for review otherwise. The agent's approvals in `approvals.json` (in `$XDG_CONFIG_HOME/vaultore` when that was set, else `~/.config/vaultore` from `$HOME`; `%APPDATA%\vaultore` on Windows) are copied in as notes the agent owns, once: `schedules.json` records the file it copied, under its lock, so a revoke afterwards stays revoked. Both runners do it when they open the file, so whichever runs first after the upgrade carries them over; a note approved here already keeps its approval. The old file is left as it was and no longer read. The plugin's approvals of 0.4.x, in its `data.json`, are not carried over (§6.1).
 
 ### 6.1 Plugin
 
 - **Run scheduled workflows** is off by default.
-- Each scheduled note is set in **Settings → VaultOre → Scheduled workflows**: **Off**, **In Obsidian**, or **By the agent**. The row says why a note does not run: not approved, its schedule changed since, scheduling off, handed to the agent and changed since, or handed to an agent that does not run this vault.
+- Each scheduled note is set in **Settings → VaultOre → Scheduled workflows**: **Off**, **In Obsidian**, or **By the agent**. A dialog opens only when a permission changed or needs an answer (§6.3); cancelling it approves nothing. The row says why a note does not run: not approved, changed since it was approved (and what: the schedule, a permission, its frontmatter or a cell), scheduling off, or handed to an agent that does not run this vault. A changed note gets a **Review** button, and the plugin says once that it changed, not on every check.
+- **What an approval covers:** `strict` (the default), the whole note; `narrow`, its schedule and permissions (§6.0). For the account on this computer, in `schedules.json`. The agent is always strict; the plugin offers the choice so that each person can weigh a cell edit running unreviewed against approving again after each edit.
 - **The agent's status:** a row says whether `vaultore agent` runs this vault (from the agent's lock, §6.2), since when, and what that means for the notes handed to it. When notes are handed to it and no agent runs, the plugin says so once per start. It reads the status, and `schedules.json`, again each minute, and `schedules.json` again before a run is due, so a hand-over made with the CLI is followed.
 - Earlier releases kept the switch and the approvals in the plugin's `data.json`; they are not carried over, as a synced `data.json` is what this keeps from granting consent ([#276](https://github.com/cronai-labs/vaultore/issues/276)). They stay in `data.json`, written back as found, so an older plugin on another computer keeps scheduling until it is upgraded; a later release removes them ([#286](https://github.com/cronai-labs/vaultore/issues/286)). When they say scheduling was on and it is off on this computer, the plugin says so once on this computer (a flag in Obsidian's per-device storage, which sync does not carry), and its settings say so until scheduling is turned on here.
-- A scheduled run resolves permissions like any other run (§5).
+- A scheduled run and a catch-up get their permissions from the approval (§6.3) and never open the permission modal.
 
 ### 6.2 `vaultore agent` (CLI)
 
-- `vaultore schedules approve <note.md>... [--owner agent|obsidian]` approves the notes as they are now, for the agent unless `--owner obsidian`; all of them or none. `vaultore schedules revoke <note.md>...` withdraws them. `vaultore schedules list` shows every scheduled note with who runs it and whether it runs (runs, not approved, changed since approval, Obsidian's scheduling off), and approvals whose note is gone.
+- `vaultore schedules approve <note.md>... [--owner agent|obsidian] [--allow <names>] [--deny <names>]` approves the notes as they are now, for the agent unless `--owner obsidian`; all of them or none. It prints what each permission is, and what is kept, changed, new and dropped against the approval before; it refuses, naming them, while an `ask` has no answer. `--allow` and `--deny` take permission names, comma-separated, and answer for one note at a time; an answer for a permission the frontmatter sets is refused. `vaultore schedules revoke <note.md>...` withdraws them. `vaultore schedules list` shows every scheduled note with who runs it and whether it runs (runs, not approved, changed since approval, Obsidian's scheduling off), and approvals whose note is gone.
 - **One agent per vault:** while it runs, the agent holds a lock on the vault (`~/.config/vaultore/agents/<sha256 of the vault's real path>.lock`, naming its process, machine and start). A second agent on the same vault is refused, naming the first; a lock left by an agent that is gone is taken over and said. The plugin reads it for the agent's status.
-- The agent arms the notes it owns whose approval applies. Approval is re-checked when a run is due: the note and the approvals are read again, and the content that was checked is the content that runs. A scheduled run then resolves permissions non-interactively (§5.2). `--yes` grants `ask` permissions; it does not approve a schedule.
-- The agent names each scheduled note it does not run, with the reason, when it starts and whenever that set changes; notes handed to Obsidian are left out, and when every scheduled note is Obsidian's, it says so once.
+- The agent arms the notes it owns whose approval applies. Approval is re-checked when a run is due: the note and the approvals are read again, and the content that was checked is the content that runs, with the approval's permissions (§6.3). `vaultore agent --yes` is refused, naming `schedules approve`: answers for unattended runs are given when approving.
+- `vaultore schedules catch-up` checks the note's approval before it takes the gap, and refuses `--yes`.
+- The agent names each scheduled note it does not run, with the reason, when it starts and whenever that set changes; for a changed note, what changed and the command that approves it again, with `--allow`/`--deny` for a new `ask`. Notes handed to Obsidian are left out, and when every scheduled note is Obsidian's, it says so once.
+
+### 6.3 Unattended permissions
+
+Whether a person is there decides where an `ask` is answered ([#299](https://github.com/cronai-labs/vaultore/issues/299)):
+
+| Trigger | Started by | `ask` permissions from | Asks | Stores |
+|---|---|---|---|---|
+| `manual`: Obsidian's run commands, `vaultore run` | a person | this device's answers (§5.3) | yes: the modal; the CLI with `--yes`, else denied for the run | the answer, for this device |
+| `schedule`: the runner that owns the note | the clock | the note's approval | never | nothing |
+| `catch-up`: Obsidian's **Catch up**, `vaultore schedules catch-up` | a person, standing in for the scheduled run | the note's approval, under its owner's binding, whichever runner catches up | never | nothing |
+
+- Permissions the frontmatter sets come from the frontmatter, in every run; the approval holds them as they were approved, and one that changed withdraws the approval.
+- An unattended run never reads the answers kept for runs started by hand.
+- A catch-up uses the note's approval as it is when the catch-up starts, which covers the note as it is then; not the approval in force when the runs were missed, which may cover content the note no longer has. `run.json` names when that approval was given.
+- Without an approval that covers the note, a scheduled occurrence does not run: the runner does not arm the note, or skips the occurrence it already armed, and the change is said once per state of the note. A catch-up is refused before its gap is taken, naming what to approve. Should the note change between that check and the run, the executor refuses it and records the slot as skipped, with the reason; a catch-up's gap then stays resolved, as for a note that changed after it was read.
+- **Approving again asks only about the change.** Each permission compared with the approval before: `kept`; `new` (a first approval); `changed`, when the frontmatter now sets another value, confirmed by approving; `needs an answer`, for an `ask` not answered before, also one the frontmatter set before; `answer dropped`, when the frontmatter now sets one that had an answer. An answer given before is kept, and may be replaced. A note whose permissions are as approved, after a cell changed, is approved again in one action.
+- **The run record** (`run.json`) says how the run was started and where each permission came from:
+
+  ```json
+  "trigger": { "kind": "catch-up", "runner": "Obsidian", "slot": "2026-11-26T09:00:00.000Z", "owner": "agent", "approvedAt": "2026-11-20T08:00:00.000Z" },
+  "permissions": {
+    "network": { "value": "allow", "source": "approval", "at": "2026-11-20T08:00:00.000Z" },
+    "vaultRead": { "value": "allow", "source": "frontmatter" }
+  }
+  ```
+
+  `trigger.kind` is `manual`, `schedule` or `catch-up`; `runner` the runner that ran it; for an unattended run, `slot` (the occurrence, or a gap's first slot), `owner` and `approvedAt` of the approval it went by. A permission's `source` is `frontmatter`, `answer` (given for this device, `at` when), `approval` (answered when approving, `at` then), or `unanswered` (an `ask` nobody could answer, denied for the run).
 
 ---
 
@@ -383,7 +421,8 @@ workflow is granted `network`.
 | Privilege escalation in the container | Non-root user, no capabilities, `no-new-privileges` (not on Apple) |
 | A note changing after it was granted `ask` permissions | Decisions bound to the content (§5.3) |
 | A decision arriving through sync, or written into the vault by someone who can write it | Decisions bound to the device that made them, with a MAC whose key is outside the vault (§5.3) |
-| A synced or renamed note running unattended | Scheduling consent: per path and schedule in the plugin (§6.1), per path and content under `vaultore agent` (§6.2) |
+| A synced or renamed note running unattended | Scheduling consent: per path, content and permissions (§6.0; per path, schedule and permissions in the plugin's narrow binding) |
+| A permission granted by hand applying at night | Unattended runs take permissions only from the approval, never from answers given for runs started by hand (§6.3) |
 | An approved scheduled note changing under `vaultore agent` | The approval is bound to the content and re-checked when a run is due (§6.2) |
 | Sync delivering an approval, or turning scheduling on | Both runners keep their scheduling consent outside the vault, per machine (§6.1, §6.2) |
 | The plugin and the CLI running one note at once | One run lock per note, outside the vault, shared by both runners (ore-implementation, "One run per note") |
@@ -442,6 +481,12 @@ Run starts
   ▼
 Merge frontmatter permissions over the defaults
   │
+  ▼
+Scheduled run or catch-up?
+  yes → the note's approval covers it as it is (§6.0)?
+          yes → its four permissions; nothing asked, nothing stored
+          no  → refused; the slot is recorded as skipped
+  │ no (started by hand)
   ▼
 For each permission at "ask":
   stored decision for this path, this device and the same content hash, whose MAC verifies,

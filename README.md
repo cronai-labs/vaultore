@@ -168,15 +168,14 @@ schedule: "0 18 * * *"   # every day at 18:00, local time
 
 Nothing runs on a schedule until you opt in. **Settings → VaultOre → Scheduled workflows**
 lists every note with a schedule, with its next run or why the schedule is invalid. For each note you choose who runs it on this computer: **Off**, **In Obsidian**, or **By the agent** (`vaultore agent`, below). A note runs in one of them, never in both. For the notes run in Obsidian, turn on
-**Run scheduled workflows**. An approval for Obsidian covers that
-note's path and exact schedule: a changed schedule, a renamed note, or a note that arrives
-through sync is listed but does not run until you approve it. A row for `vaultore agent` says whether an agent runs this vault, and Obsidian tells you once when notes are handed to an agent that does not. The switch and your approvals
+**Run scheduled workflows**. An approval covers the note's path, its content and its permissions: an edit, a renamed note, or a note that arrives through sync is listed but does not run until you approve it again. **What an approval covers** can be set to *Narrow* for Obsidian: then only a change of the schedule or the permissions stops a note, and edited cells run unreviewed; `vaultore agent` is always strict. A row for `vaultore agent` says whether an agent runs this vault, and Obsidian tells you once when notes are handed to an agent that does not. The switch and your approvals
 belong to your account on this computer: they are kept outside the vault, in your account's folder, so sync carries them nowhere and another account does not share them. Earlier releases kept them in the plugin's settings, which sync carries; after upgrading from one, scheduling is off on each computer until you turn it on there and approve your notes again, and the plugin says so once on each computer where it was on. Scheduled runs happen only while
 Obsidian is open; `vaultore agent` runs them without Obsidian ([Command-Line
 Interface](#command-line-interface)).
 
 What holds for both runners:
 
+- **Scheduled runs ask nothing.** When you approve a note, you answer each `ask` permission for its scheduled runs; they, and catch-ups, run with exactly the permissions approved, and never use answers you gave when running the note yourself. Approving again after an edit asks only about what changed: an edited cell needs one click, a new `ask` needs only its answer. Each run's `run.json` says how it was started and where each permission came from ([unattended permissions](specs/permissions-spec.md#63-unattended-permissions)).
 - **Each occurrence runs at most once**, in Obsidian or in `vaultore agent`, whichever claims
   it first; the other names who did. What each one came to is kept for 30 days at most
   ("Scheduled-run history", `vaultore agent --keep-days`); `vaultore schedules log` shows it.
@@ -285,13 +284,13 @@ alias vaultore="node $PWD/packages/cli/dist/cli.js"
 ```
 vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
 vaultore list [--vault <dir>] [--config-dir <name>]
-vaultore agent [--vault <dir>] [--config-dir <name>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--quiet]
+vaultore agent [--vault <dir>] [--config-dir <name>] [--rescan <seconds>] [--keep-days <n>] [--quiet]
 vaultore schedules list [--vault <dir>] [--config-dir <name>]
-vaultore schedules approve <workflow.md>... [--owner agent|obsidian] [--vault <dir>]
+vaultore schedules approve <workflow.md>... [--owner agent|obsidian] [--allow <names>] [--deny <names>] [--vault <dir>]
 vaultore schedules revoke <workflow.md>... [--vault <dir>]
 vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
 vaultore schedules log [<workflow.md>] [--vault <dir>]
-vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--yes] [--quiet]
+vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--quiet]
 vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
 vaultore schedules late-after [<minutes> | default]
 vaultore permissions other-devices [apply | ask]
@@ -305,13 +304,13 @@ vaultore --version | --help
   `ANTHROPIC_API_KEY`).
 - `--config-dir <name>`: when Obsidian is set to use another config folder than `.obsidian`,
   name it, so that it is skipped when looking for workflows and hidden from cells.
-- Permissions at `ask` are denied for the run unless you pass `--yes`; `--yes` grants them, and
+- In `vaultore run`, permissions at `ask` are denied for the run unless you pass `--yes`; `--yes` grants them, and
   that answer is stored in the config file, for this account on this computer, until the note changes. A run without `--yes` stores nothing. `vaultore permissions other-devices apply` lets decisions made on another computer apply here. Answers given in Obsidian on this computer apply to `vaultore run` too, and the other way round; where the two disagree, a deny wins.
 - `vaultore agent` is a scheduler daemon. **It runs a scheduled note only after
   `vaultore schedules approve <note.md>`**, or **By the agent** in Obsidian's settings, and only while the note's frontmatter and cells are
   what you approved: an edit to either, including one that arrives through sync, stops it until
   you approve again. `vaultore schedules list` shows where each note stands and who runs it, and the agent
-  names what it does not run. `--yes` does not approve a schedule. One agent runs a vault at a time; a second one is refused.
+  names what it does not run. It runs each note with the permissions approved: answer an `ask` with `vaultore schedules approve <note.md> --allow network` (or `--deny`); `schedules approve` prints what each permission is and what changed since the last approval. `vaultore agent --yes` was removed. One agent runs a vault at a time; a second one is refused.
 - `vaultore schedules approve --owner obsidian` hands a note to Obsidian instead; approving it for the other runner hands it over. The approvals are kept outside the vault, so that sync cannot deliver one, in one file Obsidian reads too ([where](#where-vaultore-keeps-things)).
 - A note runs once at a time, whether Obsidian, `vaultore run` or `vaultore agent` starts it: a
   second run is refused and told who has the note
