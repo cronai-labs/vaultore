@@ -8,7 +8,7 @@ export default defineConfig(
 		"dist",
 		"package",
 		"esbuild.config.mjs",
-		"vitest.config.ts",
+		"vitest.config.mts",
 		"src/__mocks__",
 		"src/**/*.test.ts",
 		"package.json",

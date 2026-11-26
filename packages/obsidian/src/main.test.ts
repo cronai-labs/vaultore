@@ -70,7 +70,7 @@ vi.mock("@vaultore/core", async () => {
   };
 });
 
-// Import the plugin — obsidian is aliased via vitest.config.ts
+// Import the plugin — obsidian is aliased via vitest.config.mts
 const { default: VaultOrePlugin } = await import("./main");
 // Typed as the mock, which records notices and event handlers for assertions.
 const { FileSystemAdapter, Notice, TFile, requestUrl } = (await import("obsidian")) as unknown as typeof import("./__mocks__/obsidian");

@@ -25,6 +25,7 @@ export default defineConfig(
 			"coverage",
 			".turbo",
 			"*.config.ts",
+			"*.config.mts",
 			"*.config.mjs",
 			"package.json",
 			"tsconfig.json",
