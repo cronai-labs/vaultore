@@ -8,6 +8,7 @@
  */
 
 import { readMachineSettings, writeMachineSettings } from "@vaultore/core";
+import { SHORT_WAIT } from "./wait";
 
 /**
  * Shows the setting (`value` undefined) or sets it: `apply` turns it on,
@@ -20,7 +21,7 @@ export async function otherDevices(value: string | undefined, path: string): Pro
 	const settings =
 		value === undefined
 			? await readMachineSettings({ path })
-			: await writeMachineSettings({ decisionsFromOtherDevices: value === "apply" ? true : undefined }, { path });
+			: await writeMachineSettings({ decisionsFromOtherDevices: value === "apply" ? true : undefined }, { path, wait: SHORT_WAIT });
 	return settings.decisionsFromOtherDevices === true
 		? `permission answers from other devices: apply here (set in ${path})`
 		: "permission answers from other devices: ask again here (the default)";

@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { errorMessage } from "../errors";
-import { LockHeldError, acquireLock } from "../lock";
-import type { LockHolder, LockOptions } from "../lock";
+import { LockHeldError, acquireLockWaiting } from "../lock";
+import type { LockHolder, LockOptions, LockWait } from "../lock";
 
 /**
  * Per-vault state on this machine, outside the vault: one file in the user
@@ -43,6 +43,11 @@ export interface VaultStateStoreOps {
 	lock?: Pick<LockOptions, "isAlive" | "host" | "bootTime">;
 	/** Told when a lock left by a process that is gone was removed. */
 	onStaleLock?: (holder: LockHolder, lockPath: string, why: string) => void;
+	/**
+	 * How long a change waits while another process changes the file, before
+	 * it is refused naming that process. Without it, it is refused at once.
+	 */
+	wait?: LockWait;
 }
 
 interface StateFile<V> {
@@ -73,6 +78,7 @@ export class VaultStateStore<V> {
 	private readonly rename: (from: string, to: string) => Promise<void>;
 	private readonly lockOptions: Pick<LockOptions, "isAlive" | "host" | "bootTime">;
 	private readonly onStaleLock: (holder: LockHolder, lockPath: string, why: string) => void;
+	private readonly wait: LockWait | undefined;
 
 	constructor(
 		private readonly spec: VaultStateStoreSpec<V>,
@@ -82,6 +88,7 @@ export class VaultStateStore<V> {
 		this.rename = ops.rename ?? ((from, to) => fs.rename(from, to));
 		this.lockOptions = ops.lock ?? {};
 		this.onStaleLock = ops.onStaleLock ?? (() => {});
+		this.wait = ops.wait;
 	}
 
 	/**
@@ -254,9 +261,10 @@ export class VaultStateStore<V> {
 	private async lock(): Promise<() => Promise<void>> {
 		const lockPath = `${this.file}.lock`;
 		try {
-			return await acquireLock(lockPath, {
+			return await acquireLockWaiting(lockPath, {
 				...this.lockOptions,
 				onStale: (holder, why) => this.onStaleLock(holder, lockPath, why),
+				wait: this.wait,
 			});
 		} catch (err) {
 			if (err instanceof LockHeldError) throw new VaultStateStoreError(err.message);

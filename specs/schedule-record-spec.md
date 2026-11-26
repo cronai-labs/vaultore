@@ -26,7 +26,7 @@ Decided by the owner on 2026-11-23 and 2026-11-24 (#255):
 | `<slot>.outcome.json` | the claimer, when its run ends | written under a temporary name and renamed into place |
 | `<slot>.resolved.json` | the user, for a gap: a catch-up or a dismissal | exclusively, as the claim |
 
-Beside the record, `~/.config/vaultore/settings.json` (`%APPDATA%\vaultore\settings.json`) holds what both runners must agree on for the record to hold: today `lateAfterMinutes`. Absent is the default. A runner that cannot read it, or finds a value out of range, says so with the file's path rather than guessing; keys it does not know are kept when it writes.
+Beside the record, `~/.config/vaultore/settings.json` (`%APPDATA%\vaultore\settings.json`) holds what both runners must agree on for the record to hold: today `lateAfterMinutes`. Absent is the default. A runner that cannot read it, or finds a value out of range, says so with the file's path rather than guessing; keys it does not know are kept when it writes. A change is read and written under `settings.json.lock`, waiting up to two seconds for another one, so two runners changing different settings at once keep both (#291).
 
 The decision file holds `version` (1) and `kind`: `claimed`, or `missed` for a gap, which also holds `until` (its last slot) and `count`. A slot is decided once, either way, and never both: a gap and a claim of its first slot are the same file name. A reader that meets a version or kind it does not know shows the slot as `unknown`, keeps it decided, and prunes it by age alone; plugin and CLI update separately, so this is the contract between their versions.
 

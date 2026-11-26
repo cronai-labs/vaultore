@@ -1,7 +1,9 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { setTimeout as nodeSetTimeout } from "node:timers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { acquireLock } from "../lock";
 import { machineSettingsPath, readMachineSettings, writeMachineSettings } from "./machine-settings";
 
 /** This machine's settings that both runners share (#269): one file, outside the vault. */
@@ -66,5 +68,22 @@ describe("machine settings", () => {
 		await expect(writeMachineSettings({ lateAfterMinutes: 61 }, { path })).rejects.toThrow(
 			"Late after must be a whole number of minutes from 2 to 60, got 61"
 		);
+	});
+
+	// Obsidian and a vaultore command changing different settings at once
+	// keep both (#291): the change is read and written under a lock.
+	it("changes the file under a lock, waiting for another change, and keeps both", async () => {
+		const timers = { setTimeout: (callback: () => void, ms: number) => nodeSetTimeout(callback, ms) };
+		mkdirSync(dirname(path), { recursive: true });
+		const release = await acquireLock(`${path}.lock`);
+		const waiting = writeMachineSettings({ lateAfterMinutes: 10 }, { path, wait: { timers, ms: 2000, stepMs: 20 } });
+		await new Promise((resolve) => nodeSetTimeout(resolve, 100));
+		expect(() => readFileSync(path)).toThrow();
+
+		await release();
+		await waiting;
+		await writeMachineSettings({ decisionsFromOtherDevices: true }, { path });
+
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ lateAfterMinutes: 10, decisionsFromOtherDevices: true });
 	});
 });

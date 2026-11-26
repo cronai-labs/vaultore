@@ -234,12 +234,14 @@ export {
   processIsAlive,
   readLockHolder,
   holderGoneBecause,
+  acquireLockWaiting,
+  SHORT_LOCK_WAIT_MS,
 } from "./lock";
 
 export { acquireAgentLock, agentStatus, agentLockPath, agentLockDirectory, AgentRunningError } from "./lock/agent-lock";
 export type { AgentLockOptions, AgentStatus } from "./lock/agent-lock";
 
-export type { LockHolder, LockOptions } from "./lock";
+export type { LockHolder, LockOptions, LockWait } from "./lock";
 
 export {
   acquireRunLock,

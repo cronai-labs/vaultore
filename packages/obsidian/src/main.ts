@@ -37,6 +37,7 @@ import {
   revokeNote,
   agentStatus,
   grantHash,
+  SHORT_LOCK_WAIT_MS,
   own,
   vaultKeyFor,
   readSlotRecord,
@@ -56,6 +57,7 @@ import type {
   PlatformRequest,
   PlatformResponse,
   AgentStatus,
+  LockWait,
   NoteApproval,
   ScheduleOwner,
   VaultSchedules,
@@ -748,9 +750,15 @@ export default class VaultOrePlugin extends Plugin {
   // read, and when it cannot be read.
   schedules: VaultSchedules = { obsidianScheduling: false, notes: {} };
   private schedulesStore: VaultStateStore<VaultSchedules> | undefined;
+  // A change of a file vaultore changes too waits a moment for it, rather
+  // than failing a click (#291).
+  private get shortWait(): LockWait {
+    return { timers: this.timers, ms: SHORT_LOCK_WAIT_MS };
+  }
 
   private async openSchedulesStore(): Promise<VaultStateStore<VaultSchedules>> {
     this.schedulesStore ??= await openSchedules({
+      wait: this.shortWait,
       legacyApprovals: legacyApprovalsPath({ env: process.env, platform: process.platform, homedir: homedir() }),
       onImported: (from, to) => {
         this.adapter.log("info", `Copied vaultore agent's approvals from ${from} to ${to}`);
@@ -874,13 +882,13 @@ export default class VaultOrePlugin extends Plugin {
 
   /** Lets decisions made on other devices apply here, or not; off removes the key. */
   async setDecisionsFromOtherDevices(on: boolean): Promise<void> {
-    const settings = await writeMachineSettings({ decisionsFromOtherDevices: on ? true : undefined });
+    const settings = await writeMachineSettings({ decisionsFromOtherDevices: on ? true : undefined }, { wait: this.shortWait });
     this.decisionsFromOtherDevices = settings.decisionsFromOtherDevices === true;
   }
 
   /** Sets the late threshold for this machine; undefined goes back to the default. */
   async setLateAfterMinutes(minutes: number | undefined): Promise<void> {
-    const settings = await writeMachineSettings({ lateAfterMinutes: minutes });
+    const settings = await writeMachineSettings({ lateAfterMinutes: minutes }, { wait: this.shortWait });
     this.lateAfterMinutes = settings.lateAfterMinutes;
     this.scheduler.lateAfterMs = lateAfterMs(this.lateAfterMinutes);
   }

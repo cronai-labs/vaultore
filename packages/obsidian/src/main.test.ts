@@ -53,6 +53,7 @@ vi.mock("@vaultore/core", async () => {
     openSchedules: (options: import("@vaultore/core").OpenSchedulesOptions) =>
       actual.openSchedules({ ...options, path: machineSettings.schedules, legacyApprovals: machineSettings.legacyApprovals }),
     legacyApprovalsPath: actual.legacyApprovalsPath,
+    SHORT_LOCK_WAIT_MS: actual.SHORT_LOCK_WAIT_MS,
     noteScheduleState: actual.noteScheduleState,
     approveNote: actual.approveNote,
     revokeNote: actual.revokeNote,

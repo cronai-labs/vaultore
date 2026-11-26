@@ -17,18 +17,22 @@
  *   `--yes` (fail closed otherwise), and decisions persist to config.
  */
 
+import { createHash, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
 import {
 	DEFAULT_CONFIG_DIR,
+	SHORT_LOCK_WAIT_MS,
+	acquireLockWaiting,
 	acquireRunLock,
 	claimSlot,
 	describeHolder,
 	errorMessage,
 	readDecisionDevice,
 	resolveInVaultRoot,
+	runLockDirectory,
 } from "@vaultore/core";
 import type {
 	DecisionDevice,
@@ -127,6 +131,7 @@ export class NodeAdapter implements PlatformAdapter {
 		this.deviceOptions = options.device ?? {};
 		this.slotPruneIntervalMs = options.slotPruneIntervalMs;
 		this.config = this.loadConfig();
+		this.configStamp = this.stampOf(this.configPath());
 	}
 
 	// ── File system ───────────────────────────────────────────────────────
@@ -225,13 +230,37 @@ export class NodeAdapter implements PlatformAdapter {
 	getSetting<T>(key: string): T | undefined {
 		const short = key.startsWith("vaultore.") ? key.slice("vaultore.".length) : key;
 		if (short in this.overrides) return this.overrides[short] as T;
-		return this.config[short] as T | undefined;
+		return this.currentConfig()[short] as T | undefined;
 	}
 
+	/**
+	 * Changes one setting in `config.json` (#291): read again, changed and
+	 * written under a lock, the new content renamed into place, so commands
+	 * running at once (an agent and a `vaultore run`) keep each other's
+	 * changes. A file that cannot be used is refused, naming it, never
+	 * replaced.
+	 */
 	async setSetting<T>(key: string, value: T): Promise<void> {
 		const short = key.startsWith("vaultore.") ? key.slice("vaultore.".length) : key;
-		this.config[short] = value;
-		this.saveConfig();
+		const path = this.configPath();
+		const release = await this.lockConfig();
+		try {
+			const config = this.readConfigFile();
+			config[short] = value;
+			await fs.mkdir(dirname(path), { recursive: true });
+			const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+			try {
+				await fs.writeFile(temporary, JSON.stringify(config, null, 2) + "\n", { encoding: "utf8", flag: "wx" });
+				await fs.rename(temporary, path);
+			} catch (err) {
+				await fs.rm(temporary, { force: true });
+				throw err;
+			}
+			this.config = config;
+			this.configStamp = this.stampOf(path);
+		} finally {
+			await release();
+		}
 	}
 
 	// ── Secrets (environment only) ────────────────────────────────────────
@@ -329,21 +358,84 @@ export class NodeAdapter implements PlatformAdapter {
 		return join(this.vaultRoot, ".vaultore", "config.json");
 	}
 
-	private loadConfig(): Record<string, unknown> {
+	/** `config.json` as it is, or nothing when there is none. Throws, naming it, for one that cannot be used. */
+	private readConfigFile(): Record<string, unknown> {
+		const path = this.configPath();
+		let text: string;
 		try {
-			if (existsSync(this.configPath())) {
-				return JSON.parse(readFileSync(this.configPath(), "utf8")) as Record<string, unknown>;
-			}
+			text = readFileSync(path, "utf8");
 		} catch (err) {
-			process.stderr.write(
-				`[vaultore:warn] ignoring unreadable config ${this.configPath()}: ${String(err)}\n`
-			);
+			if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+			throw new Error(`Cannot use ${path}: ${errorMessage(err)}. It was left as it is; repair or remove it`);
 		}
-		return {};
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(text);
+		} catch (err) {
+			throw new Error(`Cannot use ${path}: it is not JSON (${errorMessage(err)}). It was left as it is; repair or remove it`);
+		}
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			throw new Error(`Cannot use ${path}: it does not hold a JSON object. It was left as it is; repair or remove it`);
+		}
+		return parsed as Record<string, unknown>;
 	}
 
-	private saveConfig(): void {
-		mkdirSync(dirname(this.configPath()), { recursive: true });
-		writeFileSync(this.configPath(), JSON.stringify(this.config, null, 2) + "\n", "utf8");
+	// When config.json was last read: its size and change time, so a long-lived
+	// agent sees what another command stored since (#291).
+	private configStamp = "";
+
+	private stampOf(path: string): string {
+		try {
+			const stat = statSync(path);
+			return `${stat.size}:${stat.mtimeMs}:${stat.ino}`;
+		} catch {
+			return "";
+		}
+	}
+
+	/** The settings as config.json holds them now; read again only when the file changed. */
+	private currentConfig(): Record<string, unknown> {
+		const stamp = this.stampOf(this.configPath());
+		if (stamp !== this.configStamp) {
+			this.config = this.loadConfig();
+			this.configStamp = stamp;
+		}
+		return this.config;
+	}
+
+	/** Reading never fails a command: a file that cannot be used is said, once, and its settings are not applied. */
+	private loadConfig(): Record<string, unknown> {
+		try {
+			return this.readConfigFile();
+		} catch (err) {
+			const message = errorMessage(err);
+			if (message !== this.configWarning) {
+				process.stderr.write(`[vaultore:warn] ${message}; its settings are not applied\n`);
+				this.configWarning = message;
+			}
+			return {};
+		}
+	}
+	private configWarning = "";
+
+	/**
+	 * The lock around a change of this vault's config.json: in VaultOre's
+	 * folder beside the run locks, not in the vault, where sync would carry it
+	 * to other computers. Waits a moment for another command's change.
+	 */
+	private async lockConfig(): Promise<() => Promise<void>> {
+		const directory = this.runLockDirectory ?? runLockDirectory();
+		mkdirSync(directory, { recursive: true, mode: 0o700 });
+		let vault: string;
+		try {
+			vault = realpathSync(this.vaultRoot);
+		} catch {
+			vault = this.vaultRoot;
+		}
+		const key = createHash("sha256").update(vault.normalize("NFC")).digest("hex");
+		return acquireLockWaiting(join(directory, `cli-config-${key}.lock`), {
+			by: this.runner,
+			wait: { timers: this.timers, ms: SHORT_LOCK_WAIT_MS },
+		});
 	}
 }
