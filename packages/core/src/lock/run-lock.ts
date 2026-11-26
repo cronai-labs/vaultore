@@ -66,12 +66,26 @@ export function userStateDirectory(
 	env: NodeJS.ProcessEnv = process.env,
 	accountHome: () => string = () => userInfo().homedir
 ): string {
+	return join(userStateRoot(what, platform, env, accountHome), name);
+}
+
+/**
+ * VaultOre's own folder for this user, which holds every `userStateDirectory`:
+ * `~/.config/vaultore`, or `%APPDATA%\vaultore` on Windows. `what` names the
+ * state looked for in an error.
+ */
+export function userStateRoot(
+	what = "state",
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+	accountHome: () => string = () => userInfo().homedir
+): string {
 	if (platform === "win32") {
 		const appData = env["APPDATA"];
 		if (!appData) {
 			throw new Error(`APPDATA is not set, so VaultOre cannot tell where its ${what} belong`);
 		}
-		return join(appData, "vaultore", name);
+		return join(appData, "vaultore");
 	}
 	let home: string;
 	try {
@@ -89,7 +103,7 @@ export function userStateDirectory(
 			`This process's user has no home directory, so VaultOre cannot tell where its ${what} belong. Run it as a user that has one`
 		);
 	}
-	return join(home, ".config", "vaultore", name);
+	return join(home, ".config", "vaultore");
 }
 
 /**

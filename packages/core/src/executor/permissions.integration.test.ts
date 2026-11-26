@@ -242,3 +242,43 @@ describe("the CLI's .vaultore/ is hidden from cells (#94)", { timeout: 120_000 }
 		expect(readFileSync(join(root, ".vaultore/config.json"), "utf8")).toBe(CONFIG);
 	});
 });
+
+describe("VaultOre's own folder is hidden from cells where the vault holds it (#306)", { timeout: 120_000 }, () => {
+	const APPROVALS = '{"format":"vaultore.schedules","version":1,"vaults":{}}';
+
+	it("a cell with vaultRead and vaultWrite can neither read nor rewrite schedules.json", async () => {
+		// A vault at the home folder holds .config/vaultore.
+		const home = makeIntegrationVaultRoot();
+		try {
+			mkdirSync(join(home, ".config/vaultore"), { recursive: true });
+			writeFileSync(join(home, ".config/vaultore/schedules.json"), APPROVALS);
+			const content = `---
+ore: true
+name: it
+permissions:
+  network: deny
+  vaultRead: allow
+  vaultWrite: allow
+---
+
+${ts(`const attempt = async (f) => { try { await f(); return "ok"; } catch { return "denied"; } };
+({
+	read: await attempt(() => Bun.file("/workspace/.config/vaultore/schedules.json").text()),
+	write: await attempt(() => Bun.write("/workspace/.config/vaultore/schedules.json", "{}")),
+	beside: await attempt(() => Bun.write("/workspace/.config/other.json", "{}")),
+})`)}
+`;
+			writeFileSync(join(home, "wf.md"), content);
+			const platform = { ...filesystemPlatform(home), stateDirectory: join(home, ".config/vaultore") };
+
+			const workflow = await new WorkflowExecutor().runWorkflow({ platform, workflowPath: "wf.md", content });
+
+			const output = workflow.outputs.get("c");
+			expect(output?.meta.status).toBe("success");
+			expect(output?.value).toEqual({ read: "denied", write: "denied", beside: "ok" });
+			expect(readFileSync(join(home, ".config/vaultore/schedules.json"), "utf8")).toBe(APPROVALS);
+		} finally {
+			rmSync(home, { recursive: true, force: true });
+		}
+	});
+});

@@ -175,7 +175,8 @@ docker run --rm \
 | Memory / CPU | `--memory` / `--cpus` from `runtime.memoryLimit` / `runtime.cpuLimit` | same | §4.3 |
 | Vault | §3.3, §3.4: no mount, the run directory only, or the vault read-only or read-write | same | |
 | `.obsidian/` | `--tmpfs /workspace/.obsidian:ro,noexec,nosuid,nodev` | same | Under the full vault mount, an empty read-only tmpfs hides the plugin's own code and settings, so a cell can neither read nor rewrite them. Applied only when `.obsidian/` exists in the vault: masking a missing directory would make the engine create it. The config folder the platform reports is masked as well, when it is another one (Obsidian's per-device "Override config folder", the CLI's `--config-dir`; #147) |
-| `.vaultore/` | `--tmpfs /workspace/.vaultore:ro,noexec,nosuid,nodev` | same | Under the full vault mount, hides the CLI's settings and stored permission decisions, so a cell cannot forge a grant for another workflow (#94). Always applied: the host creates `.vaultore/` before the run, so a cell cannot create the config in a vault that has none yet |
+| `.vaultore/` | `--tmpfs /workspace/.vaultore:ro,noexec,nosuid,nodev` | same | Under the full vault mount, hides the CLI's settings, so a cell cannot change how the CLI runs notes (#94). Always applied: the host creates `.vaultore/` before the run, so a cell cannot create the config in a vault that has none yet |
+| VaultOre's own folder | `--tmpfs /workspace/<its path in the vault>:ro,noexec,nosuid,nodev` | same | `~/.config/vaultore` (`%APPDATA%\vaultore`) holds the schedule approvals, the answers, the locks and the schedule record. A vault that holds it, such as a vault at the home folder, has it masked under the full vault mount, created first like `.vaultore/`; `vault.write` and `{{note:}}` refuse it as they refuse the config folders. A vault inside that folder is refused (#306) |
 
 On Apple `container` each container is its own micro-VM, which is the isolation boundary for
 what the CLI cannot express (no `no-new-privileges`, no pids limit; checked against
@@ -414,6 +415,7 @@ workflow is granted `network`.
 | Vault corruption | `vaultWrite: deny` by default; read-only or no mount |
 | Rewriting the plugin or its settings | `.obsidian/` hidden from every cell (§4.1) |
 | Changing the CLI's settings from a cell | `.vaultore/` hidden from every cell, created before the run (§4.1) |
+| A cell approving notes or planting answers | VaultOre's own folder is outside the vault, and hidden from cells and refused for writes where a vault holds it (§4.1) |
 | Resource exhaustion | Memory, CPU and timeout limits; a process limit on Docker, Podman and Colima |
 | Privilege escalation in the container | Non-root user, no capabilities, `no-new-privileges` (not on Apple) |
 | A note changing after it was granted `ask` permissions | Decisions bound to the content (§5.3) |
@@ -429,7 +431,7 @@ workflow is granted `network`.
 | Threat | Notes |
 |--------|-------|
 | A note that declares `allow` | Applied without a prompt. Read a workflow before running it |
-| An approved scheduled note changing in the plugin | Its approval covers path and schedule, not the cells (§6.1, [#219](https://github.com/cronai-labs/vaultore/issues/219)) |
+| An approved scheduled note's cells changing in the plugin under the narrow binding | Narrow covers the path, schedule and permissions, not the cells, by the user's choice (§6.1); the default, strict, covers the content |
 | Two machines syncing one vault running a note at once | The run lock is per machine (ore-implementation, "One run per note") |
 | Container escape, kernel side channels | Containers share a kernel or VM; VaultOre relies on the engine |
 | Prompt injection, malicious AI responses | AI output is text that later cells may act on |

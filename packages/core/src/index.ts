@@ -271,6 +271,7 @@ export {
   acquireRunLock,
   runLockDirectory,
   userStateDirectory,
+  userStateRoot,
   runLockPath,
   RunLockHeldError,
 } from "./lock/run-lock";

@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowExecutor } from "./index";
 import type { ContainerExecOptions, PlatformAdapter } from "../types";
@@ -471,6 +474,94 @@ describe("the host enforces what vault.write may touch", () => {
 
 		expect(r.status).toBe("error");
 		expect(Object.keys(r.files).some((path) => path.includes("other"))).toBe(false);
+	});
+});
+
+// VaultOre's own folder (schedules.json, answers.json, the locks) holds what
+// decides an unattended run's permissions. A vault at the home folder holds
+// it, as .config/vaultore (#306).
+describe("VaultOre's own folder, where the vault holds it, is closed to cells (#306)", () => {
+	let home: string;
+	beforeEach(() => {
+		home = mkdtempSync(join(tmpdir(), "vaultore-home-vault-"));
+		return () => rmSync(home, { recursive: true, force: true });
+	});
+
+	async function runAtHome(state: (home: string) => string, read = "allow", write = "allow") {
+		const content = note(read, write);
+		const v = vault({ "wf.md": content });
+		const made: string[] = [];
+		Object.assign(v.platform, {
+			getVaultRoot: async () => home,
+			stateDirectory: state(home),
+			mkdirp: async (path: string) => {
+				made.push(path);
+			},
+		});
+		const workflow = await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content });
+		const output = workflow.outputs.get("c");
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[2];
+		return { ...v, made, status: output?.meta.status, value: output?.value, masked: opts?.maskedPaths ?? [] };
+	}
+
+	for (const path of [
+		".config/vaultore/schedules.json",
+		".config/vaultore/answers.json",
+		"./.config/vaultore/locks/x.lock",
+		".Config/VaultOre/schedules.json",
+		".config/vaultore",
+	]) {
+		it(`refuses vault.write to ${path}, and applies none of the cell's writes`, async () => {
+			container(() =>
+				stdout([
+					{ path: "fine.md", content: "x", base: null },
+					{ path, content: "{}", base: null },
+				])
+			);
+
+			const r = await runAtHome((home) => join(home, ".config", "vaultore"));
+
+			expect(r.status).toBe("error");
+			expect(String(r.value)).toMatch(/\.config\/vaultore\/ refused/);
+			expect(r.written).toEqual([]);
+		});
+	}
+
+	it("still applies a write beside it", async () => {
+		container(() => stdout([{ path: ".config/other/x.json", content: "x", base: null }]));
+
+		const r = await runAtHome((home) => join(home, ".config", "vaultore"));
+
+		expect(r.status).toBe("success");
+		expect(r.written).toEqual([".config/other/x.json"]);
+	});
+
+	it("masks it under the full vault mount, creating it first so a cell cannot", async () => {
+		container(() => stdout([]));
+
+		const r = await runAtHome((home) => join(home, ".config", "vaultore"));
+
+		expect(r.status).toBe("success");
+		expect(r.masked).toEqual(["/workspace/.vaultore", "/workspace/.config/vaultore"]);
+		expect(r.made).toContain(".config/vaultore");
+	});
+
+	it("masks nothing more for a vault that does not hold it", async () => {
+		container(() => stdout([]));
+
+		const r = await runAtHome(() => join(tmpdir(), "elsewhere", "vaultore"));
+
+		expect(r.masked).toEqual(["/workspace/.vaultore"]);
+	});
+
+	it("refuses to run a cell in a vault that lies inside it", async () => {
+		container(() => stdout([]));
+
+		const r = await runAtHome((home) => home, "allow", "allow");
+
+		expect(r.status).toBe("error");
+		expect(String(r.value)).toMatch(/lies inside VaultOre's own folder/);
+		expect(vi.mocked(execContainer)).not.toHaveBeenCalled();
 	});
 });
 

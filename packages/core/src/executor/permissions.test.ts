@@ -699,6 +699,24 @@ describe("a custom config folder is hidden from cells too (Vault#configDir)", ()
 	});
 });
 
+describe("{{note:}} does not reach VaultOre's own folder where the vault holds it (#306)", () => {
+	for (const path of [".config/vaultore/answers.json", ".CONFIG/vaultore/schedules.json"]) {
+		it(`refuses {{note:${path}}} and sends nothing`, async () => {
+			const content = note("  network: allow\n  vaultRead: allow", `\`\`\`ore:ai id=summary\nSummarise: {{note:${path}}}\n\`\`\``);
+			const v = vault({ "wf.md": content, [path]: "{}" }, {}, {}, ".obsidian", realVault);
+			Object.assign(v.platform, { stateDirectory: join(realVault, ".config", "vaultore") });
+
+			const workflow = await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content });
+
+			const output = workflow.outputs.get("summary");
+			expect(output?.meta.status).toBe("error");
+			expect(String(output?.value)).toMatch(/hidden from cells/);
+			expect(v.reads).not.toContain(path);
+			expect(requests).toEqual([]);
+		});
+	}
+});
+
 // A timed-out cell used to read "exit 1", like any failed command (#113).
 describe("cell timeouts (#113)", () => {
 	for (const type of ["ts", "shell"] as const) {
