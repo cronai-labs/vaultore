@@ -150,7 +150,8 @@ describe("openApprovalStore, moving the approvals beside the rest (#277)", () =>
 		const store = await open();
 
 		expect(await store.forVault(VAULT)).toEqual({});
-		expect(existsSync(join(newDir, "approvals.json"))).toBe(false);
+		// Not even the folder, nor a lock in it: a command that only reads changes nothing.
+		expect(existsSync(newDir)).toBe(false);
 		expect(imported).toEqual([]);
 	});
 

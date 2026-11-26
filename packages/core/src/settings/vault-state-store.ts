@@ -139,6 +139,10 @@ export class VaultStateStore<V> {
 	 * whether anything was copied.
 	 */
 	async importOnce(from: VaultStateStore<V>): Promise<boolean> {
+		// Checked first without the lock, so that a command that only reads,
+		// once the move is done or when there is nothing to move, creates no
+		// folder and takes no lock; decided again under it.
+		if ((await exists(this.file)) || !(await exists(from.file))) return false;
 		await fs.mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
 		const release = await this.lock();
 		try {
