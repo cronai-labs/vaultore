@@ -1,4 +1,7 @@
+import { join } from "node:path";
 import { userStateDirectory } from "../lock/run-lock";
+import { readMachineSettings } from "./machine-settings";
+import type { MachineSettingsOptions } from "./machine-settings";
 import { VaultStateStore, isRecord } from "./vault-state-store";
 import type { VaultStateStoreOps } from "./vault-state-store";
 
@@ -116,4 +119,31 @@ export async function forgetAnswers(
 		else delete entry.notes[notePath];
 	});
 	return removed;
+}
+
+/** The runner that keeps answers of its own when they are not shared. */
+export type AnswersRunner = "obsidian" | "cli";
+
+export interface AnswersStoreForOptions extends AnswersStoreOptions {
+	/** Where `settings.json` is read from. Tests pass their own. */
+	settings?: MachineSettingsOptions;
+	/** The folder of the answers files. Default: VaultOre's folder. Tests pass their own. */
+	directory?: string;
+}
+
+/**
+ * The answers store `runner` uses now (#331): `answers.json`, shared by both
+ * runners, unless `settings.json` says `shareAnswers: false`; then the
+ * runner's own, `answers-<runner>.json`. Read at each call, so a run follows
+ * a change made meanwhile. A settings file that cannot be used is an error
+ * naming it: a run that asks fails rather than guess which answers apply.
+ * Switching copies nothing: a runner that stops sharing asks again. An
+ * explicit `path` wins, for tests.
+ */
+export async function answersStoreFor(runner: AnswersRunner, options: AnswersStoreForOptions = {}): Promise<VaultStateStore<VaultAnswers>> {
+	const { settings, directory, path, ...ops } = options;
+	if (path !== undefined) return answersStore({ path, ...ops });
+	const share = (await readMachineSettings(settings)).shareAnswers !== false;
+	const file = share ? ANSWERS_FILE : `answers-${runner}.json`;
+	return answersStore({ path: directory !== undefined ? join(directory, file) : userStateDirectory(file, "permission answers"), ...ops });
 }

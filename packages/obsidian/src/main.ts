@@ -27,7 +27,7 @@ import {
   dismissMissedSlots,
   isLateSlot,
   lateAfterMs,
-  answersStore,
+  answersStoreFor,
   forgetAnswers,
   readMachineSettings,
   writeMachineSettings,
@@ -316,7 +316,7 @@ class ObsidianAdapter implements PlatformAdapter {
    * shared with vaultore (#299). A change waits a moment for vaultore's.
    */
   permissionAnswers() {
-    return answersStore({ wait: { timers: this.plugin.timers, ms: SHORT_LOCK_WAIT_MS } });
+    return answersStoreFor("obsidian", { wait: { timers: this.plugin.timers, ms: SHORT_LOCK_WAIT_MS } });
   }
 
   getSetting<T>(key: string): T | undefined {
@@ -1051,6 +1051,9 @@ export default class VaultOrePlugin extends Plugin {
   // How late a scheduled run may start, in minutes; undefined is the default.
   // This machine's, shared with vaultore agent: not in data.json (#269).
   lateAfterMinutes: number | undefined;
+  // Whether Obsidian and vaultore share the answers given for runs started
+  // by hand; this machine's, as above (#331). Each run reads it anew.
+  shareAnswers = true;
   private machineSettingsError = "";
 
   /**
@@ -1063,6 +1066,7 @@ export default class VaultOrePlugin extends Plugin {
       this.machineSettingsError = "";
       this.lateAfterMinutes = settings.lateAfterMinutes;
       this.scheduler.lateAfterMs = lateAfterMs(this.lateAfterMinutes);
+      this.shareAnswers = settings.shareAnswers !== false;
     } catch (err) {
       const message = errorMessage(err);
       if (message !== this.machineSettingsError) {
@@ -1071,6 +1075,12 @@ export default class VaultOrePlugin extends Plugin {
       }
       this.machineSettingsError = message;
     }
+  }
+
+  /** Shares the answers with vaultore, or keeps Obsidian's own (#331); on is the default. */
+  async setShareAnswers(share: boolean): Promise<void> {
+    const settings = await writeMachineSettings({ shareAnswers: share ? undefined : false }, { wait: this.shortWait });
+    this.shareAnswers = settings.shareAnswers !== false;
   }
 
   /** Sets the late threshold for this machine; undefined goes back to the default. */
@@ -1527,7 +1537,7 @@ export default class VaultOrePlugin extends Plugin {
   async forgetPermissionAnswers(path: string): Promise<void> {
     try {
       const removed = await forgetAnswers(
-        this.adapter.permissionAnswers(),
+        await this.adapter.permissionAnswers(),
         await vaultKeyFor(await this.adapter.getVaultRoot()),
         path
       );
@@ -1776,6 +1786,14 @@ class VaultOreSettingsTab extends PluginSettingTab {
             desc: "Where run outputs are stored. Use a visible folder (e.g. _vaultore) to make links clickable.",
             control: { type: "text", key: "outputRoot", placeholder: "_vaultore" },
           },
+          {
+            name: "Share permission answers with vaultore",
+            desc:
+              "On: an answer you give to a note's permission request, in Obsidian or with vaultore run, counts in both. " +
+              "Off: each keeps its own and asks for itself. For your account on this computer, the same setting as " +
+              "vaultore permissions share. Switching copies nothing, so the side that stops sharing asks again.",
+            control: { type: "toggle", key: "shareAnswers" },
+          },
         ],
       },
       {
@@ -1804,6 +1822,7 @@ class VaultOreSettingsTab extends PluginSettingTab {
       return value === undefined ? "" : String(value);
     }
     if (key === "runScheduledWorkflows") return this.plugin.schedules.obsidianScheduling;
+    if (key === "shareAnswers") return this.plugin.shareAnswers;
     if (key === "obsidianBinding") return this.plugin.schedules.obsidianBinding;
     return (this.plugin.settings as unknown as Record<string, unknown>)[key];
   }
@@ -1811,6 +1830,9 @@ class VaultOreSettingsTab extends PluginSettingTab {
   async setControlValue(key: string, value: unknown): Promise<void> {
     const { settings } = this.plugin;
     switch (key) {
+      case "shareAnswers":
+        await this.plugin.setShareAnswers(value === true);
+        return;
       case "runScheduledWorkflows":
         await this.plugin.setRunScheduledWorkflows(value === true);
         // The note rows describe whether and when they run.

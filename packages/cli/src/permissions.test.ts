@@ -48,3 +48,17 @@ describe("forgetNoteAnswers", () => {
 		);
 	});
 });
+
+describe("shareAnswersSetting (#331)", () => {
+	it("shows the default, turns sharing off and on again, and refuses anything else", async () => {
+		const { shareAnswersSetting } = await import("./permissions");
+		const path = join(dir, "settings.json");
+
+		expect(await shareAnswersSetting(undefined, path)).toBe("permission answers are shared by Obsidian and vaultore (the default)");
+		expect(await shareAnswersSetting("off", path)).toBe(
+			`permission answers are not shared: Obsidian and vaultore each keep their own (set in ${path})`
+		);
+		expect(await shareAnswersSetting("on", path)).toBe("permission answers are shared by Obsidian and vaultore (the default)");
+		await expect(shareAnswersSetting("yes", path)).rejects.toThrow("permissions share takes on or off, got 'yes'");
+	});
+});

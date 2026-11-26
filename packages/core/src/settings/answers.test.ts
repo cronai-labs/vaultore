@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { answersPath, answersStore, forgetAnswers } from "./answers";
+import { answersPath, answersStore, answersStoreFor, forgetAnswers } from "./answers";
 
 /** The answers for runs started by hand, one file per account on a computer (#299). */
 
@@ -86,5 +86,40 @@ describe("forgetting answers (#322)", () => {
 		write({ "/v": { notes: { "a.md": { workflowHash: "h" } } } });
 
 		await expect(forgetAnswers(answersStore({ path }), "/v", "a.md")).rejects.toThrow(path);
+	});
+});
+
+describe("sharing answers is the account's choice (#331)", () => {
+	const settingsAt = (content?: unknown) => {
+		mkdirSync(join(dir, "vaultore"), { recursive: true });
+		const settings = join(dir, "vaultore", "settings.json");
+		if (content !== undefined) writeFileSync(settings, JSON.stringify(content));
+		return { settings: { path: settings }, directory: join(dir, "vaultore") };
+	};
+
+	it("shares one file by default", async () => {
+		const options = settingsAt();
+		expect((await answersStoreFor("obsidian", options)).file).toBe(join(dir, "vaultore", "answers.json"));
+		expect((await answersStoreFor("cli", options)).file).toBe(join(dir, "vaultore", "answers.json"));
+	});
+
+	it("gives each runner its own file when not shared", async () => {
+		const options = settingsAt({ shareAnswers: false });
+		expect((await answersStoreFor("obsidian", options)).file).toBe(join(dir, "vaultore", "answers-obsidian.json"));
+		expect((await answersStoreFor("cli", options)).file).toBe(join(dir, "vaultore", "answers-cli.json"));
+	});
+
+	it("refuses a setting that is no yes or no, naming the file, rather than guess", async () => {
+		const options = settingsAt({ shareAnswers: "no" });
+		await expect(answersStoreFor("cli", options)).rejects.toThrow(/settings\.json: shareAnswers must be true or false/);
+	});
+
+	it("an answer given in one runner is not used by the other when not shared", async () => {
+		const options = settingsAt({ shareAnswers: false });
+		await (await answersStoreFor("obsidian", options)).update("/v", (entry) => {
+			entry.notes["a.md"] = { workflowHash: "h", grantedAt: "t", network: "deny" };
+		});
+
+		expect((await (await answersStoreFor("cli", options)).forVault("/v")).notes).toEqual({});
 	});
 });

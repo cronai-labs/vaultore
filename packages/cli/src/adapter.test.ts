@@ -119,7 +119,7 @@ describe("NodeAdapter.permissionAnswers", () => {
 		const path = join(base, "state", "answers.json");
 		const adapter = new NodeAdapter({ vaultRoot: join(base, "vault"), quiet: true, answers: { path } });
 
-		await adapter.permissionAnswers().update("/v", (entry) => {
+		await (await adapter.permissionAnswers()).update("/v", (entry) => {
 			entry.notes["wf.md"] = { workflowHash: "h", grantedAt: "t", network: "allow" };
 		});
 

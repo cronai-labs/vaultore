@@ -598,11 +598,12 @@ export interface PlatformAdapter {
 
   /**
    * The answers this account gave on this computer to notes' `ask`
-   * permissions, for runs started by hand (#299): core's `answersStore()`,
-   * one file outside the vault both runners share. Read and written only for
+   * permissions, for runs started by hand (#299): core's `answersStoreFor()`,
+   * outside the vault, shared by both runners or each runner's own as the
+   * account chose (#331), found anew for each run. Read and written only for
    * a note with an `ask` permission. Tests pass a store in their own folder.
    */
-  permissionAnswers(): VaultStateStore<VaultAnswers>;
+  permissionAnswers(): VaultStateStore<VaultAnswers> | Promise<VaultStateStore<VaultAnswers>>;
 
   // Secrets
   getSecret(key: string): Promise<string | undefined>;

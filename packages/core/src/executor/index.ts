@@ -773,7 +773,7 @@ async function resolvePermissions(
     // The answers this account gave on this computer, kept outside the vault
     // and shared by both runners (#299). A file that cannot be used fails the
     // run, naming it: asking again would hide it, and storing would fail.
-    const store = platform.permissionAnswers();
+    const store = await platform.permissionAnswers();
     // The vault's real path, so that a vault opened through a symbolic link
     // is the same vault, as for the run locks and the approvals.
     const vault = await vaultKeyFor(await platform.getVaultRoot());

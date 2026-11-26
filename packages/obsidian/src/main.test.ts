@@ -25,6 +25,9 @@ const machineSettings = vi.hoisted(() => {
     legacyApprovals: join(dir, "approvals.json"),
     agents: join(dir, "agents"),
     answers: join(dir, "answers.json"),
+    // When answers are not shared (#331).
+    ownAnswers: join(dir, "answers-obsidian.json"),
+    dir,
   };
 });
 vi.mock("@vaultore/core", async () => {
@@ -47,6 +50,8 @@ vi.mock("@vaultore/core", async () => {
     readMachineSettings: () => actual.readMachineSettings({ path: machineSettings.path }),
     // The permission answers of runs started by hand (#299), likewise.
     forgetAnswers: actual.forgetAnswers,
+    answersStoreFor: (runner: import("@vaultore/core").AnswersRunner, options: import("@vaultore/core").AnswersStoreForOptions = {}) =>
+      actual.answersStoreFor(runner, { ...options, settings: { path: machineSettings.path }, directory: machineSettings.dir }),
     answersStore: (options: import("@vaultore/core").AnswersStoreOptions) =>
       actual.answersStore({ ...options, path: machineSettings.answers }),
     // The scheduling consent, likewise in the test's own file (#276); the
@@ -115,6 +120,7 @@ describe("VaultOrePlugin", () => {
     rmSync(machineSettings.schedules, { force: true });
     rmSync(`${machineSettings.schedules}.imports.json`, { force: true });
     rmSync(machineSettings.answers, { force: true });
+    rmSync(machineSettings.ownAnswers, { force: true });
     vi.useFakeTimers();
     // Core's timers come from window; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
@@ -314,7 +320,7 @@ describe("VaultOrePlugin", () => {
       const legacy = { "wf.md": { network: "allow", workflowHash: "x" } };
       plugin.settings.permissionDecisions = legacy;
 
-      await adapter.permissionAnswers().update("/v", (entry) => {
+      await (await adapter.permissionAnswers()).update("/v", (entry) => {
         entry.notes["wf.md"] = { workflowHash: "h", grantedAt: "t", network: "allow" };
       });
       await plugin.saveSettings();
@@ -1078,6 +1084,7 @@ describe("scheduled workflows", () => {
     rmSync(machineSettings.schedules, { force: true });
     rmSync(`${machineSettings.schedules}.imports.json`, { force: true });
     rmSync(machineSettings.answers, { force: true });
+    rmSync(machineSettings.ownAnswers, { force: true });
     vi.useFakeTimers();
     // The plugin debounces with window.setTimeout; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
@@ -1543,7 +1550,7 @@ describe("scheduled workflows", () => {
     const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
     // The mock keys a vault by its root as given.
     const key = await adapter.getVaultRoot();
-    await adapter.permissionAnswers().update(key, (entry) => {
+    await (await adapter.permissionAnswers()).update(key, (entry) => {
       entry.notes["wf.md"] = { workflowHash: "h", grantedAt: "t", network: "deny" };
     });
     Notice.shown.length = 0;
@@ -1551,11 +1558,25 @@ describe("scheduled workflows", () => {
     await plugin.forgetPermissionAnswers("wf.md");
     await plugin.forgetPermissionAnswers("wf.md");
 
-    expect((await adapter.permissionAnswers().forVault(key)).notes).toEqual({});
+    expect((await (await adapter.permissionAnswers()).forVault(key)).notes).toEqual({});
     expect(Notice.shown).toEqual([
       "VaultOre: forgot the answers to network for wf.md; its next run asks again",
       "VaultOre: no permission answers kept for wf.md on this computer",
     ]);
+  });
+
+  // #331: sharing answers with vaultore is the account's choice.
+  it("keeps Obsidian's answers its own when sharing is off, and shares them again when on", async () => {
+    const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
+    expect(row("Share permission answers with vaultore")).toBeDefined();
+    await toggle("Share permission answers with vaultore", false);
+    expect(JSON.parse(readFileSync(machineSettings.path, "utf8")).shareAnswers).toBe(false);
+
+    expect((await adapter.permissionAnswers()).file).toBe(machineSettings.ownAnswers);
+
+    await toggle("Share permission answers with vaultore", true);
+    expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).not.toHaveProperty("shareAnswers");
+    expect((await adapter.permissionAnswers()).file).toBe(machineSettings.answers);
   });
 
   // #307: a revoke written while the file is unreadable must not be missed.

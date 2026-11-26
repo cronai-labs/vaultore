@@ -215,8 +215,8 @@ export type {
   SchedulesStoreOptions,
   VaultSchedules,
 } from "./settings/schedules";
-export { answersStore, answersPath, forgetAnswers, ANSWERS_FILE, ANSWER_PERMISSION_KEYS } from "./settings/answers";
-export type { AnswerPermissionKey, AnswersStoreOptions, StoredAnswers, VaultAnswers } from "./settings/answers";
+export { answersStore, answersStoreFor, answersPath, forgetAnswers, ANSWERS_FILE, ANSWER_PERMISSION_KEYS } from "./settings/answers";
+export type { AnswerPermissionKey, AnswersRunner, AnswersStoreForOptions, AnswersStoreOptions, StoredAnswers, VaultAnswers } from "./settings/answers";
 
 export type {
   ClaimSlotOptions,
