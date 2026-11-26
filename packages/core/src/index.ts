@@ -212,10 +212,8 @@ export type {
   SchedulesStoreOptions,
   VaultSchedules,
 } from "./settings/schedules";
-export { readDecisionDevice, deviceFilePath } from "./settings/device";
-export type { DecisionDevice, DecisionDeviceOptions } from "./settings/device";
-export { readRunnerDecisions, pluginSettingsPath, cliConfigPath, PLUGIN_ID } from "./settings/runner-decisions";
-export type { RunnerDecisions } from "./settings/runner-decisions";
+export { answersStore, answersPath, ANSWERS_FILE } from "./settings/answers";
+export type { AnswersStoreOptions, StoredAnswers, VaultAnswers } from "./settings/answers";
 
 export type {
   ClaimSlotOptions,

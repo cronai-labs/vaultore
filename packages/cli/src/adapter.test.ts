@@ -112,22 +112,19 @@ describe("NodeAdapter config.json", () => {
 	});
 });
 
-// The plugin's answers on this device count for the CLI too (#299).
-describe("NodeAdapter.otherRunnerDecisions", () => {
-	it("reads the plugin's answers under the configured config folder", async () => {
-		const vault = join(base, "vault");
-		const file = join(vault, ".config-desk/plugins/vaultore/data.json");
-		mkdirSync(join(vault, ".config-desk/plugins/vaultore"), { recursive: true });
-		writeFileSync(file, JSON.stringify({ outputRoot: "_x", deviceDecisions: { "wf.md": { a: {} } } }));
+// The answers for runs started by hand are the account's, shared with the
+// plugin, outside the vault (#299).
+describe("NodeAdapter.permissionAnswers", () => {
+	it("keeps them in the file it is given, and nothing in the vault", async () => {
+		const path = join(base, "state", "answers.json");
+		const adapter = new NodeAdapter({ vaultRoot: join(base, "vault"), quiet: true, answers: { path } });
 
-		const adapter = new NodeAdapter({ vaultRoot: vault, configDir: ".config-desk", quiet: true });
+		await adapter.permissionAnswers().update("/v", (entry) => {
+			entry.notes["wf.md"] = { workflowHash: "h", grantedAt: "t", network: "allow" };
+		});
 
-		expect(await adapter.otherRunnerDecisions()).toEqual({ file, decisions: { "wf.md": { a: {} } } });
-	});
-
-	it("finds none where the plugin keeps no settings", async () => {
-		const adapter = new NodeAdapter({ vaultRoot: join(base, "vault"), quiet: true });
-		expect(await adapter.otherRunnerDecisions()).toBeUndefined();
+		expect(JSON.parse(readFileSync(path, "utf8")).vaults["/v"].notes["wf.md"].network).toBe("allow");
+		expect(() => readdirSync(join(base, "vault", ".vaultore"))).toThrow();
 	});
 });
 

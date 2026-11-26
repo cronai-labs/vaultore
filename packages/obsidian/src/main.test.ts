@@ -24,7 +24,7 @@ const machineSettings = vi.hoisted(() => {
     schedules: join(dir, "schedules.json"),
     legacyApprovals: join(dir, "approvals.json"),
     agents: join(dir, "agents"),
-    device: join(dir, "device.json"),
+    answers: join(dir, "answers.json"),
   };
 });
 vi.mock("@vaultore/core", async () => {
@@ -45,12 +45,9 @@ vi.mock("@vaultore/core", async () => {
     isLateSlot: actual.isLateSlot,
     lateAfterMs: actual.lateAfterMs,
     readMachineSettings: () => actual.readMachineSettings({ path: machineSettings.path }),
-    // The device a permission decision is bound to (#284), likewise.
-    readDecisionDevice: () =>
-      actual.readDecisionDevice({ devicePath: machineSettings.device, settingsPath: machineSettings.path }),
-    // The answers vaultore keeps (#299): read from the vault as given.
-    readRunnerDecisions: actual.readRunnerDecisions,
-    cliConfigPath: actual.cliConfigPath,
+    // The permission answers of runs started by hand (#299), likewise.
+    answersStore: (options: import("@vaultore/core").AnswersStoreOptions) =>
+      actual.answersStore({ ...options, path: machineSettings.answers }),
     // The scheduling consent, likewise in the test's own file (#276); the
     // vault key is the root as given, as the test vaults need not exist.
     openSchedules: (options: import("@vaultore/core").OpenSchedulesOptions) =>
@@ -112,7 +109,7 @@ describe("VaultOrePlugin", () => {
   beforeEach(async () => {
     rmSync(machineSettings.path, { force: true });
     rmSync(machineSettings.schedules, { force: true });
-    rmSync(machineSettings.device, { force: true });
+    rmSync(machineSettings.answers, { force: true });
     vi.useFakeTimers();
     // Core's timers come from window; tests run without a DOM.
     vi.stubGlobal("window", globalThis);
@@ -219,7 +216,7 @@ describe("VaultOrePlugin", () => {
     it("preserves all default fields on fresh load", () => {
       expect(plugin.settings.aiTemperature).toBeUndefined();
       expect(plugin.settings.aiMaxTokens).toBe(800);
-      expect(plugin.settings.permissionDecisions).toEqual({});
+      expect(plugin.settings.permissionDecisions).toBeUndefined();
     });
   });
 
@@ -303,57 +300,24 @@ describe("VaultOrePlugin", () => {
       expect(scheduler.lateAfterMs).toBe(2 * 60_000);
     });
 
-    // Answers given on other devices apply here only when this machine's
-    // file says so (#284), never data.json, which sync carries.
-    it("stores Permission answers from other devices in the machine's file, which the device reads", async () => {
-      const toggle = at(row("Permission answers from other devices").toggles);
-      expect(toggle.value).toBe(false);
-      const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
-
-      await toggle.changeHandler!(true);
-      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({ decisionsFromOtherDevices: true });
-      expect((await adapter.decisionDevice()).acceptOtherDevices).toBe(true);
-      expect((plugin.settings as unknown as Record<string, unknown>)["decisionsFromOtherDevices"]).toBeUndefined();
-
-      await toggle.changeHandler!(false);
-      expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({});
-      expect((await adapter.decisionDevice()).acceptOtherDevices).toBe(false);
-    });
-
-    // vaultore's answers on this device count in Obsidian too (#299).
-    it("reads the answers vaultore keeps for this vault, from its config file", async () => {
-      const root = mkdtempSync(join(tmpdir(), "vaultore-obsidian-answers-"));
-      try {
-        const files = new FileSystemAdapter();
-        vi.spyOn(files, "getBasePath").mockReturnValue(root);
-        plugin.app.vault.adapter = files as never;
-        const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
-        expect(await adapter.otherRunnerDecisions()).toBeUndefined();
-
-        mkdirSync(join(root, ".vaultore"));
-        writeFileSync(join(root, ".vaultore", "config.json"), JSON.stringify({ deviceDecisions: { "wf.md": { a: {} } } }));
-
-        expect(await adapter.otherRunnerDecisions()).toEqual({
-          file: join(root, ".vaultore", "config.json"),
-          decisions: { "wf.md": { a: {} } },
-        });
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    });
-
-    it("keeps the device's decisions in data.json beside the earlier ones, which it writes back unchanged", async () => {
+    // Answers for runs started by hand are the account's on this computer,
+    // outside the vault and shared with vaultore (#299); data.json, which sync
+    // carries, holds none, and the answers of earlier versions are kept as found.
+    it("keeps permission answers in the account's file, shared with vaultore, and none in data.json", async () => {
       const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
       const legacy = { "wf.md": { network: "allow", workflowHash: "x" } };
       plugin.settings.permissionDecisions = legacy;
 
-      await adapter.setSetting("vaultore.deviceDecisions", { "wf.md": { a: { network: "allow" } } });
+      await adapter.permissionAnswers().update("/v", (entry) => {
+        entry.notes["wf.md"] = { workflowHash: "h", grantedAt: "t", network: "allow" };
+      });
       await plugin.saveSettings();
 
+      expect(JSON.parse(readFileSync(machineSettings.answers, "utf8")).vaults["/v"].notes["wf.md"].network).toBe("allow");
       const saved = vi.mocked(plugin.saveData).mock.lastCall?.[0] as Record<string, unknown>;
-      expect(saved["deviceDecisions"]).toEqual({ "wf.md": { a: { network: "allow" } } });
       expect(saved["permissionDecisions"]).toEqual(legacy);
-      expect(adapter.getSetting("vaultore.deviceDecisions")).toEqual({ "wf.md": { a: { network: "allow" } } });
+      expect(saved).not.toHaveProperty("deviceDecisions");
+      expect(renderSettings().map((setting) => setting.name)).not.toContain("Permission answers from other devices");
     });
 
     // vaultore schedules late-after changed it: Obsidian follows within a minute.
@@ -1086,7 +1050,7 @@ describe("scheduled workflows", () => {
   beforeEach(async () => {
     rmSync(machineSettings.path, { force: true });
     rmSync(machineSettings.schedules, { force: true });
-    rmSync(machineSettings.device, { force: true });
+    rmSync(machineSettings.answers, { force: true });
     vi.useFakeTimers();
     // The plugin debounces with window.setTimeout; tests run without a DOM.
     vi.stubGlobal("window", globalThis);

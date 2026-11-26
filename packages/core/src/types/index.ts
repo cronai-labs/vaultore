@@ -10,8 +10,8 @@
 import { z } from "zod";
 import type { RunLock } from "../lock/run-lock";
 import type { SlotClaim } from "../scheduler/slot-record";
-import type { DecisionDevice } from "../settings/device";
-import type { RunnerDecisions } from "../settings/runner-decisions";
+import type { VaultAnswers } from "../settings/answers";
+import type { VaultStateStore } from "../settings/vault-state-store";
 
 // =============================================================================
 // PERMISSION TYPES
@@ -589,20 +589,12 @@ export interface PlatformAdapter {
   setSetting<T>(key: string, value: T): Promise<void>;
 
   /**
-   * This account's device on this computer, which a stored permission
-   * decision is bound to (#284). Read only for a note with an `ask`
-   * permission. Both runners return core's `readDecisionDevice()`.
+   * The answers this account gave on this computer to notes' `ask`
+   * permissions, for runs started by hand (#299): core's `answersStore()`,
+   * one file outside the vault both runners share. Read and written only for
+   * a note with an `ask` permission. Tests pass a store in their own folder.
    */
-  decisionDevice(): Promise<DecisionDevice>;
-
-  /**
-   * The permission answers the other runner on this computer keeps for this
-   * vault (#299): the plugin reads the CLI's `.vaultore/config.json`, the CLI
-   * the plugin's `data.json`, with core's `readRunnerDecisions()`. Read at
-   * the moment of asking, only for a note with an `ask` permission. Undefined
-   * when there are none; a file that cannot be read throws, naming it.
-   */
-  otherRunnerDecisions(): Promise<RunnerDecisions | undefined>;
+  permissionAnswers(): VaultStateStore<VaultAnswers>;
 
   // Secrets
   getSecret(key: string): Promise<string | undefined>;

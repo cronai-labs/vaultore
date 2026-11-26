@@ -206,7 +206,7 @@ paths share the approvals, the record and the locks. Running once beyond one acc
 
 What sync carries depends on your sync. iCloud, Nextcloud, Syncthing and Obsidian Sync with
 plugin settings on carry `.obsidian/plugins/vaultore/data.json`, which holds the plugin's other
-settings and its permission decisions. A permission decision applies only on the account and computer that made it, so a note that arrives through sync asks again on each computer; **Permission answers from other devices** in the plugin, or `vaultore permissions other-devices apply`, lets answers from elsewhere apply too: where they disagree a deny wins, and an answer taken over is kept as this computer's own, so turning the setting off does not withdraw it. Run records and the result callouts
+settings. Your answers to a note's permission requests are kept for your account on each computer, outside the vault, so a note that arrives through sync asks again on each computer; carrying answers between computers you trust is planned ([#305](https://github.com/cronai-labs/vaultore/issues/305)). Run records and the result callouts
 in notes travel with the vault, so two computers write into the same notes.
 
 **Let one computer schedule:** approve the note there only, in Obsidian or for the agent.
@@ -293,19 +293,17 @@ vaultore schedules log [<workflow.md>] [--vault <dir>]
 vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--quiet]
 vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
 vaultore schedules late-after [<minutes> | default]
-vaultore permissions other-devices [apply | ask]
 vaultore --version | --help
 ```
 
 - Settings come from `<vault>/.vaultore/config.json` (read again when it changes, and changed under a lock, so commands running at once, an agent and a `vaultore run`, keep each other's changes; one that is not JSON is refused, not replaced): `defaultProvider`, `defaultModel`,
-  `aiTemperature`, `aiMaxTokens`, `aiTimeoutSeconds`, `runtimeEngine`, `outputRoot`, and the
-  stored `deviceDecisions`. API keys come from the environment
+  `aiTemperature`, `aiMaxTokens`, `aiTimeoutSeconds`, `runtimeEngine`, `outputRoot`. API keys come from the environment
   (`VAULTORE_OPENAI_APIKEY` or `OPENAI_API_KEY`, `VAULTORE_ANTHROPIC_APIKEY` or
   `ANTHROPIC_API_KEY`).
 - `--config-dir <name>`: when Obsidian is set to use another config folder than `.obsidian`,
   name it, so that it is skipped when looking for workflows and hidden from cells.
 - In `vaultore run`, permissions at `ask` are denied for the run unless you pass `--yes`; `--yes` grants them, and
-  that answer is stored in the config file, for this account on this computer, until the note changes. A run without `--yes` stores nothing. `vaultore permissions other-devices apply` lets decisions made on another computer apply here. Answers given in Obsidian on this computer apply to `vaultore run` too, and the other way round; where the two disagree, a deny wins.
+  that answer is kept for this account on this computer, until the note changes, in `~/.config/vaultore/answers.json`, which Obsidian uses too: an answer given in either applies in both. A run without `--yes` stores nothing.
 - `vaultore agent` is a scheduler daemon. **It runs a scheduled note only after
   `vaultore schedules approve <note.md>`**, or **By the agent** in Obsidian's settings, and only while the note's frontmatter and cells are
   what you approved: an edit to either, including one that arrives through sync, stops it until
@@ -328,16 +326,16 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | Where | What | Written by |
 |---|---|---|
 | **In the vault** | | |
-| `.obsidian/plugins/vaultore/` | The plugin; `data.json` holds its settings and permission decisions, which the CLI on the same computer applies too | Obsidian, the plugin |
+| `.obsidian/plugins/vaultore/` | The plugin; `data.json` holds its settings | Obsidian, the plugin |
 | `_vaultore/` (the output folder setting) | `runs/<workflow>/<run id>/`: each run's record, each cell's JSON and Markdown; `runs/<workflow>/index.json` | both runners |
 | Your workflow notes | The `ore-output` callout under each cell that ran | both runners |
 | Wherever a workflow writes | What its cells write with `vault.write` or into the mounted vault | your workflows |
-| `.vaultore/` | Created by every run that may read the vault, so a cell cannot plant it; `config.json` holds the CLI's settings and permission decisions, which the plugin on the same computer applies too | both runners |
+| `.vaultore/` | Created by every run that may read the vault, so a cell cannot plant it; `config.json` holds the CLI's settings | both runners |
 | **Outside the vault**, per account (`~/.config/vaultore/`; `%APPDATA%\vaultore\` on Windows) | | |
 | `locks/` | One lock file per running note, removed when the run ends | both runners |
 | `slots/` | What each scheduled occurrence came to, and missed runs; 30 days at most | both runners |
-| `settings.json` | "Late after" and "Permission answers from other devices", for your account on this computer | both runners |
-| `device.json` | This account's device: what a permission decision is bound to (a random id and key) | both runners |
+| `settings.json` | "Late after", for your account on this computer | both runners |
+| `answers.json` and `.lock` | Your answers to notes' permission requests, for runs you start, per vault and note, with the content they were given for | both runners |
 | `schedules.json` and `.lock` | **Run scheduled workflows**, and each approved note with who runs it, per vault | both runners |
 | `agents/` | One lock per vault while `vaultore agent` runs it, which Obsidian reads to say whether it does | the agent |
 | **Elsewhere** | | |
@@ -359,7 +357,7 @@ The CLI built from source is updated with `git pull`, `bun install` and `bun run
 ## Uninstalling
 
 **Uninstall** in **Settings → Community plugins** removes `.obsidian/plugins/vaultore/` with
-the plugin's settings; disabling it only stops it. Its scheduling approvals are in
+the plugin's settings; disabling it only stops it. Its scheduling approvals and your permission answers are in
 `~/.config/vaultore/` (step 4). What stays, to remove by hand
 if you want it gone:
 
@@ -367,7 +365,7 @@ if you want it gone:
    you need them.
 2. **The result callouts** in your workflow notes: they are part of the notes. Delete them in
    the notes, or keep them.
-3. **`.vaultore/`** in each vault. Its `config.json` also holds permission answers the plugin applies; removed, the plugin asks again.
+3. **`.vaultore/`** in each vault: the CLI's settings.
 4. **`~/.config/vaultore/`** (`%APPDATA%\vaultore\` on Windows): shared by the plugin and the
    CLI, so remove it once you use neither, after stopping `vaultore agent`. With
    `XDG_CONFIG_HOME` set, also an old `approvals.json` in `$XDG_CONFIG_HOME/vaultore` that VaultOre no longer reads.

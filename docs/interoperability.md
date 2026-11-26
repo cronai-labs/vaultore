@@ -32,7 +32,7 @@ Conventions that differ from the plugin, on purpose:
 |---------|--------|-----|
 | Settings | Obsidian settings UI | `<vault>/.vaultore/config.json` |
 | Secrets | Obsidian secret storage | Environment (`VAULTORE_OPENAI_APIKEY`, `OPENAI_API_KEY`, …) |
-| Permission prompts | Modal dialog | Non-interactive: denied for the run unless `--yes`, which is stored; decisions persist to config, bound to the note's content and this device, and shared with the plugin on this device |
+| Permission prompts | Modal dialog | Non-interactive: denied for the run unless `--yes`. Answers of both are kept in one file outside the vault (`~/.config/vaultore/answers.json`), for the account on this computer, bound to the note's content |
 | Scheduled runs and catch-ups | The permissions held by the note's approval, answered in the approval dialog; never the modal | The same, answered with `schedules approve --allow/--deny`; `vaultore agent --yes` was removed |
 | Scheduling | Only notes approved for Obsidian (path, and content or, by a setting, schedule and permissions), while Obsidian is open | `vaultore agent` runs only notes approved for it (path and content); one file outside the vault holds both runners' approvals, one per note |
 

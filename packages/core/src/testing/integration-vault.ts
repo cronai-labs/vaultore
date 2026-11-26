@@ -13,7 +13,7 @@ import { acquireRunLock } from "../lock/run-lock";
 import { execContainer } from "../runtime";
 import { resolveInVaultRoot } from "../vault/confine";
 import { nodeTimers } from "./timers";
-import { testDecisionDevice } from "./decision-device";
+import { answersStore } from "../settings/answers";
 import type { PlatformAdapter, PlatformRequest, PlatformResponse, RuntimeEngine } from "../types";
 
 /** The engine the integration tests run on. colima unless overridden. */
@@ -81,8 +81,8 @@ export function filesystemPlatform(
 				by: options.runner ?? "integration test",
 				directory: lockDirectory,
 			}),
-		decisionDevice: async () => testDecisionDevice(),
-		otherRunnerDecisions: async () => undefined,
+		// In the test's own folder, never the user's.
+		permissionAnswers: () => answersStore({ path: join(lockDirectory, "answers.json") }),
 		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
 			settings.set(key, value);

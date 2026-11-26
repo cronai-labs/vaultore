@@ -8,14 +8,14 @@
  * Conventions:
  * - Settings live in `<vault>/.vaultore/config.json` (flat keys mirroring
  *   the plugin's settings: defaultProvider, defaultModel, runtimeEngine,
- *   outputRoot, deviceDecisions, ...); the plugin reads `deviceDecisions`
- *   from it too, and this adapter the plugin's (#299)
+ *   outputRoot, ...)
  * - Secrets come from environment variables, never from files:
  *   `openai.apiKey`    → VAULTORE_OPENAI_APIKEY (fallback OPENAI_API_KEY)
  *   `anthropic.apiKey` → VAULTORE_ANTHROPIC_APIKEY (fallback ANTHROPIC_API_KEY)
  * - HTTP for AI providers goes through global fetch (`fetchRequest`).
  * - Permission prompts are non-interactive: grants require an explicit
- *   `--yes` (fail closed otherwise), and decisions persist to config.
+ *   `--yes` (fail closed otherwise). Answers are kept for the account on
+ *   this computer, outside the vault, in the file the plugin uses too (#299).
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -31,21 +31,16 @@ import {
 	claimSlot,
 	describeHolder,
 	errorMessage,
-	cliConfigPath,
-	pluginSettingsPath,
-	readDecisionDevice,
-	readRunnerDecisions,
+	answersStore,
 	resolveInVaultRoot,
 	runLockDirectory,
 } from "@vaultore/core";
 import type {
-	DecisionDevice,
-	DecisionDeviceOptions,
+	AnswersStoreOptions,
 	PlatformAdapter,
 	PlatformRequest,
 	PlatformResponse,
 	RunLock,
-	RunnerDecisions,
 	ScheduledSlot,
 	SlotClaim,
 	Timers,
@@ -94,8 +89,8 @@ export interface NodeAdapterOptions {
 	slotDirectory?: string;
 	/** How often claims prune the record, at most. Default: core's hour. Tests pass 0. */
 	slotPruneIntervalMs?: number;
-	/** Where the device file and the shared settings are. Default: core's. Tests pass their own. */
-	device?: DecisionDeviceOptions;
+	/** Where the permission answers are. Default: core's `answersPath()`. Tests pass their own. */
+	answers?: AnswersStoreOptions;
 }
 
 export class NodeAdapter implements PlatformAdapter {
@@ -116,7 +111,7 @@ export class NodeAdapter implements PlatformAdapter {
 	private readonly runLockDirectory: string | undefined;
 	private readonly keepDays: number | undefined;
 	private readonly slotDirectory: string | undefined;
-	private readonly deviceOptions: DecisionDeviceOptions;
+	private readonly answersOptions: AnswersStoreOptions;
 	private readonly slotPruneIntervalMs: number | undefined;
 	/** SKIP_DIRS plus the configured and the default config folder. */
 	private readonly skipDirs: ReadonlySet<string>;
@@ -133,7 +128,7 @@ export class NodeAdapter implements PlatformAdapter {
 		this.runLockDirectory = options.runLockDirectory;
 		this.keepDays = options.keepDays;
 		this.slotDirectory = options.slotDirectory;
-		this.deviceOptions = options.device ?? {};
+		this.answersOptions = options.answers ?? {};
 		this.slotPruneIntervalMs = options.slotPruneIntervalMs;
 		this.config = this.loadConfig();
 		this.configStamp = this.stampOf(this.configPath());
@@ -227,17 +222,9 @@ export class NodeAdapter implements PlatformAdapter {
 
 	// ── Settings ──────────────────────────────────────────────────────────
 
-	/** This account's device on this computer, shared with the plugin (#284). */
-	decisionDevice(): Promise<DecisionDevice> {
-		return readDecisionDevice(this.deviceOptions);
-	}
-
-	/**
-	 * The answers the plugin keeps for this vault on this device (#299), read
-	 * now: in its settings under the vault's config folder (--config-dir).
-	 */
-	otherRunnerDecisions(): Promise<RunnerDecisions | undefined> {
-		return readRunnerDecisions(pluginSettingsPath(this.vaultRoot, this.configDir));
+	/** The answers this account gave on this computer, shared with the plugin (#299). A change waits a moment for the plugin's. */
+	permissionAnswers() {
+		return answersStore({ wait: { timers: this.timers, ms: SHORT_LOCK_WAIT_MS }, ...this.answersOptions });
 	}
 
 	getSetting<T>(key: string): T | undefined {
@@ -368,7 +355,7 @@ export class NodeAdapter implements PlatformAdapter {
 	}
 
 	private configPath(): string {
-		return cliConfigPath(this.vaultRoot);
+		return join(this.vaultRoot, ".vaultore", "config.json");
 	}
 
 	/** `config.json` as it is, or nothing when there is none. Throws, naming it, for one that cannot be used. */

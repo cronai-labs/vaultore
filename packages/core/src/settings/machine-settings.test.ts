@@ -70,20 +70,21 @@ describe("machine settings", () => {
 		);
 	});
 
-	// Obsidian and a vaultore command changing different settings at once
-	// keep both (#291): the change is read and written under a lock.
-	it("changes the file under a lock, waiting for another change, and keeps both", async () => {
+	// Obsidian and a vaultore command changing the file at once keep each
+	// other's change (#291): it is read and written under a lock, and a key
+	// this version does not know, written by another, is kept.
+	it("changes the file under a lock, waiting for another change, and keeps what it does not know", async () => {
 		const timers = { setTimeout: (callback: () => void, ms: number) => nodeSetTimeout(callback, ms) };
 		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ laterSetting: "kept" }));
 		const release = await acquireLock(`${path}.lock`);
 		const waiting = writeMachineSettings({ lateAfterMinutes: 10 }, { path, wait: { timers, ms: 2000, stepMs: 20 } });
 		await new Promise((resolve) => nodeSetTimeout(resolve, 100));
-		expect(() => readFileSync(path)).toThrow();
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ laterSetting: "kept" });
 
 		await release();
 		await waiting;
-		await writeMachineSettings({ decisionsFromOtherDevices: true }, { path });
 
-		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ lateAfterMinutes: 10, decisionsFromOtherDevices: true });
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ laterSetting: "kept", lateAfterMinutes: 10 });
 	});
 });

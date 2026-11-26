@@ -339,7 +339,11 @@ describe("an unattended run's permissions (#299)", () => {
 	it("runs with the answer given at approval, asks nobody and stores nothing", async () => {
 		const confirm = vi.fn(async () => true);
 		const setSetting = vi.fn(async () => undefined);
-		const v = vault({ confirm, setSetting } as Partial<PlatformAdapter>);
+		// The answers kept for runs started by hand are neither read nor written.
+		const permissionAnswers = vi.fn(() => {
+			throw new Error("an unattended run read the answers kept for runs started by hand");
+		});
+		const v = vault({ confirm, setSetting, permissionAnswers } as Partial<PlatformAdapter>);
 		v.files[PATH] = ASKS;
 		const note = await scheduledNoteOf(new WorkflowParser().parse(ASKS, PATH));
 		const schedules: VaultSchedules = { obsidianScheduling: true, obsidianBinding: "strict", notes: Object.create(null) };
@@ -356,6 +360,7 @@ describe("an unattended run's permissions (#299)", () => {
 
 		expect(confirm).not.toHaveBeenCalled();
 		expect(setSetting).not.toHaveBeenCalled();
+		expect(permissionAnswers).not.toHaveBeenCalled();
 		const record = runJson(v.files);
 		expect(record["trigger"]).toEqual({ kind: "schedule", runner: "vaultore agent", slot: SLOT.toISOString(), owner: "agent", approvedAt: "2026-11-20T00:00:00.000Z" });
 		expect(record["permissions"]).toMatchObject({

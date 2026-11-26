@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,9 +20,7 @@ vi.mock("../runtime", () => ({
 
 import { execContainer } from "../runtime";
 import { memoryRunLocks } from "../testing/run-locks";
-import { testDecisionDevice } from "../testing/decision-device";
-import type { DecisionDevice } from "../settings/device";
-import type { RunnerDecisions } from "../settings/runner-decisions";
+import { answersStore } from "../settings/answers";
 
 const SECRET = "the contents of a private note";
 
@@ -52,17 +50,13 @@ function vault(
 ) {
 	const settings = new Map<string, unknown>();
 	const reads: string[] = [];
-	const devices = { current: testDecisionDevice(), reads: 0 };
-	// What the other runner on this computer keeps (#299): an Error is a file that cannot be read.
-	const otherRunner: { current: RunnerDecisions | Error | undefined } = { current: undefined };
+	// The answers file of the account on this computer (#299), in the test's
+	// own folder; every use of it counted.
+	const answers = { path: answersFile, uses: 0 };
 	const platform = {
-		decisionDevice: async (): Promise<DecisionDevice> => {
-			devices.reads += 1;
-			return devices.current;
-		},
-		otherRunnerDecisions: async () => {
-			if (otherRunner.current instanceof Error) throw otherRunner.current;
-			return otherRunner.current;
+		permissionAnswers: () => {
+			answers.uses += 1;
+			return answersStore({ path: answers.path });
 		},
 		platform: "cli",
 		configDir,
@@ -102,22 +96,27 @@ function vault(
 		},
 		log: () => undefined,
 	} as unknown as PlatformAdapter;
-	return { platform, files, reads, settings, devices, otherRunner };
+	return { platform, files, reads, settings, answers };
 }
 
 let requests: string[];
-// A vault root that exists: a decision is bound to the vault's real path (#284).
+// A vault root that exists: answers are kept under the vault's real path.
 let realVault: string;
+let stateDir: string;
+let answersFile: string;
 
 beforeEach(() => {
 	requests = [];
 	realVault = mkdtempSync(join(tmpdir(), "vaultore-permissions-vault-"));
+	stateDir = mkdtempSync(join(tmpdir(), "vaultore-permissions-state-"));
+	answersFile = join(stateDir, "vaultore", "answers.json");
 	vi.mocked(execContainer).mockReset();
 });
 
 afterEach(() => {
 	vi.unstubAllGlobals();
 	rmSync(realVault, { recursive: true, force: true });
+	rmSync(stateDir, { recursive: true, force: true });
 });
 
 async function run(
@@ -390,427 +389,164 @@ describe("grants are bound to the note's content (#69)", () => {
 	});
 });
 
-describe("decisions are bound to the device that made them (#284)", () => {
+describe("answers kept for this account on this computer, outside the vault (#299)", () => {
 	const GRANTED = note(
 		"  network: ask\n  buildNetwork: deny\n  vaultRead: allow",
 		"```ore:ai id=summary\nSay hello.\n```"
 	);
-	const HERE = "a".repeat(32);
-	const THERE = "b".repeat(32);
 
-	/** One vault and its settings, as sync shares them, run on whichever device is current. */
-	function shared(answer = true) {
+	/** A runner on this computer: the plugin and the CLI share the answers file, not their settings. Null: nobody can be asked. */
+	function runner(answer: boolean | null = true) {
 		const v = vault({ "Private/secret.md": SECRET }, {}, {}, ".obsidian", realVault);
 		const prompts: string[] = [];
 		(v.platform as { confirm?: unknown }).confirm = async (message: string) => {
 			prompts.push(message);
-			return answer;
+			return answer ?? undefined;
 		};
-		async function runOn(id: string, content = GRANTED, options: { acceptOtherDevices?: boolean } = {}) {
-			v.devices.current = testDecisionDevice(id, options);
+		async function runNote(content = GRANTED) {
 			v.files["wf.md"] = content;
 			const workflow = await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content });
 			return workflow.outputs.get("summary")?.meta.status;
 		}
-		const stored = () => v.settings.get("vaultore.deviceDecisions") as Record<string, Record<string, Record<string, unknown>>>;
-		return { ...v, prompts, runOn, stored };
+		return { ...v, prompts, runNote };
 	}
+	const file = () => JSON.parse(readFileSync(answersFile, "utf8")) as { format: string; version: number; vaults: Record<string, { notes: Record<string, Record<string, unknown>> }> };
+	// Kept under the vault's real path.
+	const kept = (note = "wf.md") => file().vaults[realpathSync(realVault)]?.notes[note];
 
-	it("keeps the answer for this device, with a MAC, and does not ask here again", async () => {
-		const s = shared();
-		await s.runOn(HERE);
-		await s.runOn(HERE);
+	it("keeps the answer in the account's file, per vault and note, with the content it was given for, and not in the runner's settings", async () => {
+		const r = runner();
+		expect(await r.runNote()).toBe("success");
 
-		expect(s.prompts).toHaveLength(1);
-		const entry = s.stored()["wf.md"]?.[HERE];
-		expect(entry).toMatchObject({ network: "allow", workflowHash: expect.any(String), grantedAt: expect.any(String) });
-		expect(entry?.["mac"]).toMatch(/^[0-9a-f]{64}$/);
+		expect(file().format).toBe("vaultore.permission-answers");
+		expect(kept()).toMatchObject({ network: "allow", workflowHash: expect.stringMatching(/^[0-9a-f]{64}$/), grantedAt: expect.any(String) });
+		expect(Object.keys(kept() ?? {}).sort()).toEqual(["grantedAt", "network", "workflowHash"]);
+		expect([...r.settings.keys()]).toEqual([]);
 	});
 
-	it("asks again on another device that has the same vault, and denies there when nobody can be asked", async () => {
-		const s = shared();
-		await s.runOn(HERE);
-		await s.runOn(THERE);
-		expect(s.prompts).toHaveLength(2);
+	it("is shared by the plugin and the CLI on this computer: an answer given in one is not asked in the other", async () => {
+		const plugin = runner();
+		await plugin.runNote();
+		const cli = runner(null);
 
-		delete (s.platform as { confirm?: unknown }).confirm;
-		const third = "c".repeat(32);
-		expect(await s.runOn(third)).toBe("error");
-		expect(requests).toHaveLength(2);
+		expect(await cli.runNote()).toBe("success");
+		expect(cli.prompts).toHaveLength(0);
 	});
 
-	it("keeps each device's answer, so two devices sharing a vault each ask once", async () => {
-		const s = shared();
-		for (const id of [HERE, THERE, HERE, THERE, HERE]) await s.runOn(id);
+	it("asks again in a vault whose answers file is another's: another account, or another computer", async () => {
+		await runner().runNote();
+		answersFile = join(stateDir, "other-account", "answers.json");
+		const elsewhere = runner(null);
 
-		expect(s.prompts).toHaveLength(2);
-		expect(Object.keys(s.stored()["wf.md"] ?? {}).sort()).toEqual([HERE, THERE]);
+		expect(await elsewhere.runNote()).toBe("error");
+		expect(requests).toHaveLength(1);
 	});
 
-	it.each([
-		["planted for this device without its key", (entry: Record<string, unknown>) => ({ ...entry, mac: "0".repeat(64) })],
-		["changed from deny to allow", (entry: Record<string, unknown>) => ({ ...entry, network: "allow" })],
-	])("asks again for an answer %s, and says why in the log", async (_what, tamper) => {
-		const s = shared(false);
-		const logs: string[] = [];
-		(s.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
-		await s.runOn(HERE);
-		const decisions = s.stored();
-		decisions["wf.md"]![HERE] = tamper(decisions["wf.md"]![HERE]!);
-		s.settings.set("vaultore.deviceDecisions", decisions);
-
-		await s.runOn(HERE);
-
-		expect(s.prompts).toHaveLength(2);
-		expect(logs).toContain("The stored permission decision for wf.md was not made here or was changed; asking again");
-	});
-
-	it("asks again for an answer copied to another note", async () => {
-		const s = shared();
-		await s.runOn(HERE);
-		const decisions = s.stored();
-		decisions["other.md"] = decisions["wf.md"]!;
-		s.settings.set("vaultore.deviceDecisions", decisions);
-		s.files["other.md"] = GRANTED;
-
-		await new WorkflowExecutor().runWorkflow({ platform: s.platform, workflowPath: "other.md", content: GRANTED });
-
-		expect(s.prompts).toHaveLength(2);
-	});
-
-	it.each([
-		["null", null],
-		["a string", "allow"],
-	])("asks again when this device's entry is %s, and does not fail the run", async (_what, value) => {
-		const s = shared();
-		await s.runOn(HERE);
-		const decisions = s.stored();
-		(decisions["wf.md"] as Record<string, unknown>)[HERE] = value;
-		s.settings.set("vaultore.deviceDecisions", decisions);
-
-		expect(await s.runOn(HERE)).toBe("success");
-		expect(s.prompts).toHaveLength(2);
-	});
-
-	it("asks again when the note's entry or the whole store is not a record", async () => {
-		const s = shared();
-		s.settings.set("vaultore.deviceDecisions", { "wf.md": "allow" });
-		expect(await s.runOn(HERE)).toBe("success");
-		s.settings.set("vaultore.deviceDecisions", ["allow"]);
-		expect(await s.runOn(HERE)).toBe("success");
-
-		expect(s.prompts).toHaveLength(2);
-		expect(Object.keys(s.stored()["wf.md"] ?? {})).toEqual([HERE]);
-	});
-
-	it("is the same decision for the vault opened through a symbolic link", async () => {
-		const s = shared();
-		await s.runOn(HERE);
+	it("is the same answer for the vault opened through a symbolic link", async () => {
+		const r = runner();
+		await r.runNote();
 		const link = `${realVault}-link`;
 		symlinkSync(realVault, link);
 		try {
-			(s.platform as { getVaultRoot: unknown }).getVaultRoot = async () => link;
-			await s.runOn(HERE);
+			(r.platform as { getVaultRoot: unknown }).getVaultRoot = async () => link;
+			await r.runNote();
 		} finally {
 			rmSync(link, { force: true });
 		}
 
-		expect(s.prompts).toHaveLength(1);
+		expect(r.prompts).toHaveLength(1);
 	});
 
-	it("stores a note named __proto__ as an entry like any other", async () => {
-		const s = shared();
-		Object.defineProperty(s.files, "__proto__", { value: GRANTED, enumerable: true, writable: true });
-		await new WorkflowExecutor().runWorkflow({ platform: s.platform, workflowPath: "__proto__", content: GRANTED });
+	it("keeps a note named __proto__ as an entry like any other", async () => {
+		const r = runner();
+		Object.defineProperty(r.files, "__proto__", { value: GRANTED, enumerable: true, writable: true });
+		await new WorkflowExecutor().runWorkflow({ platform: r.platform, workflowPath: "__proto__", content: GRANTED });
 
-		const entry = Object.getOwnPropertyDescriptor(s.stored(), "__proto__")?.value as Record<string, unknown> | undefined;
-		expect(Object.keys(entry ?? {})).toEqual([HERE]);
-		expect(HERE in {}).toBe(false);
-	});
-
-	it("says in the log why it asks again for content answered on another device", async () => {
-		const s = shared();
-		const logs: string[] = [];
-		(s.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
-		await s.runOn(THERE);
-		await s.runOn(HERE);
-
-		expect(logs.filter((line) => line.startsWith("An answer for wf.md given on another device"))).toHaveLength(1);
+		expect(Object.keys(file().vaults[realpathSync(realVault)]?.notes ?? {})).toEqual(["__proto__"]);
 	});
 
 	// The CLI without --yes asks nobody: the permission is denied for that run,
 	// and nothing is kept, so a later run with --yes is asked and can allow.
-	// Before, that deny was kept like an answer (#28), and after the upgrade an
-	// agent run without --yes would have locked a note that had been granted.
 	it("keeps no deny when nobody could be asked, so a later run that can ask allows", async () => {
-		const s = shared();
+		const r = runner(null);
 		const logs: string[] = [];
-		(s.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
-		(s.platform as { confirm?: unknown }).confirm = async () => undefined;
+		(r.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
 
-		expect(await s.runOn(HERE)).toBe("error");
-		expect(s.settings.has("vaultore.deviceDecisions")).toBe(false);
+		expect(await r.runNote()).toBe("error");
+		expect(() => readFileSync(answersFile)).toThrow();
 		expect(logs).toContain("network for wf.md is denied for this run: nobody could be asked, and nothing was kept");
 
-		(s.platform as { confirm?: unknown }).confirm = async () => true;
-		expect(await s.runOn(HERE)).toBe("success");
-		expect(s.stored()["wf.md"]?.[HERE]?.["network"]).toBe("allow");
+		(r.platform as { confirm?: unknown }).confirm = async () => true;
+		expect(await r.runNote()).toBe("success");
+		expect(kept()?.["network"]).toBe("allow");
 	});
 
 	it("keeps a deny a person gave", async () => {
-		const s = shared(false);
-		await s.runOn(HERE);
-		(s.platform as { confirm?: unknown }).confirm = async () => true;
+		const r = runner(false);
+		await r.runNote();
+		(r.platform as { confirm?: unknown }).confirm = async () => true;
 
-		expect(await s.runOn(HERE)).toBe("error");
-		expect(s.stored()["wf.md"]?.[HERE]?.["network"]).toBe("deny");
+		expect(await r.runNote()).toBe("error");
+		expect(kept()?.["network"]).toBe("deny");
 	});
 
-	it("neither reads the device nor stores anything for a note that asks nothing", async () => {
-		const s = shared();
-		await s.runOn(HERE, note("  network: deny\n  vaultRead: allow", "```ore:ai id=summary\nSay hello.\n```"));
+	it("replaces the answers for content that changed", async () => {
+		const r = runner();
+		await r.runNote();
+		const before = kept()?.["workflowHash"];
+		await r.runNote(GRANTED.replace("Say hello.", "Say hi."));
 
-		expect(s.devices.reads).toBe(0);
-		expect(s.settings.has("vaultore.deviceDecisions")).toBe(false);
+		expect(r.prompts).toHaveLength(2);
+		expect(kept()?.["workflowHash"]).not.toBe(before);
 	});
 
-	it("does not run a note that asks when the device cannot be read, and says why", async () => {
-		const s = shared();
-		(s.platform as { decisionDevice: unknown }).decisionDevice = async () => {
-			throw new Error("Cannot use VaultOre's device file /x/device.json: it is not JSON");
+	// The modal may stay open for minutes; the other runner may answer the
+	// same content meanwhile. The two are merged in the file's lock.
+	it("keeps the other runner's deny given while this one asked", async () => {
+		const r = runner();
+		(r.platform as { confirm?: unknown }).confirm = async () => {
+			const other = runner(false);
+			await other.runNote();
+			return true;
 		};
-		s.files["wf.md"] = GRANTED;
+
+		await r.runNote();
+
+		expect(kept()?.["network"]).toBe("deny");
+	});
+
+	it("neither reads nor writes the answers for a note that asks nothing", async () => {
+		const r = runner();
+		await r.runNote(note("  network: deny\n  vaultRead: allow", "```ore:ai id=summary\nSay hello.\n```"));
+
+		expect(r.answers.uses).toBe(0);
+		expect(() => readFileSync(answersFile)).toThrow();
+	});
+
+	it("does not run a note that asks when the answers file cannot be used, and names it", async () => {
+		const r = runner();
+		mkdirSync(join(stateDir, "vaultore"), { recursive: true });
+		writeFileSync(answersFile, "{not json");
+		r.files["wf.md"] = GRANTED;
 
 		await expect(
-			new WorkflowExecutor().runWorkflow({ platform: s.platform, workflowPath: "wf.md", content: GRANTED })
-		).rejects.toThrow("Cannot use VaultOre's device file");
+			new WorkflowExecutor().runWorkflow({ platform: r.platform, workflowPath: "wf.md", content: GRANTED })
+		).rejects.toThrow(answersFile);
 		expect(requests).toHaveLength(0);
-		expect(s.prompts).toHaveLength(0);
+		expect(r.prompts).toHaveLength(0);
 	});
 
-	it("never writes the decisions stored before #284, and keeps them for an older runner", async () => {
-		const s = shared();
-		const legacy = { "wf.md": { network: "deny", workflowHash: "x" } };
-		s.settings.set("vaultore.permissionDecisions", legacy);
-		await s.runOn(HERE);
-
-		expect(s.settings.get("vaultore.permissionDecisions")).toBe(legacy);
-	});
-
-	describe("with answers from other devices turned on in this machine's settings", () => {
-		it("applies an answer given on another device for the same content", async () => {
-			const s = shared();
-			await s.runOn(THERE);
-			await s.runOn(HERE, GRANTED, { acceptOtherDevices: true });
-
-			expect(s.prompts).toHaveLength(1);
-			expect(Object.keys(s.stored()["wf.md"] ?? {}).sort()).toEqual([HERE, THERE]);
-		});
-
-		it("applies an answer stored before answers carried a device, for the same content", async () => {
-			const s = shared();
-			await s.runOn(THERE);
-			const hash = s.stored()["wf.md"]![THERE]!["workflowHash"];
-			s.settings.set("vaultore.deviceDecisions", {});
-			s.settings.set("vaultore.permissionDecisions", { "wf.md": { network: "allow", workflowHash: hash } });
-
-			expect(await s.runOn(HERE, GRANTED, { acceptOtherDevices: true })).toBe("success");
-			expect(s.prompts).toHaveLength(1);
-		});
-
-		it("still asks when the content changed since", async () => {
-			const s = shared();
-			await s.runOn(THERE);
-			await s.runOn(HERE, GRANTED.replace("Say hello.", "Say goodbye."), { acceptOtherDevices: true });
-
-			expect(s.prompts).toHaveLength(2);
-		});
-
-		it.each([
-			["the allow first", [true, false]],
-			["the deny first", [false, true]],
-		])("lets a deny win where other devices disagree, with %s in the file", async (_order, answers) => {
-			const s = shared();
-			const others = [THERE, "c".repeat(32)];
-			for (const [index, id] of others.entries()) {
-				(s.platform as { confirm?: unknown }).confirm = async (message: string) => {
-					s.prompts.push(message);
-					return answers[index];
-				};
-				await s.runOn(id);
-			}
-
-			expect(await s.runOn(HERE, GRANTED, { acceptOtherDevices: true })).toBe("error");
-			expect(s.prompts).toHaveLength(2);
-			expect(s.stored()["wf.md"]?.[HERE]).toMatchObject({ network: "deny" });
-		});
-
-		it.each([
-			["allows", "deny", "error"],
-			["denies", "allow", "error"],
-		])("lets a deny win between another device that %s and an answer stored before answers carried a device", async (_what, legacyAnswer, status) => {
-			const s = shared(legacyAnswer === "deny");
-			await s.runOn(THERE);
-			const hash = s.stored()["wf.md"]![THERE]!["workflowHash"];
-			s.settings.set("vaultore.permissionDecisions", { "wf.md": { network: legacyAnswer, workflowHash: hash } });
-
-			expect(await s.runOn(HERE, GRANTED, { acceptOtherDevices: true })).toBe(status);
-			expect(s.prompts).toHaveLength(1);
-		});
-	});
-});
-
-describe("the plugin and the CLI on one computer share their answers (#299)", () => {
-	const GRANTED = note(
-		"  network: ask\n  buildNetwork: deny\n  vaultRead: allow",
-		"```ore:ai id=summary\nSay hello.\n```"
-	);
-	const HERE = "a".repeat(32);
-	const THERE = "b".repeat(32);
-	const OTHER_FILE = "/vault/.obsidian/plugins/vaultore/data.json";
-
-	function runner() {
-		const v = vault({ "Private/secret.md": SECRET }, {}, {}, ".obsidian", realVault);
-		v.devices.current = testDecisionDevice(HERE);
-		const prompts: string[] = [];
-		const logs: string[] = [];
-		(v.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
-		const answer = (value: boolean | undefined) => {
-			(v.platform as { confirm?: unknown }).confirm = async (message: string) => {
-				prompts.push(message);
-				return value;
-			};
-		};
-		async function run(content = GRANTED) {
-			v.files["wf.md"] = content;
-			const workflow = await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content });
-			return workflow.outputs.get("summary")?.meta.status;
-		}
-		const stored = () => v.settings.get("vaultore.deviceDecisions") as Record<string, Record<string, Record<string, unknown>>> | undefined;
-		/** Moves what this runner stored into the other runner's file, as if the other had answered. */
-		function handOver() {
-			v.otherRunner.current = { file: OTHER_FILE, decisions: stored() };
-			v.settings.delete("vaultore.deviceDecisions");
-		}
-		return { ...v, prompts, logs, answer, run, stored, handOver };
-	}
-
-	it("applies an answer the other runner kept on this device, without asking and without copying it", async () => {
+	// Answers kept in data.json or config.json by earlier versions, or by
+	// builds that bound them to a device, came through sync: none applies.
+	it("asks again for answers earlier versions kept in the runner's settings, and leaves them as they are", async () => {
 		const r = runner();
-		r.answer(true);
-		await r.run();
-		r.handOver();
-		r.answer(undefined);
+		const legacy = { "wf.md": { network: "allow", workflowHash: "x" } };
+		r.settings.set("vaultore.permissionDecisions", legacy);
+		r.settings.set("vaultore.deviceDecisions", { "wf.md": { someone: { network: "allow" } } });
+		await r.runNote();
 
-		expect(await r.run()).toBe("success");
 		expect(r.prompts).toHaveLength(1);
-		expect(r.stored()).toBeUndefined();
-	});
-
-	it.each([
-		["here", "there"],
-		["there", "here"],
-	])("lets a deny kept %s win over an allow kept %s", async (denyIn) => {
-		const r = runner();
-		r.answer(denyIn !== "there");
-		await r.run();
-		const there = r.stored();
-		r.settings.delete("vaultore.deviceDecisions");
-		r.answer(denyIn === "there");
-		await r.run();
-		r.otherRunner.current = { file: OTHER_FILE, decisions: there };
-		r.answer(true);
-
-		expect(await r.run()).toBe("error");
-		expect(r.prompts).toHaveLength(2);
-	});
-
-	it("asks again for an entry in the other runner's file whose MAC does not verify, naming the file", async () => {
-		const r = runner();
-		r.answer(false);
-		await r.run();
-		const decisions = r.stored()!;
-		decisions["wf.md"]![HERE] = { ...decisions["wf.md"]![HERE]!, network: "allow" };
-		r.handOver();
-
-		await r.run();
-
-		expect(r.prompts).toHaveLength(2);
-		expect(r.logs).toContain(
-			`The other runner's (${OTHER_FILE}) permission decision for wf.md was not made here or was changed; asking again`
-		);
-	});
-
-	// A vault moved or renamed: every MAC is over the old path. One prompt
-	// heals both files, and no run keeps claiming to ask.
-	it("replaces this runner's entry that no longer verifies with the answer from the other runner's file", async () => {
-		const r = runner();
-		r.answer(true);
-		await r.run();
-		const fresh = r.stored();
-		const stale = structuredClone(fresh)!;
-		stale["wf.md"]![HERE]!["mac"] = "0".repeat(64);
-		r.settings.set("vaultore.deviceDecisions", stale);
-		r.otherRunner.current = { file: OTHER_FILE, decisions: fresh };
-		r.answer(undefined);
-
-		expect(await r.run()).toBe("success");
-		expect(r.logs).toContain(
-			"The stored permission decision for wf.md was not made here or was changed; replaced by this device's answer"
-		);
-		expect(r.stored()!["wf.md"]![HERE]!["mac"]).not.toBe("0".repeat(64));
-
-		r.logs.length = 0;
-		expect(await r.run()).toBe("success");
-		expect(r.prompts).toHaveLength(1);
-		expect(r.logs.filter((line) => line.includes("was not made here"))).toEqual([]);
-	});
-
-	it("says nothing of an entry in the other runner's file that no longer verifies, while an answer applies", async () => {
-		const r = runner();
-		r.answer(true);
-		await r.run();
-		const stale = structuredClone(r.stored())!;
-		stale["wf.md"]![HERE]!["mac"] = "0".repeat(64);
-		r.otherRunner.current = { file: OTHER_FILE, decisions: stale };
-		r.answer(undefined);
-
-		expect(await r.run()).toBe("success");
-		expect(r.logs.filter((line) => line.includes("was not made here"))).toEqual([]);
-	});
-
-	it("asks when the other runner's file cannot be read, and says so", async () => {
-		const r = runner();
-		r.answer(true);
-		r.otherRunner.current = new Error(`Cannot read the permission answers in ${OTHER_FILE}: it is not JSON (bad)`);
-
-		expect(await r.run()).toBe("success");
-		expect(r.prompts).toHaveLength(1);
-		expect(r.logs).toContain(
-			`Cannot read the permission answers in ${OTHER_FILE}: it is not JSON (bad); answers kept there do not apply to this run`
-		);
-	});
-
-	it("reads no other runner's file for a note that asks nothing", async () => {
-		const r = runner();
-		r.otherRunner.current = new Error("read");
-		await r.run(note("  network: deny", "```ore:ai id=summary\nSay hello.\n```"));
-
-		expect(r.logs.filter((line) => line.includes("read"))).toEqual([]);
-	});
-
-	it("takes over another device's answer from the other runner's file, with answers from other devices on", async () => {
-		const r = runner();
-		r.devices.current = testDecisionDevice(THERE);
-		r.answer(true);
-		await r.run();
-		r.handOver();
-		r.devices.current = testDecisionDevice(HERE, { acceptOtherDevices: true });
-		r.answer(undefined);
-
-		expect(await r.run()).toBe("success");
-		expect(r.prompts).toHaveLength(1);
-		expect(Object.keys(r.stored()?.["wf.md"] ?? {})).toEqual([HERE]);
+		expect(r.settings.get("vaultore.permissionDecisions")).toBe(legacy);
 	});
 });
 

@@ -14,7 +14,6 @@
  *   vaultore schedules catch-up      run a note's missed scheduled runs once now
  *   vaultore schedules dismiss       close a note's missed scheduled runs
  *   vaultore schedules late-after    how late a scheduled run may start, for this machine
- *   vaultore permissions other-devices  whether answers given on other devices apply here
  */
 
 import { promises as fs } from "node:fs";
@@ -60,7 +59,6 @@ import {
 	createSkipReporter,
 	planRegistrations,
 } from "./agent";
-import { otherDevices } from "./permissions";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 import {
 	answersFrom,
@@ -101,7 +99,6 @@ Usage:
   vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--quiet]
   vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
   vaultore schedules late-after [<minutes> | default]
-  vaultore permissions other-devices [apply | ask]
   vaultore --version | --help
 
 Options:
@@ -145,14 +142,11 @@ An occurrence is missed once it is more than 2 minutes late. 'schedules
 late-after' shows or sets that for this machine, 2 to 60 minutes, in the file
 both runners read (Obsidian's "Late after" is the same setting).
 
-An answer to a note's "ask" permission is kept for the note's content and
-this device (this account on this computer), and answers given in Obsidian
-on this computer count too, a deny winning: a note that arrives through
-sync, or was answered on another computer, is asked again, so without --yes
-it is denied. 'permissions other-devices apply' lets answers given elsewhere,
-or before answers carried a device, apply here too, a deny winning where
-they disagree; an answer applied that way is kept as this device's own.
-'ask' turns that off again for answers not yet kept.
+An answer to a note's "ask" permission in 'vaultore run' is kept for the
+note's content, for this account on this computer, outside the vault in
+~/.config/vaultore/answers.json, which Obsidian uses too: an answer given in
+either counts in both. A note that arrives through sync, or was answered on
+another computer, is asked again, so without --yes it is denied.
 
 Secrets are read from the environment:
   VAULTORE_OPENAI_APIKEY (or OPENAI_API_KEY)
@@ -663,18 +657,6 @@ async function cmdSchedulesLateAfter(args: ParsedArgs): Promise<number> {
 	return 0;
 }
 
-async function cmdPermissionsOtherDevices(args: ParsedArgs): Promise<number> {
-	let line: string;
-	try {
-		line = await otherDevices(args.positional[0], machineSettingsPath());
-	} catch (err) {
-		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
-		return 2;
-	}
-	process.stdout.write(line + "\n");
-	return 0;
-}
-
 async function cmdSchedulesApprove(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
 	const paths = notePathsFrom(args, vaultRoot);
@@ -798,12 +780,6 @@ async function main(): Promise<number> {
 			if (sub === "dismiss") return cmdSchedulesDismiss(args);
 			if (sub === "late-after") return cmdSchedulesLateAfter(args);
 			process.stderr.write(`error: unknown schedules subcommand '${sub ?? ""}'\n\n` + usage());
-			return 2;
-		}
-		case "permissions": {
-			const sub = args.positional.shift();
-			if (sub === "other-devices") return cmdPermissionsOtherDevices(args);
-			process.stderr.write(`error: unknown permissions subcommand '${sub ?? ""}'\n\n` + usage());
 			return 2;
 		}
 		default:

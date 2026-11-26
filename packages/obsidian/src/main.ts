@@ -27,9 +27,7 @@ import {
   dismissMissedSlots,
   isLateSlot,
   lateAfterMs,
-  readDecisionDevice,
-  readRunnerDecisions,
-  cliConfigPath,
+  answersStore,
   readMachineSettings,
   writeMachineSettings,
   openSchedules,
@@ -60,7 +58,6 @@ import {
 } from "@vaultore/core";
 import { homedir } from "node:os";
 import type {
-  DecisionDevice,
   PlatformAdapter,
   PlatformRequest,
   PlatformResponse,
@@ -72,7 +69,6 @@ import type {
   NoteScheduleState,
   ScheduledNoteNow,
   UnattendedApproval,
-  RunnerDecisions,
   ScheduleOwner,
   VaultSchedules,
   VaultStateStore,
@@ -90,11 +86,9 @@ interface VaultOreSettings {
   aiMaxTokens?: number;
   aiTimeoutSeconds?: number;
   runtimeEngine: "docker" | "podman" | "colima" | "apple";
-  // Before #284, one decision per note; read only when decisions from other
-  // devices apply, and never written.
-  permissionDecisions: Record<string, unknown>;
-  // Per note and device, each bound to the device that made it (#284).
-  deviceDecisions: Record<string, unknown>;
+  // Answers kept by earlier versions, which sync carried: never read (#299),
+  // kept as found so an older plugin on another computer keeps its own.
+  permissionDecisions?: Record<string, unknown>;
   outputRoot: string;
   // Names of entries in Obsidian's secret storage, picked with a
   // SecretComponent. The keys themselves never enter data.json.
@@ -125,8 +119,6 @@ const DEFAULT_SETTINGS: VaultOreSettings = {
   aiMaxTokens: 800,
   aiTimeoutSeconds: 120,
   runtimeEngine: "docker",
-  permissionDecisions: {},
-  deviceDecisions: {},
   outputRoot: "_vaultore",
   openaiSecretName: "",
   anthropicSecretName: "",
@@ -315,14 +307,12 @@ class ObsidianAdapter implements PlatformAdapter {
     });
   }
 
-  /** This account's device on this computer, shared with vaultore (#284). */
-  decisionDevice(): Promise<DecisionDevice> {
-    return readDecisionDevice();
-  }
-
-  /** The answers vaultore keeps for this vault on this device (#299), read now. */
-  async otherRunnerDecisions(): Promise<RunnerDecisions | undefined> {
-    return readRunnerDecisions(cliConfigPath(await this.getVaultRoot()));
+  /**
+   * The answers this account gave on this computer, outside the vault and
+   * shared with vaultore (#299). A change waits a moment for vaultore's.
+   */
+  permissionAnswers() {
+    return answersStore({ wait: { timers: this.plugin.timers, ms: SHORT_LOCK_WAIT_MS } });
   }
 
   getSetting<T>(key: string): T | undefined {
@@ -339,10 +329,6 @@ class ObsidianAdapter implements PlatformAdapter {
         return this.plugin.settings.aiTimeoutSeconds as T;
       case "vaultore.runtimeEngine":
         return this.plugin.settings.runtimeEngine as T;
-      case "vaultore.permissionDecisions":
-        return this.plugin.settings.permissionDecisions as T;
-      case "vaultore.deviceDecisions":
-        return this.plugin.settings.deviceDecisions as T;
       case "vaultore.outputRoot":
         return this.plugin.settings.outputRoot as T;
       default:
@@ -371,12 +357,6 @@ class ObsidianAdapter implements PlatformAdapter {
         break;
       case "vaultore.runtimeEngine":
         this.plugin.settings.runtimeEngine = value as VaultOreSettings["runtimeEngine"];
-        break;
-      case "vaultore.permissionDecisions":
-        this.plugin.settings.permissionDecisions = value as Record<string, unknown>;
-        break;
-      case "vaultore.deviceDecisions":
-        this.plugin.settings.deviceDecisions = value as Record<string, unknown>;
         break;
       case "vaultore.outputRoot":
         this.plugin.settings.outputRoot = value as string;
@@ -1012,9 +992,6 @@ export default class VaultOrePlugin extends Plugin {
   // How late a scheduled run may start, in minutes; undefined is the default.
   // This machine's, shared with vaultore agent: not in data.json (#269).
   lateAfterMinutes: number | undefined;
-  // Whether permission decisions made on other devices apply here (#284), as
-  // settings.json says; shown in the settings. A run reads the file itself.
-  decisionsFromOtherDevices = false;
   private machineSettingsError = "";
 
   /**
@@ -1026,7 +1003,6 @@ export default class VaultOrePlugin extends Plugin {
       const settings = await readMachineSettings();
       this.machineSettingsError = "";
       this.lateAfterMinutes = settings.lateAfterMinutes;
-      this.decisionsFromOtherDevices = settings.decisionsFromOtherDevices === true;
       this.scheduler.lateAfterMs = lateAfterMs(this.lateAfterMinutes);
     } catch (err) {
       const message = errorMessage(err);
@@ -1036,12 +1012,6 @@ export default class VaultOrePlugin extends Plugin {
       }
       this.machineSettingsError = message;
     }
-  }
-
-  /** Lets decisions made on other devices apply here, or not; off removes the key. */
-  async setDecisionsFromOtherDevices(on: boolean): Promise<void> {
-    const settings = await writeMachineSettings({ decisionsFromOtherDevices: on ? true : undefined }, { wait: this.shortWait });
-    this.decisionsFromOtherDevices = settings.decisionsFromOtherDevices === true;
   }
 
   /** Sets the late threshold for this machine; undefined goes back to the default. */
@@ -1709,16 +1679,6 @@ class VaultOreSettingsTab extends PluginSettingTab {
             desc: "Where run outputs are stored. Use a visible folder (e.g. _vaultore) to make links clickable.",
             control: { type: "text", key: "outputRoot", placeholder: "_vaultore" },
           },
-          {
-            name: "Permission answers from other devices",
-            desc:
-              "Off by default, and set for each account on each computer. Your answers to a note's permission " +
-              "requests apply only on the computer where you gave them, so a note that arrives through sync asks again. " +
-              "When on, answers given on another computer, or before this version, apply here too while the note is " +
-              "unchanged, a deny winning where they disagree, and are kept as this computer's own: turning this off " +
-              "again does not withdraw them. Shared with vaultore (vaultore permissions other-devices).",
-            control: { type: "toggle", key: "decisionsFromOtherDevices" },
-          },
         ],
       },
       {
@@ -1748,7 +1708,6 @@ class VaultOreSettingsTab extends PluginSettingTab {
     }
     if (key === "runScheduledWorkflows") return this.plugin.schedules.obsidianScheduling;
     if (key === "obsidianBinding") return this.plugin.schedules.obsidianBinding;
-    if (key === "decisionsFromOtherDevices") return this.plugin.decisionsFromOtherDevices;
     return (this.plugin.settings as unknown as Record<string, unknown>)[key];
   }
 
@@ -1788,14 +1747,6 @@ class VaultOreSettingsTab extends PluginSettingTab {
         settings.outputRoot = trimmed || "_vaultore";
         break;
       }
-      case "decisionsFromOtherDevices":
-        try {
-          await this.plugin.setDecisionsFromOtherDevices(value === true);
-        } catch (err) {
-          new Notice(`VaultOre: could not save Permission answers from other devices: ${errorMessage(err)}`);
-          this.update();
-        }
-        return;
       case "lateAfterMinutes":
         try {
           // validate() has refused an invalid value before it gets here.
