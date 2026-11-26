@@ -13,7 +13,7 @@
 	"scripts": {
 		"build": "tsup",
 		"dev": "tsup --watch",
-		"test": "vitest --run --passWithNoTests",
+		"test": "vitest --run",
 		"typecheck": "tsc --noEmit",
 		"lint": "cd ../.. && eslint --config packages/cli/eslint.config.mjs packages/cli"
 	},
