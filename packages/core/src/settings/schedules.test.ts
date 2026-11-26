@@ -1,7 +1,9 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as nodeSetTimeout } from "node:timers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { acquireLock } from "../lock";
 import {
 	approveNote,
 	legacyApprovalsPath,
@@ -74,6 +76,18 @@ describe("where the schedules are kept", () => {
 		const read = schedulesStore({ path }).forVault("/v");
 		await expect(read).rejects.toThrow(VaultStateStoreError);
 		await expect(read).rejects.toThrow(`the approval of a.md in vault /v ${why}`);
+	});
+
+	// A click in Obsidian and a vaultore command at the same moment (#291).
+	it("waits a moment for another change instead of refusing", async () => {
+		const timers = { setTimeout: (callback: () => void, ms: number) => nodeSetTimeout(callback, ms) };
+		mkdirSync(join(dir, "vaultore"));
+		const release = await acquireLock(`${path}.lock`);
+		nodeSetTimeout(() => void release(), 150);
+
+		await schedulesStore({ path, wait: { timers, ms: 2000, stepMs: 20 } }).update("/v", (entry) => approveNote(entry, NOTE, "agent"));
+
+		expect((await schedulesStore({ path }).forVault("/v")).notes["Daily.md"]?.owner).toBe("agent");
 	});
 
 	it("reads and keeps a note named __proto__ as an entry like any other", async () => {

@@ -22,6 +22,7 @@ import {
 	revokeNote,
 	writeMachineSettings,
 } from "@vaultore/core";
+import { SHORT_WAIT } from "./wait";
 import type { ScheduleOwner, SlotEntry, VaultSchedules, VaultStateStore, Workflow } from "@vaultore/core";
 import type { DiscoveredWorkflow } from "./scan";
 
@@ -285,7 +286,7 @@ export async function lateAfter(value: string | undefined, path: string): Promis
 		}
 	}
 	const settings =
-		value === undefined ? await readMachineSettings({ path }) : await writeMachineSettings({ lateAfterMinutes: minutes }, { path });
+		value === undefined ? await readMachineSettings({ path }) : await writeMachineSettings({ lateAfterMinutes: minutes }, { path, wait: SHORT_WAIT });
 	const source = settings.lateAfterMinutes === undefined ? "the default" : `set in ${path}`;
 	return `late after ${settings.lateAfterMinutes ?? MIN_LATE_AFTER_MINUTES} minutes (${source})`;
 }

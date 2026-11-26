@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
+import { acquireLockWaiting } from "../lock";
+import type { LockWait } from "../lock";
 import { userStateDirectory } from "../lock/run-lock";
 import { errorMessage } from "../errors";
 
@@ -31,6 +33,8 @@ export const MAX_LATE_AFTER_MINUTES = 60;
 export interface MachineSettingsOptions {
 	/** The file. Default: `machineSettingsPath()`. Tests pass their own. */
 	path?: string;
+	/** How long a change waits while another process changes the file. */
+	wait?: LockWait;
 }
 
 /** Where this machine's shared settings live; found as the run locks are. */
@@ -121,19 +125,26 @@ export async function writeMachineSettings(
 	if (changes.decisionsFromOtherDevices !== undefined && typeof changes.decisionsFromOtherDevices !== "boolean") {
 		throw new Error(`decisionsFromOtherDevices must be true or false, got ${String(changes.decisionsFromOtherDevices)}`);
 	}
-	const raw = await readObject(path);
-	for (const [key, value] of Object.entries(changes)) {
-		if (value === undefined) delete raw[key];
-		else raw[key] = value;
-	}
 	await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 });
-	const temp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+	// Read, change and write under a lock: Obsidian and a vaultore command
+	// changing different settings at the same moment keep both changes.
+	const release = await acquireLockWaiting(`${path}.lock`, { wait: options.wait });
 	try {
-		await fs.writeFile(temp, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
-		await fs.rename(temp, path);
-	} catch (err) {
-		await fs.rm(temp, { force: true });
-		throw err;
+		const raw = await readObject(path);
+		for (const [key, value] of Object.entries(changes)) {
+			if (value === undefined) delete raw[key];
+			else raw[key] = value;
+		}
+		const temp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+		try {
+			await fs.writeFile(temp, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
+			await fs.rename(temp, path);
+		} catch (err) {
+			await fs.rm(temp, { force: true });
+			throw err;
+		}
+	} finally {
+		await release();
 	}
 	return readMachineSettings({ path });
 }

@@ -38,6 +38,7 @@ import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { hostname, uptime } from "node:os";
 import { join } from "node:path";
+import type { Timers } from "../types";
 
 /** Who holds a lock, as written into it. */
 export interface LockHolder {
@@ -54,7 +55,14 @@ export class LockHeldError extends Error {
 	constructor(
 		readonly lockPath: string,
 		readonly holder: LockHolder | undefined,
-		message: string
+		message: string,
+		/**
+		 * `held`: a live process of this machine holds it; `contended`: other
+		 * takers kept getting in first. Both end by themselves. `remote`: held
+		 * from another machine; `unreadable`: its holder cannot be read;
+		 * `blocked`: something that is no lock is in the way. Those do not.
+		 */
+		readonly kind: "held" | "contended" | "remote" | "unreadable" | "blocked" = "held"
 	) {
 		super(message);
 		this.name = "LockHeldError";
@@ -194,7 +202,8 @@ export async function acquireLock(
 		throw new LockHeldError(
 			lockPath,
 			undefined,
-			`Other VaultOre processes keep taking the lock ${lockPath}. It was left alone; try again in a moment`
+			`Other VaultOre processes keep taking the lock ${lockPath}. It was left alone; try again in a moment`,
+			"contended"
 		);
 	} catch (err) {
 		check.held.delete(holderName);
@@ -292,7 +301,8 @@ async function clearIfStale(
 			throw new LockHeldError(
 				lockPath,
 				undefined,
-				`${lockPath} is in the way and is not a VaultOre lock. It was left alone; move it away if nothing needs it`
+				`${lockPath} is in the way and is not a VaultOre lock. It was left alone; move it away if nothing needs it`,
+				"blocked"
 			);
 		}
 		throw err;
@@ -310,7 +320,8 @@ async function clearIfStale(
 				lockPath,
 				undefined,
 				`The lock ${lockPath} is held, and ${name} in it does not say by whom. ` +
-					"It was left alone; if no VaultOre process is running, remove the lock"
+					"It was left alone; if no VaultOre process is running, remove the lock",
+				"unreadable"
 			);
 		}
 		if (holder.host !== check.host) {
@@ -318,7 +329,8 @@ async function clearIfStale(
 				lockPath,
 				holder,
 				`The lock ${lockPath} is held by ${describeHolder(holder)} on ${holder.host}, since ${holder.since}. ` +
-					"This machine cannot tell whether that process still runs. It was left alone; if it does not run, remove the lock"
+					"This machine cannot tell whether that process still runs. It was left alone; if it does not run, remove the lock",
+				"remote"
 			);
 		}
 		const why = staleBecause(holder, name, check);
@@ -384,6 +396,46 @@ export async function readLockHolder(lockPath: string): Promise<LockHolder | und
 		if (holder !== "gone" && holder !== "unreadable") return holder;
 	}
 	return undefined;
+}
+
+/**
+ * How long a taker waits for a lock another live process holds, before it
+ * gives up and says who holds it. Core sets no timer of its own: the caller
+ * passes its timers (`PlatformAdapter.timers`, or Node's in the CLI).
+ */
+export interface LockWait {
+	timers: Pick<Timers, "setTimeout">;
+	/** At most this long, in ms. */
+	ms: number;
+	/** Between tries, in ms. Default 100. */
+	stepMs?: number;
+}
+
+/** The short wait around a change of a small shared file: a click and a command at the same moment. */
+export const SHORT_LOCK_WAIT_MS = 2000;
+
+/**
+ * `acquireLock`, waiting while another live process holds the lock, up to
+ * `wait.ms`: a change of a shared file that collides with another one takes a
+ * moment longer instead of failing. Without `wait`, as `acquireLock`. A lock
+ * whose holder cannot be read, or that is held from another machine, is not
+ * waited for: that will not end by itself.
+ */
+export async function acquireLockWaiting(
+	lockPath: string,
+	options: LockOptions & { wait?: LockWait | undefined } = {}
+): Promise<() => Promise<void>> {
+	const { wait, ...lockOptions } = options;
+	const deadline = Date.now() + (wait?.ms ?? 0);
+	for (;;) {
+		try {
+			return await acquireLock(lockPath, lockOptions);
+		} catch (err) {
+			const busy = err instanceof LockHeldError && (err.kind === "held" || err.kind === "contended");
+			if (!wait || !busy || Date.now() >= deadline) throw err;
+			await new Promise<void>((resolve) => wait.timers.setTimeout(resolve, wait.stepMs ?? 100));
+		}
+	}
 }
 
 /** Removes the directory if it is empty; does nothing when it is gone or in use. */

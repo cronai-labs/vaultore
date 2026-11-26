@@ -44,6 +44,7 @@ import {
 	summarizeRun,
 	vaultKeyFor,
 } from "@vaultore/core";
+import { SHORT_WAIT } from "./wait";
 import type { ScheduledSlot, SlotClaim, VaultSchedules, VaultStateStore } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import {
@@ -502,6 +503,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
  */
 async function openSchedulesFor(vaultRoot: string): Promise<{ store: VaultStateStore<VaultSchedules>; vaultKey: string }> {
 	const store = await openSchedules({
+		wait: SHORT_WAIT,
 		legacyApprovals: legacyApprovalsPath({ env: process.env, platform: process.platform, homedir: homedir() }),
 		onImported: (from, to) =>
 			process.stderr.write(

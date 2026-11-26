@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeAdapter } from "./adapter";
@@ -50,6 +50,65 @@ describe("NodeAdapter.configDir", () => {
 
 		expect(adapter.configDir).toBe(".config-desk");
 		expect(await adapter.listFiles("")).toEqual(["notes/wf.md"]);
+	});
+});
+
+// Several commands at once keep each other's changes, and an unreadable
+// config.json is refused, not replaced (#291).
+describe("NodeAdapter config.json", () => {
+	const configFile = () => join(base, "vault", ".vaultore", "config.json");
+	const adapterFor = () =>
+		new NodeAdapter({ vaultRoot: join(base, "vault"), quiet: true, runLockDirectory: join(base, "locks") });
+
+	it("keeps another command's change made since this one started", async () => {
+		const agent = adapterFor();
+		const run = adapterFor();
+
+		await run.setSetting("vaultore.outputRoot", "_out");
+		await agent.setSetting("vaultore.defaultModel", "m");
+
+		expect(JSON.parse(readFileSync(configFile(), "utf8"))).toEqual({ outputRoot: "_out", defaultModel: "m" });
+	});
+
+	it("reads what another command stored since, without starting again", async () => {
+		const agent = adapterFor();
+		expect(agent.getSetting("vaultore.outputRoot")).toBeUndefined();
+
+		await adapterFor().setSetting("vaultore.outputRoot", "_out");
+
+		expect(agent.getSetting("vaultore.outputRoot")).toBe("_out");
+	});
+
+	it("keeps every change of commands writing at the same moment", async () => {
+		const adapters = Array.from({ length: 8 }, adapterFor);
+		await Promise.all(adapters.map((adapter, index) => adapter.setSetting(`vaultore.key${index}`, index)));
+
+		expect(Object.keys(JSON.parse(readFileSync(configFile(), "utf8"))).sort()).toEqual(
+			Array.from({ length: 8 }, (_, index) => `key${index}`).sort()
+		);
+	});
+
+	it("refuses to change a config.json that is not JSON, naming it, and leaves it as it is", async () => {
+		mkdirSync(join(base, "vault", ".vaultore"));
+		writeFileSync(configFile(), "{ half");
+		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		try {
+			const adapter = adapterFor();
+			expect(adapter.getSetting("vaultore.outputRoot")).toBeUndefined();
+
+			await expect(adapter.setSetting("vaultore.outputRoot", "_out")).rejects.toThrow(
+				`Cannot use ${configFile()}: it is not JSON`
+			);
+			expect(readFileSync(configFile(), "utf8")).toBe("{ half");
+			expect(stderr.mock.calls.filter(([line]) => String(line).includes("its settings are not applied"))).toHaveLength(1);
+		} finally {
+			stderr.mockRestore();
+		}
+	});
+
+	it("keeps its lock outside the vault", async () => {
+		await adapterFor().setSetting("vaultore.outputRoot", "_out");
+		expect(readdirSync(join(base, "vault", ".vaultore"))).toEqual(["config.json"]);
 	});
 });
 

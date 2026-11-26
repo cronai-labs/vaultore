@@ -298,7 +298,7 @@ vaultore permissions other-devices [apply | ask]
 vaultore --version | --help
 ```
 
-- Settings come from `<vault>/.vaultore/config.json`: `defaultProvider`, `defaultModel`,
+- Settings come from `<vault>/.vaultore/config.json` (read again when it changes, and changed under a lock, so commands running at once, an agent and a `vaultore run`, keep each other's changes; one that is not JSON is refused, not replaced): `defaultProvider`, `defaultModel`,
   `aiTemperature`, `aiMaxTokens`, `aiTimeoutSeconds`, `runtimeEngine`, `outputRoot`, and the
   stored `deviceDecisions`. API keys come from the environment
   (`VAULTORE_OPENAI_APIKEY` or `OPENAI_API_KEY`, `VAULTORE_ANTHROPIC_APIKEY` or
