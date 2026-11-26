@@ -5,15 +5,19 @@ import { setTimeout as nodeSetTimeout } from "node:timers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { acquireLock } from "../lock";
 import {
+	ApprovalAnswerError,
 	approveNote,
+	approvedPermissions,
+	coveredPermissions,
 	legacyApprovalsPath,
 	noteScheduleState,
 	openSchedules,
+	reviewApproval,
 	revokeNote,
 	schedulesPath,
 	schedulesStore,
 } from "./schedules";
-import type { VaultSchedules } from "./schedules";
+import type { ApprovedPermissions, NotePermissions, ScheduledNoteNow, VaultSchedules } from "./schedules";
 import { VaultStateStoreError } from "./vault-state-store";
 
 /** One approval per note on this computer, owned by one runner (#301). */
@@ -30,8 +34,17 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-const NOTE = { path: "Daily.md", schedule: "0 9 * * *", hash: "h1" };
-const empty = (): VaultSchedules => ({ obsidianScheduling: false, notes: Object.create(null) });
+const DEFAULTS: NotePermissions = { network: "deny", buildNetwork: "deny", vaultRead: "allow", vaultWrite: "deny" };
+const NOTE: ScheduledNoteNow = { path: "Daily.md", schedule: "0 9 * * *", hash: "h1", permissions: DEFAULTS };
+const empty = (): VaultSchedules => ({ obsidianScheduling: false, obsidianBinding: "strict", notes: Object.create(null) });
+/** The permissions a first approval of `note` holds, with `answers` for its asks. */
+const first = (note: ScheduledNoteNow = NOTE, answers = {}): ApprovedPermissions => approvedPermissions(reviewApproval(undefined, note), answers);
+const HELD = {
+	network: { value: "deny", source: "frontmatter" },
+	buildNetwork: { value: "deny", source: "frontmatter" },
+	vaultRead: { value: "allow", source: "frontmatter" },
+	vaultWrite: { value: "deny", source: "frontmatter" },
+};
 
 describe("where the schedules are kept", () => {
 	it("lives beside the run locks and the record", () => {
@@ -39,12 +52,12 @@ describe("where the schedules are kept", () => {
 	});
 
 	it("is off with nothing approved for a vault with no entry, and when the file is missing", async () => {
-		expect(await schedulesStore({ path }).forVault("/vaults/a")).toEqual({ obsidianScheduling: false, notes: {} });
+		expect(await schedulesStore({ path }).forVault("/vaults/a")).toEqual({ obsidianScheduling: false, obsidianBinding: "strict", notes: {} });
 	});
 
 	it("keeps each vault's entry, and drops one that is off with nothing approved", async () => {
 		const store = schedulesStore({ path });
-		await store.update("/vaults/a", (entry) => approveNote(entry, NOTE, "agent", new Date("2026-11-26T10:00:00Z")));
+		await store.update("/vaults/a", (entry) => approveNote(entry, NOTE, "agent", first(), new Date("2026-11-26T10:00:00Z")));
 		await store.update("/vaults/b", (entry) => {
 			entry.obsidianScheduling = true;
 		});
@@ -58,7 +71,10 @@ describe("where the schedules are kept", () => {
 			vaults: {
 				"/vaults/a": {
 					obsidianScheduling: false,
-					notes: { "Daily.md": { owner: "agent", schedule: "0 9 * * *", hash: "h1", approvedAt: "2026-11-26T10:00:00.000Z" } },
+					obsidianBinding: "strict",
+					notes: {
+						"Daily.md": { owner: "agent", schedule: "0 9 * * *", hash: "h1", approvedAt: "2026-11-26T10:00:00.000Z", permissions: HELD },
+					},
 				},
 			},
 		});
@@ -67,6 +83,11 @@ describe("where the schedules are kept", () => {
 	it.each([
 		["an owner that is no runner", { owner: "cron", schedule: "x", hash: "h", approvedAt: "t" }, "names no runner that owns it"],
 		["no hash", { owner: "agent", schedule: "x", approvedAt: "t" }, "is incomplete"],
+		[
+			"a permission that is neither allowed nor denied",
+			{ owner: "agent", schedule: "x", hash: "h", approvedAt: "t", permissions: { ...HELD, network: { value: "ask", source: "answer" } } },
+			"holds no valid network permission",
+		],
 	])("refuses a file with an approval with %s, naming it", async (_what, approval, why) => {
 		mkdirSync(join(dir, "vaultore"));
 		writeFileSync(
@@ -85,14 +106,14 @@ describe("where the schedules are kept", () => {
 		const release = await acquireLock(`${path}.lock`);
 		nodeSetTimeout(() => void release(), 150);
 
-		await schedulesStore({ path, wait: { timers, ms: 2000, stepMs: 20 } }).update("/v", (entry) => approveNote(entry, NOTE, "agent"));
+		await schedulesStore({ path, wait: { timers, ms: 2000, stepMs: 20 } }).update("/v", (entry) => approveNote(entry, NOTE, "agent", first()));
 
 		expect((await schedulesStore({ path }).forVault("/v")).notes["Daily.md"]?.owner).toBe("agent");
 	});
 
 	it("reads and keeps a note named __proto__ as an entry like any other", async () => {
 		const store = schedulesStore({ path });
-		await store.update("/v", (entry) => approveNote(entry, { ...NOTE, path: "__proto__" }, "obsidian"));
+		await store.update("/v", (entry) => approveNote(entry, { ...NOTE, path: "__proto__" }, "obsidian", first()));
 		const read = await store.forVault("/v");
 		expect(Object.keys(read.notes)).toEqual(["__proto__"]);
 		expect(noteScheduleState("obsidian", read, { ...NOTE, path: "constructor" })).toEqual({ state: "not-approved" });
@@ -100,10 +121,10 @@ describe("where the schedules are kept", () => {
 });
 
 describe("whether a runner runs a note", () => {
-	function approved(owner: "obsidian" | "agent", obsidianScheduling = true): VaultSchedules {
+	function approved(owner: "obsidian" | "agent", obsidianScheduling = true, note: ScheduledNoteNow = NOTE, answers = {}): VaultSchedules {
 		const schedules = empty();
 		schedules.obsidianScheduling = obsidianScheduling;
-		approveNote(schedules, NOTE, owner);
+		approveNote(schedules, note, owner, first(note, answers));
 		return schedules;
 	}
 
@@ -123,9 +144,32 @@ describe("whether a runner runs a note", () => {
 		expect(noteScheduleState("agent", approved("agent"), { ...NOTE, hash: "h2" }).state).toBe("changed");
 	});
 
-	it("stops the plugin when the schedule changed, not when only a cell did", () => {
-		expect(noteScheduleState("obsidian", approved("obsidian"), { ...NOTE, schedule: "0 10 * * *", hash: "h2" }).state).toBe("changed");
-		expect(noteScheduleState("obsidian", approved("obsidian"), { ...NOTE, hash: "h2" }).state).toBe("approved");
+	it("stops the plugin when the content changed, under strict binding, the default", () => {
+		expect(noteScheduleState("obsidian", approved("obsidian"), { ...NOTE, hash: "h2" }).state).toBe("changed");
+	});
+
+	it("stops the plugin under narrow binding only when the schedule or a permission changed, not a cell", () => {
+		const schedules = approved("obsidian");
+		schedules.obsidianBinding = "narrow";
+		expect(noteScheduleState("obsidian", schedules, { ...NOTE, hash: "h2" }).state).toBe("approved");
+		expect(noteScheduleState("obsidian", schedules, { ...NOTE, schedule: "0 10 * * *" }).state).toBe("changed");
+		expect(noteScheduleState("obsidian", schedules, { ...NOTE, hash: "h2", permissions: { ...DEFAULTS, network: "allow" } }).state).toBe("changed");
+	});
+
+	it("keeps the agent strict, whatever the plugin's binding", () => {
+		const schedules = approved("agent");
+		schedules.obsidianBinding = "narrow";
+		expect(noteScheduleState("agent", schedules, { ...NOTE, hash: "h2" }).state).toBe("changed");
+	});
+
+	it("lets a note whose cells changed run again when switched to narrow, and stops it when switched back", () => {
+		const schedules = approved("obsidian");
+		const edited = { ...NOTE, hash: "h2" };
+		expect(noteScheduleState("obsidian", schedules, edited).state).toBe("changed");
+		schedules.obsidianBinding = "narrow";
+		expect(noteScheduleState("obsidian", schedules, edited).state).toBe("approved");
+		schedules.obsidianBinding = "strict";
+		expect(noteScheduleState("obsidian", schedules, edited).state).toBe("changed");
 	});
 
 	it("keeps the plugin's notes from running while Run scheduled workflows is off, not the agent's", () => {
@@ -135,13 +179,99 @@ describe("whether a runner runs a note", () => {
 
 	it("hands a note over by approving it for the other runner, and revoking takes it from both", () => {
 		const schedules = approved("agent");
-		approveNote(schedules, NOTE, "obsidian");
+		approveNote(schedules, NOTE, "obsidian", first());
 		expect(noteScheduleState("obsidian", schedules, NOTE).state).toBe("approved");
 		expect(noteScheduleState("agent", schedules, NOTE).state).toBe("delegated");
 
 		expect(revokeNote(schedules, NOTE.path)).toBe(true);
 		expect(revokeNote(schedules, NOTE.path)).toBe(false);
 		expect(noteScheduleState("agent", schedules, NOTE).state).toBe("not-approved");
+	});
+});
+
+describe("approving again asks only about what changed (#299)", () => {
+	const ASKS: ScheduledNoteNow = { ...NOTE, permissions: { ...DEFAULTS, network: "ask" } };
+	const statuses = (review: ReturnType<typeof reviewApproval>) => Object.fromEntries(review.permissions.map((p) => [p.key, p.status]));
+	const approval = (note: ScheduledNoteNow, answers = {}) => {
+		const schedules = empty();
+		approveNote(schedules, note, "agent", first(note, answers));
+		return schedules.notes[note.path];
+	};
+
+	it("shows every permission as new on a first approval, and an ask as needing an answer", () => {
+		const review = reviewApproval(undefined, ASKS);
+		expect(statuses(review)).toEqual({ network: "needs-answer", buildNetwork: "new", vaultRead: "new", vaultWrite: "new" });
+		expect(review.needsAnswer).toEqual(["network"]);
+	});
+
+	it("keeps everything when only a cell changed: one action approves again, nothing asked", () => {
+		const review = reviewApproval(approval(ASKS, { network: "allow" }), { ...ASKS, hash: "h2" });
+		expect(review.changed).toBe(false);
+		expect(review.needsAnswer).toEqual([]);
+		expect(approvedPermissions(review).network).toEqual({ value: "allow", source: "answer" });
+	});
+
+	it("shows a frontmatter change as changed, and asks nothing for it", () => {
+		const review = reviewApproval(approval(NOTE), { ...NOTE, hash: "h2", permissions: { ...DEFAULTS, network: "allow" } });
+		expect(statuses(review)).toMatchObject({ network: "changed", vaultRead: "kept" });
+		expect(review.needsAnswer).toEqual([]);
+		expect(approvedPermissions(review).network).toEqual({ value: "allow", source: "frontmatter" });
+	});
+
+	it("asks only for a permission newly at ask, also one that was allowed by the frontmatter", () => {
+		const before = approval({ ...NOTE, permissions: { ...DEFAULTS, network: "allow" } });
+		const review = reviewApproval(before, { ...ASKS, hash: "h2" });
+		expect(statuses(review)).toEqual({ network: "needs-answer", buildNetwork: "kept", vaultRead: "kept", vaultWrite: "kept" });
+	});
+
+	it("shows an answer the frontmatter now decides as dropped", () => {
+		const review = reviewApproval(approval(ASKS, { network: "allow" }), { ...NOTE, hash: "h2" });
+		expect(statuses(review)).toMatchObject({ network: "answer-dropped" });
+		expect(approvedPermissions(review).network).toEqual({ value: "deny", source: "frontmatter" });
+	});
+
+	it("refuses an ask left unanswered, and an answer where the frontmatter decides, naming them", () => {
+		expect(() => approvedPermissions(reviewApproval(undefined, ASKS))).toThrow(ApprovalAnswerError);
+		expect(() => approvedPermissions(reviewApproval(undefined, ASKS))).toThrow("network needs an answer");
+		expect(() => approvedPermissions(reviewApproval(undefined, ASKS), { network: "deny", vaultWrite: "allow" })).toThrow(
+			"vaultWrite is set by the frontmatter, not asked"
+		);
+	});
+
+	it("lets an answer replace one kept from before", () => {
+		const review = reviewApproval(approval(ASKS, { network: "allow" }), ASKS);
+		expect(approvedPermissions(review, { network: "deny" }).network).toEqual({ value: "deny", source: "answer" });
+	});
+
+	it("carries answers over to the other runner on a handover, under its binding", () => {
+		const schedules = empty();
+		schedules.obsidianScheduling = true;
+		approveNote(schedules, ASKS, "agent", first(ASKS, { network: "allow" }));
+		const review = reviewApproval(schedules.notes[ASKS.path], ASKS);
+		approveNote(schedules, ASKS, "obsidian", approvedPermissions(review));
+		expect(noteScheduleState("obsidian", schedules, ASKS).state).toBe("approved");
+		expect(schedules.notes[ASKS.path]?.permissions?.network).toEqual({ value: "allow", source: "answer" });
+	});
+
+	it("does not cover a note whose ask was not answered at approval, nor one whose frontmatter value changed", () => {
+		const held = approval(NOTE);
+		expect(coveredPermissions(held as never, ASKS)).toBeUndefined();
+		expect(coveredPermissions(held as never, { ...NOTE, permissions: { ...DEFAULTS, vaultRead: "deny" } })).toBeUndefined();
+		expect(coveredPermissions(held as never, NOTE)?.vaultRead).toEqual({ value: "allow", source: "frontmatter" });
+	});
+
+	it("keeps a vault entry that holds only the narrow binding", async () => {
+		const store = schedulesStore({ path });
+		await store.update("/v", (entry) => {
+			entry.obsidianBinding = "narrow";
+		});
+		expect((await store.forVault("/v")).obsidianBinding).toBe("narrow");
+	});
+
+	it("refuses a binding it does not know, naming it", async () => {
+		mkdirSync(join(dir, "vaultore"));
+		writeFileSync(path, JSON.stringify({ format: "vaultore.schedules", version: 1, vaults: { "/v": { obsidianScheduling: true, obsidianBinding: "loose", notes: {} } } }));
+		await expect(schedulesStore({ path }).forVault("/v")).rejects.toThrow("names no binding VaultOre knows");
 	});
 });
 
@@ -174,6 +304,7 @@ describe("the agent's approvals of 0.4.x", () => {
 
 		expect(await store.forVault("/v")).toEqual({
 			obsidianScheduling: false,
+			obsidianBinding: "strict",
 			notes: { "Daily.md": { owner: "agent", hash: "h1", schedule: "0 9 * * *", approvedAt: "2026-10-01T00:00:00.000Z" } },
 		});
 		expect(told).toEqual([legacy]);
@@ -184,7 +315,7 @@ describe("the agent's approvals of 0.4.x", () => {
 	// given since stays, and a revoke stays revoked.
 	it("are copied only once, so a revoke stays revoked, and leave an approval given here alone", async () => {
 		const store = schedulesStore({ path });
-		await store.update("/v", (entry) => approveNote(entry, { ...NOTE, hash: "mine" }, "obsidian"));
+		await store.update("/v", (entry) => approveNote(entry, { ...NOTE, hash: "mine" }, "obsidian", first()));
 		await openSchedules({ path, legacyApprovals: legacy });
 		expect((await store.forVault("/v")).notes["Daily.md"]).toMatchObject({ owner: "obsidian", hash: "mine" });
 
@@ -196,6 +327,18 @@ describe("the agent's approvals of 0.4.x", () => {
 
 		expect((await store.forVault("/v")).notes).toEqual({});
 		expect(told).toEqual([]);
+	});
+
+	// They hold no permissions: those were the frontmatter's when approved.
+	it("run a note with no ask as approved, and ask to review one with an ask", async () => {
+		const store = await openSchedules({ path, legacyApprovals: legacy });
+		const schedules = await store.forVault("/v");
+		expect(noteScheduleState("agent", schedules, NOTE).state).toBe("approved");
+		const asks = { ...NOTE, permissions: { ...DEFAULTS, network: "ask" as const } };
+		const state = noteScheduleState("agent", schedules, asks);
+		expect(state.state).toBe("changed");
+		expect(state.state === "changed" && state.review.needsAnswer).toEqual(["network"]);
+		expect(state.state === "changed" && state.review.permissions.find((p) => p.key === "vaultRead")?.status).toBe("kept");
 	});
 
 	it("leave the old file as it is", async () => {

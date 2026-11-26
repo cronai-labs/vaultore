@@ -7,6 +7,7 @@ import {
 	planRegistrations,
 } from "./agent";
 import type { ScheduledNote } from "./schedules";
+import type { NoteApproval, UnattendedApproval, VaultSchedules } from "@vaultore/core";
 
 /**
  * `vaultore agent` fires a workflow on every scheduler tick. A run that takes
@@ -97,19 +98,29 @@ describe("createSingleFlightRunner", () => {
  * approval for that path matches the note's content.
  */
 
-const scheduled = (path: string, hash: string, schedule = "0 9 * * *"): ScheduledNote => ({
+const DEFAULTS = { network: "deny", buildNetwork: "deny", vaultRead: "allow", vaultWrite: "deny" } as const;
+const scheduled = (path: string, hash: string, schedule = "0 9 * * *", permissions: ScheduledNote["permissions"] = DEFAULTS): ScheduledNote => ({
 	path,
 	schedule,
 	hash,
+	permissions,
 });
-const approval = (hash: string, owner: "agent" | "obsidian" = "agent") => ({
+const fromFrontmatter = (value: "allow" | "deny") => ({ value, source: "frontmatter" as const });
+const approval = (hash: string, owner: "agent" | "obsidian" = "agent"): NoteApproval => ({
 	owner,
 	hash,
 	schedule: "0 9 * * *",
 	approvedAt: "2026-11-09T00:00:00.000Z",
+	permissions: {
+		network: fromFrontmatter("deny"),
+		buildNetwork: fromFrontmatter("deny"),
+		vaultRead: fromFrontmatter("allow"),
+		vaultWrite: fromFrontmatter("deny"),
+	},
 });
-const schedules = (notes: Record<string, ReturnType<typeof approval>>, obsidianScheduling = false) => ({
+const schedules = (notes: Record<string, NoteApproval>, obsidianScheduling = false): VaultSchedules => ({
 	obsidianScheduling,
+	obsidianBinding: "strict",
 	notes,
 });
 
@@ -123,8 +134,29 @@ describe("planRegistrations", () => {
 		expect(plan.register.map((note) => note.path)).toEqual(["ok.md"]);
 		expect(plan.skipped).toEqual([
 			{ path: "new.md", reason: "it is not approved" },
-			{ path: "edited.md", reason: "it changed since it was approved" },
+			{ path: "edited.md", reason: "it changed since it was approved; approve it again: vaultore schedules approve edited.md" },
 		]);
+	});
+
+	// #299: the command to run is the one that answers what changed.
+	it("names a permission newly at ask, and how to answer it", () => {
+		const plan = planRegistrations(
+			[scheduled("a.md", "h2", "0 9 * * *", { ...DEFAULTS, network: "ask" })],
+			schedules({ "a.md": approval("h1") })
+		);
+
+		expect(plan.skipped[0]?.reason).toBe(
+			"it changed since it was approved; network now asks: approve it with an answer, vaultore schedules approve a.md --allow network (or --deny network)"
+		);
+	});
+
+	it("names a permission whose frontmatter value changed", () => {
+		const plan = planRegistrations(
+			[scheduled("a.md", "h2", "0 9 * * *", { ...DEFAULTS, vaultWrite: "allow" })],
+			schedules({ "a.md": approval("h1") })
+		);
+
+		expect(plan.skipped[0]?.reason).toBe("it changed since it was approved; vaultWrite is now allow; approve it again: vaultore schedules approve a.md");
 	});
 
 	it("registers nothing without approvals", () => {
@@ -147,30 +179,33 @@ describe("planRegistrations", () => {
 describe("createApprovedRunner", () => {
 	function setup(options: {
 		note?: () => Promise<{ note: ScheduledNote; content: string }>;
-		schedules?: () => Promise<ReturnType<typeof schedules>>;
+		schedules?: () => Promise<VaultSchedules>;
 	}) {
 		const ran: Array<[string, string]> = [];
+		const approvals: UnattendedApproval[] = [];
 		const refused: Array<[string, string]> = [];
 		const run = createApprovedRunner({
 			readNote:
 				options.note ??
 				(async () => ({ note: scheduled("a.md", "h1"), content: "the content checked" })),
 			schedules: options.schedules ?? (async () => schedules({ "a.md": approval("h1") })),
-			run: async (path, content) => {
+			run: async (path, content, _arg, unattended) => {
 				ran.push([path, content]);
+				approvals.push(unattended);
 			},
 			onRefuse: (path, reason) => refused.push([path, reason]),
 		});
-		return { run, ran, refused };
+		return { run, ran, refused, approvals };
 	}
 
-	it("runs an approved note with the content it checked", async () => {
-		const { run, ran, refused } = setup({});
+	it("runs an approved note with the content it checked, and the approval it checked it against", async () => {
+		const { run, ran, refused, approvals } = setup({});
 
 		await run("a.md");
 
 		expect(ran).toEqual([["a.md", "the content checked"]]);
 		expect(refused).toEqual([]);
+		expect(approvals).toEqual([{ approval: approval("h1"), binding: "content" }]);
 	});
 
 	it("does not run a note that changed since the last rescan", async () => {
@@ -181,7 +216,7 @@ describe("createApprovedRunner", () => {
 		await run("a.md");
 
 		expect(ran).toEqual([]);
-		expect(refused).toEqual([["a.md", "it changed since it was approved"]]);
+		expect(refused).toEqual([["a.md", "it changed since it was approved; approve it again: vaultore schedules approve a.md"]]);
 	});
 
 	it("does not run a note whose approval was revoked since the last rescan", async () => {

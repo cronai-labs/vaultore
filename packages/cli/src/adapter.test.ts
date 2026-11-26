@@ -112,6 +112,22 @@ describe("NodeAdapter config.json", () => {
 	});
 });
 
+// The answers for runs started by hand are the account's, shared with the
+// plugin, outside the vault (#299).
+describe("NodeAdapter.permissionAnswers", () => {
+	it("keeps them in the file it is given, and nothing in the vault", async () => {
+		const path = join(base, "state", "answers.json");
+		const adapter = new NodeAdapter({ vaultRoot: join(base, "vault"), quiet: true, answers: { path } });
+
+		await adapter.permissionAnswers().update("/v", (entry) => {
+			entry.notes["wf.md"] = { workflowHash: "h", grantedAt: "t", network: "allow" };
+		});
+
+		expect(JSON.parse(readFileSync(path, "utf8")).vaults["/v"].notes["wf.md"].network).toBe("allow");
+		expect(() => readdirSync(join(base, "vault", ".vaultore"))).toThrow();
+	});
+});
+
 // One run per note across runners (#215). The plugin's side is tested in
 // packages/obsidian; both use core's acquireRunLock.
 describe("NodeAdapter.acquireRunLock", () => {

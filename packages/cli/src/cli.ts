@@ -14,7 +14,6 @@
  *   vaultore schedules catch-up      run a note's missed scheduled runs once now
  *   vaultore schedules dismiss       close a note's missed scheduled runs
  *   vaultore schedules late-after    how late a scheduled run may start, for this machine
- *   vaultore permissions other-devices  whether answers given on other devices apply here
  */
 
 import { promises as fs } from "node:fs";
@@ -35,9 +34,15 @@ import {
 	machineSettingsPath,
 	readSlotRecord,
 	recordMissedSlots,
+	reviewApproval,
+	scheduledNoteOf,
 	WorkflowExecutor,
+	WorkflowParser,
 	WorkflowScheduler,
 	VERSION,
+	approvalCovers,
+	approvalOf,
+	bindingOf,
 	describeRun,
 	errorMessage,
 	runSucceeded,
@@ -45,17 +50,18 @@ import {
 	vaultKeyFor,
 } from "@vaultore/core";
 import { SHORT_WAIT } from "./wait";
-import type { ScheduledSlot, SlotClaim, VaultSchedules, VaultStateStore } from "@vaultore/core";
+import type { ScheduledSlot, SlotClaim, UnattendedApproval, VaultSchedules, VaultStateStore } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
 import {
+	changedReason,
 	createApprovedRunner,
 	createSingleFlightRunner,
 	createSkipReporter,
 	planRegistrations,
 } from "./agent";
-import { otherDevices } from "./permissions";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 import {
+	answersFrom,
 	approveSchedules,
 	ownerFrom,
 	formatScheduleList,
@@ -84,16 +90,15 @@ function usage(): string {
 Usage:
   vaultore run <workflow.md> [--vault <dir>] [--config-dir <name>] [--cell <id>] [--skip-deps] [--yes] [--quiet]
   vaultore list [--vault <dir>] [--config-dir <name>]
-  vaultore agent [--vault <dir>] [--config-dir <name>] [--yes] [--rescan <seconds>] [--keep-days <n>] [--quiet]
+  vaultore agent [--vault <dir>] [--config-dir <name>] [--rescan <seconds>] [--keep-days <n>] [--quiet]
   vaultore schedules list [--vault <dir>] [--config-dir <name>]
-  vaultore schedules approve <workflow.md>... [--owner agent|obsidian] [--vault <dir>]
+  vaultore schedules approve <workflow.md>... [--owner agent|obsidian] [--allow <names>] [--deny <names>] [--vault <dir>]
   vaultore schedules revoke <workflow.md>... [--vault <dir>]
   vaultore schedules export [--vault <dir>] [--config-dir <name>] [--out <file>]
   vaultore schedules log [<workflow.md>] [--vault <dir>]
-  vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--yes] [--quiet]
+  vaultore schedules catch-up <workflow.md> [<slot>] [--vault <dir>] [--config-dir <name>] [--quiet]
   vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
   vaultore schedules late-after [<minutes> | default]
-  vaultore permissions other-devices [apply | ask]
   vaultore --version | --help
 
 Options:
@@ -102,10 +107,13 @@ Options:
   --config-dir <name> The vault's Obsidian config folder, if overridden
                       (default: .obsidian). Hidden from cells.
   --owner <runner>    Who runs the notes approved: agent (default) or obsidian.
+  --allow <names>     With schedules approve: allow these "ask" permissions on
+  --deny <names>      schedule, comma-separated (network, buildNetwork,
+                      vaultRead, vaultWrite). One note at a time.
   --cell <id>         Run a single cell (with its dependencies)
   --skip-deps         With --cell: skip dependency cells
-  --yes               Auto-grant "ask" permissions (non-interactive default: deny).
-                      Does not approve a schedule.
+  --yes               With run: grant "ask" permissions not answered yet
+                      (non-interactive default: deny for this run).
   --rescan <seconds>  Agent rescan interval (default: 300)
   --keep-days <n>     Days of scheduled-run history to keep, 0 to 30
                       (default: 30). 0 keeps each run for a day only.
@@ -118,6 +126,12 @@ approvals are in ~/.config/vaultore/schedules.json (%APPDATA%\\vaultore on
 Windows), outside the vault, so that sync cannot deliver one; both runners
 read it. The agent runs a note approved for it only while the note's front
 matter and cells are what was approved, and one agent runs a vault at a time.
+
+A scheduled run, and a catch-up, run with the permissions given when the note
+was approved, and ask nothing: those the front matter sets, and for each
+"ask" the answer given with --allow or --deny. Approving a note again after
+it changed asks only about what changed: an answer given before is kept, and
+'schedules approve' prints what is kept, changed, new and dropped.
 Each occurrence of a schedule runs at most once, in the agent or in Obsidian;
 'vaultore schedules log' shows what each one came to. Occurrences no runner
 fired (the machine slept, nothing was running) are recorded as missed runs;
@@ -128,13 +142,11 @@ An occurrence is missed once it is more than 2 minutes late. 'schedules
 late-after' shows or sets that for this machine, 2 to 60 minutes, in the file
 both runners read (Obsidian's "Late after" is the same setting).
 
-An answer to a note's "ask" permission is kept for the note's content and
-this device (this account on this computer): a note that arrives through
-sync, or was answered on another computer, is asked again, so without --yes
-it is denied. 'permissions other-devices apply' lets answers given elsewhere,
-or before answers carried a device, apply here too, a deny winning where
-they disagree; an answer applied that way is kept as this device's own.
-'ask' turns that off again for answers not yet kept.
+An answer to a note's "ask" permission in 'vaultore run' is kept for the
+note's content, for this account on this computer, outside the vault in
+~/.config/vaultore/answers.json, which Obsidian uses too: an answer given in
+either counts in both. A note that arrives through sync, or was answered on
+another computer, is asked again, so without --yes it is denied.
 
 Secrets are read from the environment:
   VAULTORE_OPENAI_APIKEY (or OPENAI_API_KEY)
@@ -168,6 +180,27 @@ async function cmdRun(args: ParsedArgs, catchUp?: { slot: Date | undefined }): P
 	});
 	const content = await adapter.readFile(workflowPath);
 
+	// A catch-up stands in for the scheduled run it replaces, so it runs with
+	// the note's approval, under its owner's binding, whichever runner catches
+	// up, and asks nothing (#299). Checked before the gap is taken: a note
+	// that may not run leaves its missed runs open.
+	let unattended: UnattendedApproval | undefined;
+	if (catchUp) {
+		if (args.flags["yes"] === true) {
+			process.stderr.write(
+				"error: a catch-up runs with the permissions its note was approved with; --yes is not for it. " +
+					`Approve the note again to change them: vaultore schedules approve ${workflowArg}\n`
+			);
+			return 2;
+		}
+		const checked = await catchUpApproval(vaultRoot, workflowPath, content);
+		if (typeof checked === "string") {
+			process.stderr.write(`error: not catching up ${workflowPath}: ${checked}\n`);
+			return 1;
+		}
+		unattended = checked;
+	}
+
 	// Taken once the note was read: a note that cannot be read leaves its
 	// missed runs open.
 	let slotClaim: SlotClaim | undefined;
@@ -195,7 +228,9 @@ async function cmdRun(args: ParsedArgs, catchUp?: { slot: Date | undefined }): P
 		content,
 		targetCellId,
 		skipDependencies: args.flags["skip-deps"] === true,
+		runner: catchUp ? "vaultore schedules catch-up" : "vaultore run",
 		...(slotClaim ? { slotClaim } : {}),
+		...(unattended ? { unattended } : {}),
 		emitEvent: (event, data) => {
 			const cellId = (data as { cellId?: string })?.cellId;
 			if (event === "cell:started" && cellId !== undefined) ran.push(cellId);
@@ -266,6 +301,13 @@ async function cmdList(args: ParsedArgs): Promise<number> {
 const SUPERSEDED = "a later occurrence came due at the same time and ran instead";
 
 async function cmdAgent(args: ParsedArgs): Promise<number> {
+	if (args.flags["yes"] === true) {
+		process.stderr.write(
+			"error: vaultore agent --yes was removed: the agent runs each note with the permissions it was approved with. " +
+				"Answer a note's \"ask\" permissions when approving it: vaultore schedules approve <note.md> --allow <names> (or --deny <names>)\n"
+		);
+		return 2;
+	}
 	let rescanSeconds: number;
 	let keepDays: number;
 	try {
@@ -311,7 +353,6 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	const adapter = new NodeAdapter({
 		vaultRoot,
 		configDir: configDirFrom(args.flags),
-		assumeYes: args.flags["yes"] === true,
 		quiet: args.flags["quiet"] === true,
 		runner: "vaultore agent",
 		keepDays,
@@ -328,10 +369,10 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 	const runApproved = createApprovedRunner<ScheduledSlot>({
 		readNote: (path) => readScheduledNote((notePath) => adapter.readFile(notePath), path),
 		schedules: () => store.forVault(vaultKey),
-		run: async (path, content, scheduled) => {
+		run: async (path, content, scheduled, unattended) => {
 			try {
 				process.stdout.write(`[vaultore:agent] running ${path}\n`);
-				await executor.runWorkflow({ platform: adapter, workflowPath: path, content, scheduled });
+				await executor.runWorkflow({ platform: adapter, workflowPath: path, content, scheduled, unattended, runner: "vaultore agent" });
 				process.stdout.write(`[vaultore:agent] completed ${path}\n`);
 			} catch (err) {
 				// Run elsewhere, by the plugin or another CLI: not a failure of this one.
@@ -616,26 +657,16 @@ async function cmdSchedulesLateAfter(args: ParsedArgs): Promise<number> {
 	return 0;
 }
 
-async function cmdPermissionsOtherDevices(args: ParsedArgs): Promise<number> {
-	let line: string;
-	try {
-		line = await otherDevices(args.positional[0], machineSettingsPath());
-	} catch (err) {
-		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
-		return 2;
-	}
-	process.stdout.write(line + "\n");
-	return 0;
-}
-
 async function cmdSchedulesApprove(args: ParsedArgs): Promise<number> {
 	const vaultRoot = vaultRootFrom(args.flags);
 	const paths = notePathsFrom(args, vaultRoot);
 	if (paths === undefined) return 2;
 
 	let owner;
+	let answers;
 	try {
 		owner = ownerFrom(args.flags["owner"]);
+		answers = answersFrom(args.flags["allow"], args.flags["deny"]);
 	} catch (err) {
 		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
 		return 2;
@@ -649,8 +680,29 @@ async function cmdSchedulesApprove(args: ParsedArgs): Promise<number> {
 			store,
 			vaultKey,
 			owner,
+			answers,
 		})
 	);
+}
+
+/**
+ * The approval a catch-up of the note runs with, or why there is none that
+ * covers it as it is: the reason completes "not catching up <path>: …".
+ */
+async function catchUpApproval(vaultRoot: string, path: string, content: string): Promise<UnattendedApproval | string> {
+	const parser = new WorkflowParser();
+	if (!parser.isWorkflow(content)) return "it is not a workflow note";
+	const note = await scheduledNoteOf(parser.parse(content, path), parser);
+	if (note === undefined) return "it has no schedule";
+	const { store, vaultKey } = await openSchedulesFor(vaultRoot);
+	const schedules = await store.forVault(vaultKey);
+	const approval = approvalOf(schedules, path);
+	if (approval === undefined) {
+		return `it is not approved to run on schedule on this computer; approve it first: vaultore schedules approve ${path}`;
+	}
+	const binding = bindingOf(schedules, approval.owner);
+	if (!approvalCovers(approval, note, binding)) return changedReason(path, reviewApproval(approval, note));
+	return { approval, binding };
 }
 
 async function cmdSchedulesRevoke(args: ParsedArgs): Promise<number> {
@@ -728,12 +780,6 @@ async function main(): Promise<number> {
 			if (sub === "dismiss") return cmdSchedulesDismiss(args);
 			if (sub === "late-after") return cmdSchedulesLateAfter(args);
 			process.stderr.write(`error: unknown schedules subcommand '${sub ?? ""}'\n\n` + usage());
-			return 2;
-		}
-		case "permissions": {
-			const sub = args.positional.shift();
-			if (sub === "other-devices") return cmdPermissionsOtherDevices(args);
-			process.stderr.write(`error: unknown permissions subcommand '${sub ?? ""}'\n\n` + usage());
 			return 2;
 		}
 		default:

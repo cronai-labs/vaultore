@@ -4,7 +4,6 @@
  * BRICK-004/005/006: Executes cells and persists outputs
  */
 
-import { timingSafeEqual } from "node:crypto";
 import {
   Cell,
   CellOutput,
@@ -23,7 +22,8 @@ import {
 } from "../types";
 import { detectRuntimes, execContainer } from "../runtime";
 import { errorMessage } from "../errors";
-import { isRecord, vaultKeyFor } from "../settings/vault-state-store";
+import { vaultKeyFor } from "../settings/vault-state-store";
+import type { StoredAnswers } from "../settings/answers";
 import {
   OutputSerializer,
   TemplateInterpolator,
@@ -43,6 +43,8 @@ import { describeHolder } from "../lock";
 import { RunLockHeldError } from "../lock/run-lock";
 import type { LeftBehind } from "../lock/run-lock";
 import type { SlotClaim, SlotOutcome } from "../scheduler/slot-record";
+import { APPROVAL_PERMISSION_KEYS, approvalCovers, coveredPermissions } from "../settings/schedules";
+import type { ApprovalBinding, NoteApproval, NotePermissions, ScheduledNoteNow } from "../settings/schedules";
 import { parse } from "@babel/parser";
 
 // =============================================================================
@@ -69,6 +71,57 @@ export interface ExecuteOptions {
    * does for its claim. Not together with `scheduled`.
    */
   slotClaim?: SlotClaim;
+  /**
+   * The note's schedule approval and its owner's binding: where a scheduled
+   * run or a catch-up gets its permissions (#299). Required with `scheduled`
+   * and `slotClaim`, refused without them. Nothing is asked, nothing stored.
+   */
+  unattended?: UnattendedApproval;
+  /** Who runs it, for the run record: "Obsidian", "vaultore run", "vaultore agent". */
+  runner?: string;
+}
+
+/** The approval an unattended run goes by. */
+export interface UnattendedApproval {
+  approval: NoteApproval;
+  /** The binding of the approval's owner, whichever runner runs the note. */
+  binding: ApprovalBinding;
+}
+
+/** How a run was started, as its `run.json` says (#299). */
+export type RunTrigger =
+  | { kind: "manual"; runner?: string }
+  | {
+      kind: "schedule" | "catch-up";
+      runner?: string;
+      /** The slot run, or the first slot of the gap caught up. */
+      slot: string;
+      /** The runner that owns the note, whose approval the run goes by. */
+      owner: string;
+      approvedAt: string;
+    };
+
+/** Where a permission of a run came from, as its `run.json` says. */
+export interface PermissionLineage {
+  value: "allow" | "deny";
+  /**
+   * `frontmatter`; `answer` given for this device, `at` when; `approval` an
+   * answer given when the note was approved for schedule, `at` then;
+   * `unanswered`: an `ask` nobody could answer, denied for this run.
+   */
+  source: "frontmatter" | "answer" | "approval" | "unanswered";
+  at?: string;
+}
+
+/**
+ * A scheduled or caught-up run whose approval does not cover the note as it
+ * is: nothing ran, and its slot is recorded as skipped.
+ */
+export class UnattendedRunRefusedError extends Error {
+  constructor(readonly workflowPath: string, why: string) {
+    super(`${workflowPath} did not run unattended: ${why}`);
+    this.name = "UnattendedRunRefusedError";
+  }
 }
 
 /** The note changed after the caller read it; nothing was run. */
@@ -81,7 +134,7 @@ export class NoteChangedError extends Error {
 
 /** What a scheduled run came to, for its slot's outcome. */
 function slotOutcomeOf(err: unknown): SlotOutcome {
-  if (err instanceof RunLockHeldError || err instanceof NoteChangedError) {
+  if (err instanceof RunLockHeldError || err instanceof NoteChangedError || err instanceof UnattendedRunRefusedError) {
     return { result: "skipped", reason: errorMessage(err) };
   }
   return { result: "failed", reason: errorMessage(err) };
@@ -143,7 +196,10 @@ export class WorkflowExecutor {
     }
     const report: RunReport = {};
     try {
-      const result = await this.runWithLock(options, platform, workflow, notePath, report);
+      // After the claim, so that a refusal is recorded for the slot. Checked
+      // against the content parsed here, which the run lock then holds to.
+      const plan = await planRun(options, workflow, this.parser);
+      const result = await this.runWithLock(options, platform, workflow, notePath, report, plan);
       await this.finishSlot(platform, workflow.path, claim, {
         result: report.status ?? "completed",
         ...(report.runId !== undefined ? { runId: report.runId } : {}),
@@ -187,7 +243,8 @@ export class WorkflowExecutor {
     platform: PlatformAdapter,
     workflow: Workflow,
     notePath: string,
-    report: RunReport
+    report: RunReport,
+    plan: RunPlan
   ): Promise<Workflow> {
     // One run per note, across the plugin and the CLI (#215). Taken before
     // anything is recorded or run; a second runner is refused here, with the
@@ -206,7 +263,7 @@ export class WorkflowExecutor {
       if (current !== options.content) {
         throw new NoteChangedError(workflow.path);
       }
-      return await this.runLocked(options, platform, workflow, report);
+      return await this.runLocked(options, platform, workflow, report, plan);
     } finally {
       // However the run ended. A release that fails must not replace the
       // run's own result or error; the lock it leaves is taken over as stale
@@ -223,9 +280,10 @@ export class WorkflowExecutor {
     options: ExecuteOptions,
     platform: PlatformAdapter,
     workflow: Workflow,
-    report: RunReport
+    report: RunReport,
+    plan: RunPlan
   ): Promise<Workflow> {
-    const runContext = await createRunContext(platform, workflow.path);
+    const runContext = await createRunContext(platform, workflow.path, plan.trigger);
     report.runId = runContext.runId;
 
     const outputs = new Map<string, CellOutput>(workflow.outputs);
@@ -241,12 +299,14 @@ export class WorkflowExecutor {
     // failure used to escape before any finally, leaving the record this method
     // just wrote stuck at "running" forever.
     try {
-      const permissions = await resolvePermissions(
+      const { permissions, lineage } = await resolvePermissions(
         platform,
         workflow.path,
         workflow.frontmatter,
-        await grantHash(workflow, this.parser)
+        await grantHash(workflow, this.parser),
+        plan.unattended
       );
+      runContext.permissions = lineage;
 
       const engineChoice = resolveEngine(
         workflow.frontmatter.runtime?.engine,
@@ -527,50 +587,87 @@ interface RunContext {
   startedAt: string;
   workflowPath: string;
   outputRoot: string;
+  trigger: RunTrigger;
+  /** Each permission's value and source, once resolved. */
+  permissions?: Record<string, PermissionLineage>;
+}
+
+/** What a run goes by, decided before anything runs. */
+interface RunPlan {
+  trigger: RunTrigger;
+  /** An unattended run's permissions, from its approval. */
+  unattended?: { approval: NoteApproval; permissions: NonNullable<ReturnType<typeof coveredPermissions>> };
+}
+
+/** The frontmatter's permissions, defaults filled in. */
+export function notePermissions(frontmatter: WorkflowFrontmatter): NotePermissions {
+  const merged: WorkflowPermissions = { ...DEFAULT_PERMISSIONS, ...frontmatter.permissions };
+  return Object.fromEntries(APPROVAL_PERMISSION_KEYS.map((key) => [key, merged[key]])) as NotePermissions;
+}
+
+/** A workflow with a schedule as an approval sees it; undefined for one without a schedule. */
+export async function scheduledNoteOf(
+  workflow: Workflow,
+  parser: WorkflowParser = new WorkflowParser()
+): Promise<ScheduledNoteNow | undefined> {
+  const schedule = workflow.frontmatter.schedule;
+  if (!schedule) return undefined;
+  return {
+    path: workflow.path,
+    schedule: String(schedule),
+    hash: await grantHash(workflow, parser),
+    permissions: notePermissions(workflow.frontmatter),
+  };
 }
 
 /**
- * A stored decision, bound to the content it was given for (permissions-spec
- * §5.3). Before #284, one per note, under `vaultore.permissionDecisions`;
- * that key is still read when decisions from other devices apply, and never
- * written, so an older runner elsewhere keeps its own.
+ * The trigger of a run, and for a scheduled run or a catch-up the
+ * permissions its approval holds for the note as parsed (#299). Refused with
+ * `UnattendedRunRefusedError` when there is no approval, or it does not
+ * cover the note; and for an approval given with a run started by hand.
+ */
+async function planRun(options: ExecuteOptions, workflow: Workflow, parser: WorkflowParser): Promise<RunPlan> {
+  const runner = options.runner !== undefined ? { runner: options.runner } : {};
+  const slot = options.scheduled?.slot ?? options.slotClaim?.slot;
+  if (slot === undefined) {
+    if (options.unattended) throw new Error("An approval is for a scheduled run or a catch-up, not for a run started by hand");
+    return { trigger: { kind: "manual", ...runner } };
+  }
+  const { unattended } = options;
+  if (!unattended) {
+    throw new UnattendedRunRefusedError(workflow.path, "it is not approved to run on schedule on this computer");
+  }
+  const note = await scheduledNoteOf(workflow, parser);
+  if (note === undefined) throw new UnattendedRunRefusedError(workflow.path, "it has no schedule");
+  const permissions = coveredPermissions(unattended.approval, note);
+  if (!approvalCovers(unattended.approval, note, unattended.binding) || permissions === undefined) {
+    throw new UnattendedRunRefusedError(
+      workflow.path,
+      `it changed since it was approved on ${unattended.approval.approvedAt}; approve it again`
+    );
+  }
+  return {
+    trigger: {
+      kind: options.scheduled ? "schedule" : "catch-up",
+      ...runner,
+      slot: slot.toISOString(),
+      owner: unattended.approval.owner,
+      approvedAt: unattended.approval.approvedAt,
+    },
+    unattended: { approval: unattended.approval, permissions },
+  };
+}
+
+/**
+ * Answers to a note's `ask` permissions, bound to the content they were
+ * given for (permissions-spec §5.3).
  */
 type StoredDecision = Partial<WorkflowPermissions> & {
   workflowHash?: string;
   grantedAt?: string;
 };
 
-/**
- * A decision bound to the device it was made on as well (#284): kept under
- * `vaultore.deviceDecisions`, per note and then per device id, so that two
- * computers sharing a vault each keep their own. `mac` covers the vault, the
- * note, the device, the content hash and the answers.
- */
-type DeviceDecision = StoredDecision & { mac?: string };
-type DeviceDecisions = Record<string, Record<string, DeviceDecision>>;
-
 const PERMISSION_KEYS = ["network", "buildNetwork", "vaultRead", "vaultWrite"] as const;
-
-/** What a decision's MAC is made over, in one canonical text. */
-function decisionText(vault: string, path: string, device: string, decision: StoredDecision): string {
-  const answers = Object.fromEntries(PERMISSION_KEYS.map((key) => [key, decision[key] ?? null]));
-  return canonicalJson({
-    format: "vaultore.permission-decision",
-    version: 1,
-    vault,
-    path,
-    device,
-    workflowHash: decision.workflowHash ?? null,
-    grantedAt: decision.grantedAt ?? null,
-    answers,
-  });
-}
-
-function sameMac(a: string, b: string): boolean {
-  const left = Buffer.from(a, "utf8");
-  const right = Buffer.from(b, "utf8");
-  return left.length === right.length && timingSafeEqual(left, right);
-}
 
 /**
  * Several decisions as one, per permission: a deny in any of them wins over
@@ -639,79 +736,58 @@ async function resolvePermissions(
   platform: PlatformAdapter,
   workflowPath: string,
   frontmatter: WorkflowFrontmatter,
-  workflowHash: string
-): Promise<ResolvedPermissions> {
+  workflowHash: string,
+  unattended?: RunPlan["unattended"]
+): Promise<{ permissions: ResolvedPermissions; lineage: Record<string, PermissionLineage> }> {
   const merged: WorkflowPermissions = {
     ...DEFAULT_PERMISSIONS,
     ...frontmatter.permissions,
   };
+  const lineage: Record<string, PermissionLineage> = {};
+
+  // Unattended (#299): what the approval holds, checked against the note
+  // before the run; nobody is asked, nothing is stored, and the answers kept
+  // for runs started by hand are not read.
+  if (unattended) {
+    for (const key of PERMISSION_KEYS) {
+      const held = unattended.permissions[key];
+      lineage[key] =
+        held.source === "answer"
+          ? { value: held.value, source: "approval", at: unattended.approval.approvedAt }
+          : { value: held.value, source: "frontmatter" };
+    }
+    return { permissions: grantedBy(lineage), lineage };
+  }
+
   const resolved: WorkflowPermissions = { ...merged };
   const asked = PERMISSION_KEYS.filter((key) => merged[key] === "ask");
+  for (const key of PERMISSION_KEYS) {
+    if (merged[key] !== "ask") lineage[key] = { value: merged[key] === "allow" ? "allow" : "deny", source: "frontmatter" };
+  }
 
-  // Only an `ask` is answered and stored. A note that asks nothing needs no
-  // device and leaves the stored decisions as they are.
+  // Only an `ask` is answered and stored. A note that asks nothing reads and
+  // writes no answers.
   if (asked.length > 0) {
-    const device = await platform.decisionDevice();
+    // The answers this account gave on this computer, kept outside the vault
+    // and shared by both runners (#299). A file that cannot be used fails the
+    // run, naming it: asking again would hide it, and storing would fail.
+    const store = platform.permissionAnswers();
     // The vault's real path, so that a vault opened through a symbolic link
     // is the same vault, as for the run locks and the approvals.
     const vault = await vaultKeyFor(await platform.getVaultRoot());
-    // Read out of a file anyone who can write the vault can change: anything
-    // that is not a record is no decision.
-    const storedValue = platform.getSetting<unknown>("vaultore.deviceDecisions");
-    const stored: DeviceDecisions = isRecord(storedValue) ? (storedValue as DeviceDecisions) : {};
-    const noteValue = ownEntry<unknown>(stored, workflowPath);
-    const forNote: Record<string, DeviceDecision> = isRecord(noteValue) ? (noteValue as Record<string, DeviceDecision>) : {};
+    const own = ownEntry<StoredAnswers>((await store.forVault(vault)).notes, workflowPath);
+    // An answer applies only to the content it was given for (#69).
+    const current: StoredDecision | undefined = own?.workflowHash === workflowHash ? own : undefined;
 
-    // A decision applies only to the content it was given for (#69), and
-    // only on the device that made it (#284): one whose MAC does not verify
-    // was not made here, or was changed since, and counts as undecided.
-    const mineValue = ownEntry<unknown>(forNote, device.id);
-    const mine = isRecord(mineValue) ? (mineValue as DeviceDecision) : undefined;
-    let current: StoredDecision | undefined;
-    if (mineValue !== undefined) {
-      const expected = mine === undefined ? "" : device.sign(decisionText(vault, workflowPath, device.id, mine));
-      if (mine !== undefined && typeof mine.mac === "string" && sameMac(mine.mac, expected)) {
-        if (mine.workflowHash === workflowHash) current = mine;
-      } else {
-        platform.log("warn", `The stored permission decision for ${workflowPath} was not made here or was changed; asking again`);
-      }
-    }
-    // Turned on in this machine's settings, never by the vault: decisions
-    // made on other devices, and one stored before decisions carried a
-    // device, apply too. Where they disagree, a deny wins, whatever order
-    // the file lists them in.
-    const elsewhere = strictest(
-      [
-        ...Object.entries(forNote)
-          .filter(([id]) => id !== device.id)
-          .map(([, decision]) => decision as unknown),
-        ownEntry<unknown>(platform.getSetting("vaultore.permissionDecisions"), workflowPath),
-      ].filter(
-        (decision): decision is StoredDecision => isRecord(decision) && decision["workflowHash"] === workflowHash
-      )
-    );
-    if (current === undefined && elsewhere !== undefined) {
-      if (device.acceptOtherDevices) {
-        current = elsewhere;
-      } else {
-        // Said once per run, so that an upgrade that asks again is explained.
-        platform.log(
-          "info",
-          `An answer for ${workflowPath} given on another device, or before answers were kept per device, does not apply here; ` +
-            "asking again. Permission answers from other devices (vaultore permissions other-devices) changes that"
-        );
-      }
-    }
-
-    // The answers to keep: given now, or kept before. A permission nobody
-    // could be asked about is denied for this run only, so that a later run
-    // that can ask (the CLI with --yes) is not bound by a deny nobody gave.
-    const answered: (typeof PERMISSION_KEYS)[number][] = [];
+    // A permission nobody could be asked about is denied for this run only,
+    // so that a later run that can ask (the CLI with --yes) is not bound by a
+    // deny nobody gave.
+    const given: StoredDecision = {};
     for (const key of asked) {
       const answer = current?.[key];
       if (answer === "allow" || answer === "deny") {
         resolved[key] = answer;
-        answered.push(key);
+        lineage[key] = { value: answer, source: "answer", ...(current?.grantedAt !== undefined ? { at: current.grantedAt } : {}) };
         continue;
       }
       const approved = platform.confirm
@@ -720,33 +796,41 @@ async function resolvePermissions(
       resolved[key] = approved === true ? "allow" : "deny";
       if (approved === undefined) {
         platform.log("warn", `${key} for ${workflowPath} is denied for this run: nobody could be asked, and nothing was kept`);
+        lineage[key] = { value: "deny", source: "unanswered" };
         continue;
       }
-      answered.push(key);
+      const value = resolved[key] === "allow" ? "allow" : "deny";
+      given[key] = value;
+      lineage[key] = { value, source: "answer", at: new Date().toISOString() };
     }
 
-    const decision: StoredDecision = {
-      ...Object.fromEntries(answered.map((key) => [key, resolved[key]])),
-      workflowHash,
-      grantedAt: (current === mine ? mine?.grantedAt : undefined) ?? new Date().toISOString(),
-    };
-    const entry: DeviceDecision = { ...decision, mac: device.sign(decisionText(vault, workflowPath, device.id, decision)) };
-    // Without a prototype, so that a note path such as "__proto__" is an
-    // entry like any other.
-    const nextForNote = Object.assign(Object.create(null) as Record<string, DeviceDecision>, forNote);
-    nextForNote[device.id] = entry;
-    const next = Object.assign(Object.create(null) as DeviceDecisions, stored);
-    next[workflowPath] = nextForNote;
-    if (answered.length > 0 && JSON.stringify(mine) !== JSON.stringify(entry)) {
-      await platform.setSetting("vaultore.deviceDecisions", next);
+    if (Object.keys(given).length > 0) {
+      // Merged inside the store's lock with what is kept then: the other
+      // runner may have answered the same content while this one asked, and
+      // where the two disagree a deny wins.
+      await store.update(vault, (entry) => {
+        const kept = ownEntry<StoredAnswers>(entry.notes, workflowPath);
+        const same = kept?.workflowHash === workflowHash ? kept : undefined;
+        const merged = strictest([...(same ? [same] : []), given]) ?? given;
+        entry.notes[workflowPath] = {
+          ...merged,
+          workflowHash,
+          grantedAt: same?.grantedAt ?? new Date().toISOString(),
+        } as StoredAnswers;
+      });
     }
   }
 
+  return { permissions: grantedBy(lineage), lineage };
+}
+
+/** What a run may do, from each permission's value. */
+function grantedBy(lineage: Record<string, PermissionLineage>): ResolvedPermissions {
   return {
-    network: resolved.network === "allow",
-    buildNetwork: resolved.buildNetwork === "allow",
-    vaultRead: resolved.vaultRead === "allow",
-    vaultWrite: resolved.vaultWrite === "allow",
+    network: lineage["network"]?.value === "allow",
+    buildNetwork: lineage["buildNetwork"]?.value === "allow",
+    vaultRead: lineage["vaultRead"]?.value === "allow",
+    vaultWrite: lineage["vaultWrite"]?.value === "allow",
   };
 }
 
@@ -931,7 +1015,8 @@ function buildOutput(
 
 async function createRunContext(
   platform: PlatformAdapter,
-  workflowPath: string
+  workflowPath: string,
+  trigger: RunTrigger
 ): Promise<RunContext> {
   const startedAt = new Date().toISOString();
   const runId = createRunId();
@@ -949,13 +1034,14 @@ async function createRunContext(
         workflowPath,
         startedAt,
         status: "running",
+        trigger,
       },
       null,
       2
     )
   );
 
-  return { runId, runDir, runBaseDir, startedAt, workflowPath, outputRoot };
+  return { runId, runDir, runBaseDir, startedAt, workflowPath, outputRoot, trigger };
 }
 
 /**
@@ -1068,6 +1154,8 @@ export async function finalizeRunContext(
           ...(runError !== undefined
             ? { error: errorMessage(runError) }
             : {}),
+          trigger: runContext.trigger,
+          ...(runContext.permissions !== undefined ? { permissions: runContext.permissions } : {}),
           cells,
         },
         null,

@@ -99,7 +99,16 @@ export {
 // EXECUTOR
 // =============================================================================
 
-export { WorkflowExecutor, DEFAULT_CONFIG_DIR, NoteChangedError, grantHash } from "./executor";
+export {
+  WorkflowExecutor,
+  DEFAULT_CONFIG_DIR,
+  NoteChangedError,
+  UnattendedRunRefusedError,
+  grantHash,
+  notePermissions,
+  scheduledNoteOf,
+} from "./executor";
+export type { UnattendedApproval, RunTrigger, PermissionLineage } from "./executor";
 export { summarizeRun, runSucceeded, describeRun } from "./executor/run-summary";
 export type { RunSummary } from "./executor/run-summary";
 
@@ -174,12 +183,27 @@ export {
   legacyApprovalsPath,
   noteScheduleState,
   approveNote,
+  approvalOf,
+  approvalCovers,
+  approvedPermissions,
+  bindingOf,
+  coveredPermissions,
+  reviewApproval,
   revokeNote,
   ownerName,
+  ApprovalAnswerError,
+  APPROVAL_PERMISSION_KEYS,
   SCHEDULES_FILE,
   SCHEDULE_OWNERS,
 } from "./settings/schedules";
 export type {
+  ApprovalBinding,
+  ApprovalPermissionKey,
+  ApprovalReview,
+  ApprovedPermission,
+  ApprovedPermissions,
+  NotePermissions,
+  PermissionReview,
   NoteApproval,
   NoteScheduleState,
   OpenSchedulesOptions,
@@ -188,8 +212,8 @@ export type {
   SchedulesStoreOptions,
   VaultSchedules,
 } from "./settings/schedules";
-export { readDecisionDevice, deviceFilePath } from "./settings/device";
-export type { DecisionDevice, DecisionDeviceOptions } from "./settings/device";
+export { answersStore, answersPath, ANSWERS_FILE } from "./settings/answers";
+export type { AnswersStoreOptions, StoredAnswers, VaultAnswers } from "./settings/answers";
 
 export type {
   ClaimSlotOptions,
