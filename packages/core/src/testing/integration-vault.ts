@@ -82,6 +82,7 @@ export function filesystemPlatform(
 				directory: lockDirectory,
 			}),
 		decisionDevice: async () => testDecisionDevice(),
+		otherRunnerDecisions: async () => undefined,
 		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
 			settings.set(key, value);

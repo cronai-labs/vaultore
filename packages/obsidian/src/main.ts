@@ -28,6 +28,8 @@ import {
   isLateSlot,
   lateAfterMs,
   readDecisionDevice,
+  readRunnerDecisions,
+  cliConfigPath,
   readMachineSettings,
   writeMachineSettings,
   openSchedules,
@@ -59,6 +61,7 @@ import type {
   AgentStatus,
   LockWait,
   NoteApproval,
+  RunnerDecisions,
   ScheduleOwner,
   VaultSchedules,
   VaultStateStore,
@@ -302,6 +305,11 @@ class ObsidianAdapter implements PlatformAdapter {
   /** This account's device on this computer, shared with vaultore (#284). */
   decisionDevice(): Promise<DecisionDevice> {
     return readDecisionDevice();
+  }
+
+  /** The answers vaultore keeps for this vault on this device (#299), read now. */
+  async otherRunnerDecisions(): Promise<RunnerDecisions | undefined> {
+    return readRunnerDecisions(cliConfigPath(await this.getVaultRoot()));
   }
 
   getSetting<T>(key: string): T | undefined {

@@ -109,6 +109,22 @@ describe("NodeAdapter config.json", () => {
 	it("keeps its lock outside the vault", async () => {
 		await adapterFor().setSetting("vaultore.outputRoot", "_out");
 		expect(readdirSync(join(base, "vault", ".vaultore"))).toEqual(["config.json"]);
+// The plugin's answers on this device count for the CLI too (#299).
+describe("NodeAdapter.otherRunnerDecisions", () => {
+	it("reads the plugin's answers under the configured config folder", async () => {
+		const vault = join(base, "vault");
+		const file = join(vault, ".config-desk/plugins/vaultore/data.json");
+		mkdirSync(join(vault, ".config-desk/plugins/vaultore"), { recursive: true });
+		writeFileSync(file, JSON.stringify({ outputRoot: "_x", deviceDecisions: { "wf.md": { a: {} } } }));
+
+		const adapter = new NodeAdapter({ vaultRoot: vault, configDir: ".config-desk", quiet: true });
+
+		expect(await adapter.otherRunnerDecisions()).toEqual({ file, decisions: { "wf.md": { a: {} } } });
+	});
+
+	it("finds none where the plugin keeps no settings", async () => {
+		const adapter = new NodeAdapter({ vaultRoot: join(base, "vault"), quiet: true });
+		expect(await adapter.otherRunnerDecisions()).toBeUndefined();
 	});
 });
 

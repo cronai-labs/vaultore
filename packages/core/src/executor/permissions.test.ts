@@ -22,6 +22,7 @@ import { execContainer } from "../runtime";
 import { memoryRunLocks } from "../testing/run-locks";
 import { testDecisionDevice } from "../testing/decision-device";
 import type { DecisionDevice } from "../settings/device";
+import type { RunnerDecisions } from "../settings/runner-decisions";
 
 const SECRET = "the contents of a private note";
 
@@ -52,10 +53,16 @@ function vault(
 	const settings = new Map<string, unknown>();
 	const reads: string[] = [];
 	const devices = { current: testDecisionDevice(), reads: 0 };
+	// What the other runner on this computer keeps (#299): an Error is a file that cannot be read.
+	const otherRunner: { current: RunnerDecisions | Error | undefined } = { current: undefined };
 	const platform = {
 		decisionDevice: async (): Promise<DecisionDevice> => {
 			devices.reads += 1;
 			return devices.current;
+		},
+		otherRunnerDecisions: async () => {
+			if (otherRunner.current instanceof Error) throw otherRunner.current;
+			return otherRunner.current;
 		},
 		platform: "cli",
 		configDir,
@@ -95,7 +102,7 @@ function vault(
 		},
 		log: () => undefined,
 	} as unknown as PlatformAdapter;
-	return { platform, files, reads, settings, devices };
+	return { platform, files, reads, settings, devices, otherRunner };
 }
 
 let requests: string[];
@@ -650,6 +657,122 @@ describe("decisions are bound to the device that made them (#284)", () => {
 			expect(await s.runOn(HERE, GRANTED, { acceptOtherDevices: true })).toBe(status);
 			expect(s.prompts).toHaveLength(1);
 		});
+	});
+});
+
+describe("the plugin and the CLI on one computer share their answers (#299)", () => {
+	const GRANTED = note(
+		"  network: ask\n  buildNetwork: deny\n  vaultRead: allow",
+		"```ore:ai id=summary\nSay hello.\n```"
+	);
+	const HERE = "a".repeat(32);
+	const THERE = "b".repeat(32);
+	const OTHER_FILE = "/vault/.obsidian/plugins/vaultore/data.json";
+
+	function runner() {
+		const v = vault({ "Private/secret.md": SECRET }, {}, {}, ".obsidian", realVault);
+		v.devices.current = testDecisionDevice(HERE);
+		const prompts: string[] = [];
+		const logs: string[] = [];
+		(v.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
+		const answer = (value: boolean | undefined) => {
+			(v.platform as { confirm?: unknown }).confirm = async (message: string) => {
+				prompts.push(message);
+				return value;
+			};
+		};
+		async function run(content = GRANTED) {
+			v.files["wf.md"] = content;
+			const workflow = await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content });
+			return workflow.outputs.get("summary")?.meta.status;
+		}
+		const stored = () => v.settings.get("vaultore.deviceDecisions") as Record<string, Record<string, Record<string, unknown>>> | undefined;
+		/** Moves what this runner stored into the other runner's file, as if the other had answered. */
+		function handOver() {
+			v.otherRunner.current = { file: OTHER_FILE, decisions: stored() };
+			v.settings.delete("vaultore.deviceDecisions");
+		}
+		return { ...v, prompts, logs, answer, run, stored, handOver };
+	}
+
+	it("applies an answer the other runner kept on this device, without asking and without copying it", async () => {
+		const r = runner();
+		r.answer(true);
+		await r.run();
+		r.handOver();
+		r.answer(undefined);
+
+		expect(await r.run()).toBe("success");
+		expect(r.prompts).toHaveLength(1);
+		expect(r.stored()).toBeUndefined();
+	});
+
+	it.each([
+		["here", "there"],
+		["there", "here"],
+	])("lets a deny kept %s win over an allow kept %s", async (denyIn) => {
+		const r = runner();
+		r.answer(denyIn !== "there");
+		await r.run();
+		const there = r.stored();
+		r.settings.delete("vaultore.deviceDecisions");
+		r.answer(denyIn === "there");
+		await r.run();
+		r.otherRunner.current = { file: OTHER_FILE, decisions: there };
+		r.answer(true);
+
+		expect(await r.run()).toBe("error");
+		expect(r.prompts).toHaveLength(2);
+	});
+
+	it("asks again for an entry in the other runner's file whose MAC does not verify, naming the file", async () => {
+		const r = runner();
+		r.answer(false);
+		await r.run();
+		const decisions = r.stored()!;
+		decisions["wf.md"]![HERE] = { ...decisions["wf.md"]![HERE]!, network: "allow" };
+		r.handOver();
+
+		await r.run();
+
+		expect(r.prompts).toHaveLength(2);
+		expect(r.logs).toContain(
+			`The other runner's (${OTHER_FILE}) permission decision for wf.md was not made here or was changed; asking again`
+		);
+	});
+
+	it("asks when the other runner's file cannot be read, and says so", async () => {
+		const r = runner();
+		r.answer(true);
+		r.otherRunner.current = new Error(`Cannot read the permission answers in ${OTHER_FILE}: it is not JSON (bad)`);
+
+		expect(await r.run()).toBe("success");
+		expect(r.prompts).toHaveLength(1);
+		expect(r.logs).toContain(
+			`Cannot read the permission answers in ${OTHER_FILE}: it is not JSON (bad); answers kept there do not apply to this run`
+		);
+	});
+
+	it("reads no other runner's file for a note that asks nothing", async () => {
+		const r = runner();
+		r.otherRunner.current = new Error("read");
+		await r.run(note("  network: deny", "```ore:ai id=summary\nSay hello.\n```"));
+
+		expect(r.logs.filter((line) => line.includes("read"))).toEqual([]);
+	});
+
+	it("takes over another device's answer from the other runner's file, with answers from other devices on", async () => {
+		const r = runner();
+		r.devices.current = testDecisionDevice(THERE);
+		r.answer(true);
+		await r.run();
+		r.handOver();
+		r.devices.current = testDecisionDevice(HERE, { acceptOtherDevices: true });
+		r.answer(undefined);
+
+		expect(await r.run()).toBe("success");
+		expect(r.prompts).toHaveLength(1);
+		expect(Object.keys(r.stored()?.["wf.md"] ?? {})).toEqual([HERE]);
 	});
 });
 

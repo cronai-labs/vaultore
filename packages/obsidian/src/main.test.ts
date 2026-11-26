@@ -48,6 +48,9 @@ vi.mock("@vaultore/core", async () => {
     // The device a permission decision is bound to (#284), likewise.
     readDecisionDevice: () =>
       actual.readDecisionDevice({ devicePath: machineSettings.device, settingsPath: machineSettings.path }),
+    // The answers vaultore keeps (#299): read from the vault as given.
+    readRunnerDecisions: actual.readRunnerDecisions,
+    cliConfigPath: actual.cliConfigPath,
     // The scheduling consent, likewise in the test's own file (#276); the
     // vault key is the root as given, as the test vaults need not exist.
     openSchedules: (options: import("@vaultore/core").OpenSchedulesOptions) =>
@@ -314,6 +317,28 @@ describe("VaultOrePlugin", () => {
       await toggle.changeHandler!(false);
       expect(JSON.parse(readFileSync(machineSettings.path, "utf8"))).toEqual({});
       expect((await adapter.decisionDevice()).acceptOtherDevices).toBe(false);
+    });
+
+    // vaultore's answers on this device count in Obsidian too (#299).
+    it("reads the answers vaultore keeps for this vault, from its config file", async () => {
+      const root = mkdtempSync(join(tmpdir(), "vaultore-obsidian-answers-"));
+      try {
+        const files = new FileSystemAdapter();
+        vi.spyOn(files, "getBasePath").mockReturnValue(root);
+        plugin.app.vault.adapter = files as never;
+        const adapter = (plugin as unknown as { adapter: import("@vaultore/core").PlatformAdapter }).adapter;
+        expect(await adapter.otherRunnerDecisions()).toBeUndefined();
+
+        mkdirSync(join(root, ".vaultore"));
+        writeFileSync(join(root, ".vaultore", "config.json"), JSON.stringify({ deviceDecisions: { "wf.md": { a: {} } } }));
+
+        expect(await adapter.otherRunnerDecisions()).toEqual({
+          file: join(root, ".vaultore", "config.json"),
+          decisions: { "wf.md": { a: {} } },
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
 
     it("keeps the device's decisions in data.json beside the earlier ones, which it writes back unchanged", async () => {

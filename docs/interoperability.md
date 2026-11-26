@@ -32,7 +32,7 @@ Conventions that differ from the plugin, on purpose:
 |---------|--------|-----|
 | Settings | Obsidian settings UI | `<vault>/.vaultore/config.json` |
 | Secrets | Obsidian secret storage | Environment (`VAULTORE_OPENAI_APIKEY`, `OPENAI_API_KEY`, …) |
-| Permission prompts | Modal dialog | Non-interactive: denied for the run unless `--yes`, which is stored; decisions persist to config, bound to the note's content and this device |
+| Permission prompts | Modal dialog | Non-interactive: denied for the run unless `--yes`, which is stored; decisions persist to config, bound to the note's content and this device, and shared with the plugin on this device |
 | Scheduling | Only notes approved for Obsidian (path and schedule), while Obsidian is open | `vaultore agent` runs only notes approved for it (path and content); one file outside the vault holds both runners' approvals, one per note |
 
 The same workflow note produces the same run either way — outputs, run

@@ -129,7 +129,8 @@ late-after' shows or sets that for this machine, 2 to 60 minutes, in the file
 both runners read (Obsidian's "Late after" is the same setting).
 
 An answer to a note's "ask" permission is kept for the note's content and
-this device (this account on this computer): a note that arrives through
+this device (this account on this computer), and answers given in Obsidian
+on this computer count too, a deny winning: a note that arrives through
 sync, or was answered on another computer, is asked again, so without --yes
 it is denied. 'permissions other-devices apply' lets answers given elsewhere,
 or before answers carried a device, apply here too, a deny winning where

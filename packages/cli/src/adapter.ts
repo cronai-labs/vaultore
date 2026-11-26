@@ -8,7 +8,8 @@
  * Conventions:
  * - Settings live in `<vault>/.vaultore/config.json` (flat keys mirroring
  *   the plugin's settings: defaultProvider, defaultModel, runtimeEngine,
- *   outputRoot, permissionDecisions, ...)
+ *   outputRoot, deviceDecisions, ...); the plugin reads `deviceDecisions`
+ *   from it too, and this adapter the plugin's (#299)
  * - Secrets come from environment variables, never from files:
  *   `openai.apiKey`    → VAULTORE_OPENAI_APIKEY (fallback OPENAI_API_KEY)
  *   `anthropic.apiKey` → VAULTORE_ANTHROPIC_APIKEY (fallback ANTHROPIC_API_KEY)
@@ -30,7 +31,10 @@ import {
 	claimSlot,
 	describeHolder,
 	errorMessage,
+	cliConfigPath,
+	pluginSettingsPath,
 	readDecisionDevice,
+	readRunnerDecisions,
 	resolveInVaultRoot,
 	runLockDirectory,
 } from "@vaultore/core";
@@ -41,6 +45,7 @@ import type {
 	PlatformRequest,
 	PlatformResponse,
 	RunLock,
+	RunnerDecisions,
 	ScheduledSlot,
 	SlotClaim,
 	Timers,
@@ -227,6 +232,14 @@ export class NodeAdapter implements PlatformAdapter {
 		return readDecisionDevice(this.deviceOptions);
 	}
 
+	/**
+	 * The answers the plugin keeps for this vault on this device (#299), read
+	 * now: in its settings under the vault's config folder (--config-dir).
+	 */
+	otherRunnerDecisions(): Promise<RunnerDecisions | undefined> {
+		return readRunnerDecisions(pluginSettingsPath(this.vaultRoot, this.configDir));
+	}
+
 	getSetting<T>(key: string): T | undefined {
 		const short = key.startsWith("vaultore.") ? key.slice("vaultore.".length) : key;
 		if (short in this.overrides) return this.overrides[short] as T;
@@ -355,7 +368,7 @@ export class NodeAdapter implements PlatformAdapter {
 	}
 
 	private configPath(): string {
-		return join(this.vaultRoot, ".vaultore", "config.json");
+		return cliConfigPath(this.vaultRoot);
 	}
 
 	/** `config.json` as it is, or nothing when there is none. Throws, naming it, for one that cannot be used. */

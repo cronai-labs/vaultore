@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { RunLock } from "../lock/run-lock";
 import type { SlotClaim } from "../scheduler/slot-record";
 import type { DecisionDevice } from "../settings/device";
+import type { RunnerDecisions } from "../settings/runner-decisions";
 
 // =============================================================================
 // PERMISSION TYPES
@@ -593,6 +594,15 @@ export interface PlatformAdapter {
    * permission. Both runners return core's `readDecisionDevice()`.
    */
   decisionDevice(): Promise<DecisionDevice>;
+
+  /**
+   * The permission answers the other runner on this computer keeps for this
+   * vault (#299): the plugin reads the CLI's `.vaultore/config.json`, the CLI
+   * the plugin's `data.json`, with core's `readRunnerDecisions()`. Read at
+   * the moment of asking, only for a note with an `ask` permission. Undefined
+   * when there are none; a file that cannot be read throws, naming it.
+   */
+  otherRunnerDecisions(): Promise<RunnerDecisions | undefined>;
 
   // Secrets
   getSecret(key: string): Promise<string | undefined>;

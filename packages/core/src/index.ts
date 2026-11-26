@@ -190,6 +190,8 @@ export type {
 } from "./settings/schedules";
 export { readDecisionDevice, deviceFilePath } from "./settings/device";
 export type { DecisionDevice, DecisionDeviceOptions } from "./settings/device";
+export { readRunnerDecisions, pluginSettingsPath, cliConfigPath, PLUGIN_ID } from "./settings/runner-decisions";
+export type { RunnerDecisions } from "./settings/runner-decisions";
 
 export type {
   ClaimSlotOptions,

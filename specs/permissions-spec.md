@@ -258,6 +258,8 @@ After the prompts, the answers to the permissions at `ask` are stored per note p
 
 They are kept as `deviceDecisions` in the plugin's settings (`.obsidian/plugins/vaultore/data.json`) or in the CLI's `<vault>/.vaultore/config.json`; both are hidden from cells.
 
+**Both runners on one computer share their answers** ([#299](https://github.com/cronai-labs/vaultore/issues/299)): they share the device, so each reads the other's file as well as its own, at the start of a run that asks, and writes only its own. An answer in the other runner's file counts as one in the runner's own: this device's only when its MAC verifies, whatever the setting below says, and another device's only under that setting. Where this device's answers in the two files disagree, a deny wins, so a deny given in Obsidian also binds `vaultore run --yes` for that content. An answer read from the other runner's file is not copied into the runner's own. The CLI finds the plugin's file under `--config-dir`. A file of the other runner that cannot be read is no answers, and the log says so.
+
 **The device** is an account on a computer ([#284](https://github.com/cronai-labs/vaultore/issues/284)): `device.json` in VaultOre's folder for the account (`~/.config/vaultore/`, `%APPDATA%\vaultore\` on Windows), outside every vault, made on first use and shared by the plugin and the CLI. It holds a random public `id` and a random secret `key`, and nothing about the machine. Two runners that make it at once agree on one. A device file that cannot be read is an error naming it, and a note that asks is not run; it is never replaced silently, as a new one withdraws every decision made here.
 
 **The MAC** is HMAC-SHA256 with the device's key over the vault's path, the note's path, the device id, `workflowHash`, `grantedAt` and the answers. A decision applies only when its MAC verifies. So one written by anyone who can only write the vault, one changed from `deny` to `allow`, and one copied to another note, vault or device are not decisions: the user is asked again, and the log says so. Each device keeps its own entry, so computers that share a vault do not replace each other's answers.
@@ -442,7 +444,8 @@ Merge frontmatter permissions over the defaults
   │
   ▼
 For each permission at "ask":
-  stored decision for this path, this device and the same content hash, whose MAC verifies?
+  stored decision for this path, this device and the same content hash, whose MAC verifies,
+  in this runner's file or the other runner's (a deny winning)?
     yes → use it
   else, with decisions from other devices on: those from other devices,
   and one stored before decisions carried a device, for the same content hash?
