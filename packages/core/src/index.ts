@@ -100,6 +100,8 @@ export {
 // =============================================================================
 
 export { WorkflowExecutor, DEFAULT_CONFIG_DIR, NoteChangedError, grantHash } from "./executor";
+export { summarizeRun, runSucceeded, describeRun } from "./executor/run-summary";
+export type { RunSummary } from "./executor/run-summary";
 
 // =============================================================================
 // RUNTIME

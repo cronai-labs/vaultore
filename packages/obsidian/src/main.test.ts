@@ -64,6 +64,8 @@ vi.mock("@vaultore/core", async () => {
     },
     WorkflowScheduler: actual.WorkflowScheduler,
     computeNextRun: actual.computeNextRun,
+    describeRun: actual.describeRun,
+    summarizeRun: actual.summarizeRun,
     errorMessage: actual.errorMessage,
     isWorkflowFrontmatter: actual.isWorkflowFrontmatter,
     resolveInVaultRoot: actual.resolveInVaultRoot,
@@ -594,6 +596,48 @@ describe("VaultOrePlugin", () => {
 
       expect(Notice.shown).toContain("VaultOre: notes/daily.md is already being run by process 7 (vaultore agent)");
       expect(Notice.shown.some((message) => message.startsWith("VaultOre error"))).toBe(false);
+    });
+
+    // The notice says how the run went, not "completed" whatever its cells came to (#290).
+    describe("the notice at the end of a run", () => {
+      const output = (cellId: string, status: "success" | "error") => ({
+        cellId,
+        value: null,
+        meta: { status, duration: 1, timestamp: "2026-11-26T00:00:00.000Z" },
+      });
+      const cells = [
+        { attributes: { id: "fetch", type: "shell" } },
+        { attributes: { id: "report", type: "shell", depends: ["fetch"] } },
+        { attributes: { id: "other", type: "shell" } },
+      ];
+
+      async function runWith(statuses: Record<string, "success" | "error">): Promise<string[]> {
+        const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
+        plugin.app.vault.read = vi.fn().mockResolvedValue("---\nore: true\n---\n") as never;
+        const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
+        executor.runWorkflow.mockImplementationOnce(
+          async (options: { emitEvent?: (event: string, data: unknown) => void }) => {
+            for (const cellId of Object.keys(statuses)) options.emitEvent?.("cell:started", { cellId });
+            return {
+              cells,
+              outputs: new Map(Object.entries(statuses).map(([id, status]) => [id, output(id, status)])),
+            };
+          }
+        );
+        Notice.shown.length = 0;
+        await (plugin as unknown as { runWorkflow: (f: unknown) => Promise<void> }).runWorkflow(file);
+        return Notice.shown.filter((message) => !message.startsWith("VaultOre: Running"));
+      }
+
+      it("says completed when every cell succeeded", async () => {
+        expect(await runWith({ fetch: "success", other: "success", report: "success" })).toEqual(["VaultOre: daily completed"]);
+      });
+
+      it("names a failed cell, and a cell that did not run because of it, apart", async () => {
+        expect(await runWith({ fetch: "error", other: "success", report: "error" })).toEqual([
+          "VaultOre: daily finished, 1 of 3 cells failed (fetch), 1 did not run because a cell it needs did not succeed (report)",
+        ]);
+      });
     });
 
     // One run per scheduled slot, shared with the CLI (#255).
