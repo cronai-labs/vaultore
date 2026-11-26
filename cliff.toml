@@ -21,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 # `trim` strips every template line and the template's last newline, so the
 # `\n` after the final endfor is what puts a blank line between releases (#167).
 # Breaking changes come first, each with the text of its `BREAKING CHANGE:`
-# footer (the subject when there is none), and stay in their own section as
-# well (#193).
+# footer (the subject when there is none), its lines joined as GitHub wrapped
+# them (#288), and stay in their own section as well (#193).
 # "Upgrading" follows, one entry per `Upgrade-Note:` footer: what a user has
 # to do after a change that was not marked breaking. GitHub wraps a squash
 # commit's body, so a footer's lines are joined again.
@@ -36,7 +36,7 @@ body = """
 {%- if breaking | length > 0 %}
 ### Breaking changes
 {% for commit in breaking %}
-- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.breaking_description | upper_first }}\
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.breaking_description | replace_regex(from="\\s+", to=" ") | upper_first }}\
 {% endfor %}
 {% endif %}
 {%- set upgrading = false %}
