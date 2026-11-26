@@ -185,6 +185,8 @@ export {
   approveNote,
   approvalOf,
   catchUpRefusal,
+  scheduledSince,
+  setObsidianScheduling,
   approvalCovers,
   approvedPermissions,
   bindingOf,

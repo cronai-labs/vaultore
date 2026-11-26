@@ -58,6 +58,8 @@ vi.mock("@vaultore/core", async () => {
     approveNote: actual.approveNote,
     approvalOf: actual.approvalOf,
     catchUpRefusal: actual.catchUpRefusal,
+    scheduledSince: actual.scheduledSince,
+    setObsidianScheduling: actual.setObsidianScheduling,
     approvalCovers: actual.approvalCovers,
     approvedPermissions: actual.approvedPermissions,
     bindingOf: actual.bindingOf,
@@ -754,6 +756,19 @@ describe("VaultOrePlugin", () => {
           Notice.shown.length = 0;
         });
 
+        // #308: while the switch was off, nothing was scheduled, so nothing was missed.
+        it("are not recorded for the time Run scheduled workflows was off", async () => {
+          plugin.app.metadataCache.getFileCache = () => ({ frontmatter: { ore: true, schedule: HOURLY } });
+          await plugin.setScheduleOwner("notes/daily.md", "obsidian");
+          await plugin.setRunScheduledWorkflows(true);
+          expect(plugin.schedules.obsidianSchedulingSince).toBeDefined();
+          Notice.shown.length = 0;
+
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+
+          expect(plugin.missedRuns).toEqual([]);
+        });
+
         it("are recorded once, said once, and listed with Catch up and Dismiss", async () => {
           await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
           await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
@@ -803,6 +818,13 @@ describe("VaultOrePlugin", () => {
         it("are caught up with one run that holds the gap, with the note's approval (#299)", async () => {
           plugin.app.metadataCache.getFileCache = () => ({ frontmatter: { ore: true, schedule: HOURLY } });
           await plugin.setScheduleOwner("notes/daily.md", "agent");
+          // Approved before the run it had, so the hours since were scheduled (#308).
+          const core = await vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
+          const vaultRoot = await (plugin as unknown as { adapter: { getVaultRoot(): Promise<string> } }).adapter.getVaultRoot();
+          await core.schedulesStore({ path: machineSettings.schedules }).update(vaultRoot, (entry) => {
+            entry.notes["notes/daily.md"]!.approvedAt = new Date(lastRun.getTime() - 3_600_000).toISOString();
+          });
+          await plugin.reloadSchedules();
           await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
           const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
           executor.runWorkflow.mockClear();
@@ -1153,6 +1175,7 @@ describe("scheduled workflows", () => {
     expect(JSON.parse(readFileSync(machineSettings.schedules, "utf8")).vaults).toEqual({
       [await (plugin as unknown as { adapter: { getVaultRoot(): Promise<string> } }).adapter.getVaultRoot()]: {
         obsidianScheduling: true,
+        obsidianSchedulingSince: expect.any(String),
         obsidianBinding: "strict",
         notes: {
           "Workflows/daily.md": {

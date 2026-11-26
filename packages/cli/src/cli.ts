@@ -43,6 +43,7 @@ import {
 	approvalCovers,
 	approvalOf,
 	catchUpRefusal,
+	scheduledSince,
 	bindingOf,
 	describeRun,
 	errorMessage,
@@ -407,8 +408,12 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 
 	// Occurrences no runner fired are recorded as missed runs, said once
 	// here, and left to the user to catch up or dismiss (#269).
+	// The schedules as the last rescan read them: since when each note is
+	// scheduled, so no run before is missed (#308).
+	let lastSchedules: VaultSchedules | undefined;
 	const lookForMissed = async (path: string, schedule: string, armedAt?: Date): Promise<void> => {
 		try {
+			const since = lastSchedules === undefined ? undefined : scheduledSince(lastSchedules, path);
 			const gaps = await recordMissedSlots({
 				vaultRoot,
 				notePath: path,
@@ -416,7 +421,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 				by: "vaultore agent",
 				keepDays,
 				lateAfterMs: late,
-				...(armedAt ? { armedAt } : {}),
+				...(since ? { scheduledSince: since } : armedAt ? { armedAt } : {}),
 			});
 			for (const gap of gaps) {
 				warn(
@@ -465,6 +470,7 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 		let schedules;
 		try {
 			schedules = await store.forVault(vaultKey);
+			lastSchedules = schedules;
 			storeError = undefined;
 		} catch (err) {
 			scheduler.replace([]);

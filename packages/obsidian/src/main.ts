@@ -36,6 +36,8 @@ import {
   approveNote,
   approvalOf,
   catchUpRefusal,
+  scheduledSince,
+  setObsidianScheduling,
   approvalCovers,
   approvedPermissions,
   bindingOf,
@@ -1225,7 +1227,7 @@ export default class VaultOrePlugin extends Plugin {
 
   async setRunScheduledWorkflows(enabled: boolean): Promise<void> {
     await this.changeSchedules((entry) => {
-      entry.obsidianScheduling = enabled;
+      setObsidianScheduling(entry, enabled);
     });
   }
 
@@ -1361,6 +1363,9 @@ export default class VaultOrePlugin extends Plugin {
    */
   async lookForMissedRuns(path: string, schedule: string, armedAt?: Date): Promise<void> {
     try {
+      // Since when it is scheduled: no run before is missed, also when its
+      // last decision is no longer in the record (#308).
+      const since = scheduledSince(this.schedules, path);
       await recordMissedSlots({
         vaultRoot: await this.adapter.getVaultRoot(),
         notePath: path,
@@ -1368,7 +1373,7 @@ export default class VaultOrePlugin extends Plugin {
         by: "Obsidian",
         keepDays: this.settings.scheduleHistoryDays,
         lateAfterMs: this.scheduler.lateAfterMs,
-        ...(armedAt ? { armedAt } : {}),
+        ...(since ? { scheduledSince: since } : armedAt ? { armedAt } : {}),
       });
     } catch (err) {
       this.adapter.log("warn", `Could not look for missed runs of ${path}: ${errorMessage(err)}`);
