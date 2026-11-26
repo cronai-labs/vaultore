@@ -47,7 +47,8 @@ import {
 	createSkipReporter,
 	planRegistrations,
 } from "./agent";
-import { ApprovalStore, resolveStateDir, vaultKeyFor } from "./approvals";
+import { legacyStateDir, openApprovalStore, resolveStateDir, vaultKeyFor } from "./approvals";
+import type { ApprovalStore } from "./approvals";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 import {
 	approveSchedules,
@@ -94,9 +95,9 @@ Options:
   --config-dir <name> The vault's Obsidian config folder, if overridden
                       (default: .obsidian). Hidden from cells.
   --state-dir <dir>   Where this machine keeps the agent's schedule approvals
-                      (default: $XDG_CONFIG_HOME/vaultore, else ~/.config/vaultore;
-                      on Windows %APPDATA%\\vaultore). Outside the vault, so
-                      that sync cannot deliver an approval.
+                      (default: ~/.config/vaultore, beside the run locks and
+                      the schedule record; on Windows %APPDATA%\\vaultore).
+                      Outside the vault, so that sync cannot deliver an approval.
   --cell <id>         Run a single cell (with its dependencies)
   --skip-deps         With --cell: skip dependency cells
   --yes               Auto-grant "ask" permissions (non-interactive default: deny).
@@ -468,13 +469,18 @@ async function openApprovals(
 	flags: ParsedArgs["flags"],
 	vaultRoot: string
 ): Promise<{ store: ApprovalStore; vaultKey: string }> {
-	const stateDir = resolveStateDir({
-		flag: flags["state-dir"],
-		env: process.env,
-		platform: process.platform,
-		homedir: homedir(),
+	const flag = flags["state-dir"];
+	const stateDir = resolveStateDir({ flag, env: process.env, platform: process.platform });
+	const legacyDir =
+		flag === undefined ? legacyStateDir({ env: process.env, platform: process.platform, homedir: homedir() }) : undefined;
+	const store = await openApprovalStore(stateDir, legacyDir, {
+		onImported: (from, to) =>
+			process.stderr.write(
+				`[vaultore] copied the agent's approvals from ${from} to ${to}, beside the rest of VaultOre's state; ` +
+					`the old file is no longer read and can be removed\n`
+			),
 	});
-	return { store: new ApprovalStore(stateDir), vaultKey: await vaultKeyFor(vaultRoot) };
+	return { store, vaultKey: await vaultKeyFor(vaultRoot) };
 }
 
 function printResult(result: { ok: boolean; lines: string[] }): number {

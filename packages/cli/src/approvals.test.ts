@@ -13,7 +13,7 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { VaultStateStoreError } from "@vaultore/core";
-import { ApprovalStore, resolveStateDir, vaultKeyFor } from "./approvals";
+import { ApprovalStore, legacyStateDir, openApprovalStore, resolveStateDir, vaultKeyFor } from "./approvals";
 
 const APPROVAL = {
 	hash: "a".repeat(64),
@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 describe("resolveStateDir", () => {
-	const posix = { platform: "linux" as const, homedir: "/home/u" };
+	const posix = { platform: "linux" as const, accountHome: () => "/home/u" };
 
 	it("uses --state-dir before anything else", () => {
 		expect(
@@ -40,25 +40,17 @@ describe("resolveStateDir", () => {
 		).toBe("/srv/state");
 	});
 
-	it("uses $XDG_CONFIG_HOME/vaultore when it is set", () => {
-		expect(resolveStateDir({ ...posix, env: { XDG_CONFIG_HOME: "/xdg" } })).toBe("/xdg/vaultore");
-	});
-
-	it("uses ~/.config/vaultore otherwise, on macOS too", () => {
+	// One root for all of this machine's state (#277): the run locks, the
+	// schedule record and the shared settings are found the same way.
+	it("uses VaultOre's folder in the account's home, as the run locks do, on macOS too", () => {
 		expect(resolveStateDir({ ...posix, env: {} })).toBe("/home/u/.config/vaultore");
-		expect(resolveStateDir({ platform: "darwin", homedir: "/Users/u", env: {} })).toBe(
+		expect(resolveStateDir({ platform: "darwin", accountHome: () => "/Users/u", env: {} })).toBe(
 			"/Users/u/.config/vaultore"
 		);
 	});
 
-	// The XDG base directory specification: a relative path is invalid and to
-	// be ignored. Taken as is, it would move the approvals with the directory
-	// the command happens to run in.
-	it("ignores a relative or empty XDG_CONFIG_HOME", () => {
-		expect(resolveStateDir({ ...posix, env: { XDG_CONFIG_HOME: "relative/dir" } })).toBe(
-			"/home/u/.config/vaultore"
-		);
-		expect(resolveStateDir({ ...posix, env: { XDG_CONFIG_HOME: "" } })).toBe(
+	it("is moved by neither XDG_CONFIG_HOME nor HOME", () => {
+		expect(resolveStateDir({ ...posix, env: { XDG_CONFIG_HOME: "/xdg", HOME: "/elsewhere" } })).toBe(
 			"/home/u/.config/vaultore"
 		);
 	});
@@ -67,22 +59,114 @@ describe("resolveStateDir", () => {
 		expect(
 			resolveStateDir({
 				platform: "win32",
-				homedir: "C:\\Users\\u",
 				env: { APPDATA: "C:\\Users\\u\\AppData\\Roaming", XDG_CONFIG_HOME: "/xdg" },
 			})
-		).toBe("C:\\Users\\u\\AppData\\Roaming\\vaultore");
+		).toBe(join("C:\\Users\\u\\AppData\\Roaming", "vaultore"));
 	});
 
 	it("refuses to guess on Windows without APPDATA", () => {
-		expect(() =>
-			resolveStateDir({ platform: "win32", homedir: "C:\\Users\\u", env: {} })
-		).toThrow(/APPDATA is not set.*--state-dir/);
+		expect(() => resolveStateDir({ platform: "win32", env: {} })).toThrow(/APPDATA is not set/);
 	});
 
 	it("refuses an empty --state-dir", () => {
 		expect(() => resolveStateDir({ ...posix, flag: "", env: {} })).toThrow(
 			/--state-dir requires a value/
 		);
+	});
+});
+
+describe("legacyStateDir, where the approvals were kept before", () => {
+	const posix = { platform: "linux" as const, homedir: "/home/u" };
+
+	it("was $XDG_CONFIG_HOME/vaultore when that is absolute, else ~/.config/vaultore", () => {
+		expect(legacyStateDir({ ...posix, env: { XDG_CONFIG_HOME: "/xdg" } })).toBe("/xdg/vaultore");
+		expect(legacyStateDir({ ...posix, env: { XDG_CONFIG_HOME: "relative/dir" } })).toBe("/home/u/.config/vaultore");
+		expect(legacyStateDir({ ...posix, env: {} })).toBe("/home/u/.config/vaultore");
+	});
+
+	it("was %APPDATA%\\vaultore on Windows, as now", () => {
+		expect(legacyStateDir({ platform: "win32", homedir: "C:\\Users\\u", env: { APPDATA: "C:\\A" } })).toBe(
+			"C:\\A\\vaultore"
+		);
+	});
+});
+
+describe("openApprovalStore, moving the approvals beside the rest (#277)", () => {
+	const VAULT = "/vault";
+	let oldDir: string;
+	let newDir: string;
+	const imported: string[][] = [];
+
+	beforeEach(async () => {
+		oldDir = join(dir, "xdg", "vaultore");
+		newDir = join(dir, "home", ".config", "vaultore");
+		imported.length = 0;
+		await new ApprovalStore(oldDir).update(VAULT, (approvals) => {
+			approvals["a.md"] = APPROVAL;
+			approvals["b.md"] = { ...APPROVAL, hash: "b".repeat(64) };
+		});
+	});
+
+	const open = () =>
+		openApprovalStore(newDir, oldDir, { onImported: (from, to) => imported.push([from, to]) });
+
+	it("copies the old approvals once, says so, and leaves the old file as it was", async () => {
+		const before = readFileSync(join(oldDir, "approvals.json"), "utf8");
+
+		const store = await open();
+
+		expect(Object.keys(await store.forVault(VAULT))).toEqual(["a.md", "b.md"]);
+		expect(imported).toEqual([[join(oldDir, "approvals.json"), join(newDir, "approvals.json")]]);
+		expect(readFileSync(join(oldDir, "approvals.json"), "utf8")).toBe(before);
+	});
+
+	it("keeps a revoke made after the move, also when every approval was revoked", async () => {
+		const store = await open();
+		await store.update(VAULT, (approvals) => {
+			delete approvals["a.md"];
+			delete approvals["b.md"];
+		});
+
+		const again = await open();
+
+		expect(await again.forVault(VAULT)).toEqual({});
+		expect(imported).toHaveLength(1);
+	});
+
+	it("copies nothing once the new file exists", async () => {
+		await new ApprovalStore(newDir).update(VAULT, (approvals) => {
+			approvals["c.md"] = APPROVAL;
+		});
+
+		const store = await open();
+
+		expect(Object.keys(await store.forVault(VAULT))).toEqual(["c.md"]);
+		expect(imported).toEqual([]);
+	});
+
+	it("creates nothing when there was no old file", async () => {
+		rmSync(oldDir, { recursive: true });
+
+		const store = await open();
+
+		expect(await store.forVault(VAULT)).toEqual({});
+		expect(existsSync(join(newDir, "approvals.json"))).toBe(false);
+		expect(imported).toEqual([]);
+	});
+
+	it("copies nothing when the old folder is the new one", async () => {
+		const store = await openApprovalStore(oldDir, oldDir, { onImported: () => imported.push(["x"]) });
+
+		expect(Object.keys(await store.forVault(VAULT))).toEqual(["a.md", "b.md"]);
+		expect(imported).toEqual([]);
+	});
+
+	it("refuses an old file it cannot use, names it, and creates no new one", async () => {
+		writeFileSync(join(oldDir, "approvals.json"), "{ not json");
+
+		await expect(open()).rejects.toThrow(VaultStateStoreError);
+		await expect(open()).rejects.toThrow(join(oldDir, "approvals.json"));
+		expect(existsSync(join(newDir, "approvals.json"))).toBe(false);
 	});
 });
 

@@ -25,7 +25,7 @@ The plugin and the CLI each implement `PlatformAdapter` and call the same execut
 | `ask` permissions | Modal | Deny, or allow with `--yes` |
 | Run lock | `acquireRunLock` as `Obsidian` | `acquireRunLock` as `vaultore run`, `vaultore agent` or `vaultore schedules catch-up` |
 | Schedule record | `claimSlot` as `Obsidian`, pruned by the "Scheduled-run history" setting | `claimSlot` as `vaultore agent`, pruned by `--keep-days` |
-| Scheduling | Approved notes only, while Obsidian is open; an approval is a path and a schedule, in `obsidian-schedules.json` outside the vault (`pluginSchedulesStore`) | `vaultore agent`, approved notes only; an approval is a path and the note's content hash, in `approvals.json` outside the vault (`--state-dir`) |
+| Scheduling | Approved notes only, while Obsidian is open; an approval is a path and a schedule, in `obsidian-schedules.json` outside the vault (`pluginSchedulesStore`) | `vaultore agent`, approved notes only; an approval is a path and the note's content hash, in `approvals.json` outside the vault, beside the rest of its state (`--state-dir` names another folder) |
 
 ## Core modules
 

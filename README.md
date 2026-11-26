@@ -346,10 +346,7 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | Obsidian's secret storage | The API keys you stored there; VaultOre only reads them | you |
 | Your container engine | The images cells ran in (`oven/bun:1-alpine`, and any `runtime.image` a note names) | your engine |
 
-The agent's approvals follow `--state-dir`, then `$XDG_CONFIG_HOME/vaultore`; locks, the record
-and `settings.json` always use `~/.config/vaultore` of your account, so that no environment can
-separate the two runners. With `XDG_CONFIG_HOME` set, or `--state-dir` given, the state is in
-two folders ([#277](https://github.com/cronai-labs/vaultore/issues/277)).
+All of it is found from your account's home directory, not from `$HOME` or `$XDG_CONFIG_HOME`, so that no environment can separate the two runners. Only `--state-dir` moves the agent's approvals elsewhere, for a test or a service. Approvals that an earlier version kept in `$XDG_CONFIG_HOME/vaultore` are copied here once, the first time the agent or `vaultore schedules` reads them; the old file is left as it was and no longer read.
 
 ## Upgrading
 
@@ -375,7 +372,8 @@ if you want it gone:
 3. **`.vaultore/`** in each vault.
 4. **`~/.config/vaultore/`** (`%APPDATA%\vaultore\` on Windows): shared by the plugin and the
    CLI, so remove it once you use neither, after stopping `vaultore agent`. With
-   `XDG_CONFIG_HOME` or `--state-dir`, also the agent's `approvals.json` there.
+   `--state-dir`, also the agent's `approvals.json` there; with `XDG_CONFIG_HOME` set, an old
+   `approvals.json` in `$XDG_CONFIG_HOME/vaultore` that VaultOre no longer reads.
 5. **API keys** you stored in Obsidian's secret storage for VaultOre.
 6. **Container images** VaultOre ran, if nothing else uses them: `docker image rm
    oven/bun:1-alpine`, or your engine's equivalent.

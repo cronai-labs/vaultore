@@ -321,9 +321,12 @@ it in the other.
   note, or a note that arrives through sync, has no approval.
 - Approvals are kept **outside the vault**, on the machine the agent runs on: anything inside
   the vault can arrive through sync, and an approval must not. The file is `approvals.json` in
-  `$XDG_CONFIG_HOME/vaultore`, else `~/.config/vaultore`, on Windows `%APPDATA%\vaultore`;
-  `--state-dir <dir>` names another folder. It holds every vault's approvals, keyed by the
-  vault's real path:
+  VaultOre's folder for the account, beside the run locks and the schedule record:
+  `~/.config/vaultore` from the account's home directory, not from `$HOME` or
+  `$XDG_CONFIG_HOME`; on Windows `%APPDATA%\vaultore`. `--state-dir <dir>` names another folder.
+  Approvals an earlier version kept in `$XDG_CONFIG_HOME/vaultore` are copied in once, while the
+  new file does not exist, under its lock; the old file is left as it was and no longer read
+  (#277). It holds every vault's approvals, keyed by the vault's real path:
 
   ```json
   {

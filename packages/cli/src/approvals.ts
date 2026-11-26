@@ -11,8 +11,8 @@
  * (`classifyScheduleApproval`); this file only reads and writes the list.
  */
 
-import { posix, resolve, win32 } from "node:path";
-import { VaultStateStore, isRecord } from "@vaultore/core";
+import { dirname, posix, resolve, win32 } from "node:path";
+import { VaultStateStore, isRecord, userStateDirectory } from "@vaultore/core";
 import type { ScheduleApproval, VaultStateStoreOps } from "@vaultore/core";
 
 export { vaultKeyFor } from "@vaultore/core";
@@ -31,20 +31,19 @@ export interface StateDirInputs {
 	flag?: string | boolean;
 	env: Readonly<Record<string, string | undefined>>;
 	platform: NodeJS.Platform;
-	homedir: string;
+	/** The account's home directory; read from the user database by default, as core does. */
+	accountHome?: () => string;
 }
 
 /**
- * The folder VaultOre keeps this machine's own state in:
- * `--state-dir`, else `%APPDATA%\vaultore` on Windows, else
- * `$XDG_CONFIG_HOME/vaultore`, else `~/.config/vaultore`.
- *
- * A relative or empty `XDG_CONFIG_HOME` is ignored, as the XDG base directory
- * specification says: taken as is, the approvals would move with the directory
- * the command runs in.
+ * The folder the agent's approvals are kept in: `--state-dir`, else VaultOre's
+ * folder for this user, where the run locks, the schedule record and the
+ * shared settings are too (core's `userStateDirectory`: `~/.config/vaultore`
+ * from the account's home directory, `%APPDATA%\vaultore` on Windows).
+ * Neither `$HOME` nor `$XDG_CONFIG_HOME` moves it (#277).
  */
 export function resolveStateDir(inputs: StateDirInputs): string {
-	const { flag, env, platform, homedir } = inputs;
+	const { flag, env, platform, accountHome } = inputs;
 
 	if (flag !== undefined) {
 		if (typeof flag !== "string" || flag.trim() === "") {
@@ -52,21 +51,52 @@ export function resolveStateDir(inputs: StateDirInputs): string {
 		}
 		return resolve(flag);
 	}
+	return dirname(
+		userStateDirectory(APPROVALS_FILE, "schedule approvals", platform, env, ...(accountHome ? [accountHome] : []))
+	);
+}
 
+export interface LegacyStateDirInputs {
+	env: Readonly<Record<string, string | undefined>>;
+	platform: NodeJS.Platform;
+	/** `os.homedir()`, which follows `$HOME`. */
+	homedir: string;
+}
+
+/**
+ * Where the approvals were kept before they moved beside the rest (#277):
+ * `$XDG_CONFIG_HOME/vaultore` when that is absolute, else `~/.config/vaultore`
+ * from `$HOME`; on Windows the same folder as now. Undefined where there was
+ * none.
+ */
+export function legacyStateDir(inputs: LegacyStateDirInputs): string | undefined {
+	const { env, platform, homedir } = inputs;
 	if (platform === "win32") {
 		const appData = env["APPDATA"];
-		if (!appData) {
-			throw new Error("APPDATA is not set, so there is no place for approvals: pass --state-dir <dir>");
-		}
-		return win32.join(appData, "vaultore");
+		return appData ? win32.join(appData, "vaultore") : undefined;
 	}
-
 	const xdg = env["XDG_CONFIG_HOME"];
 	if (xdg && posix.isAbsolute(xdg)) return posix.join(xdg, "vaultore");
-	if (!homedir) {
-		throw new Error("No home directory, so there is no place for approvals: pass --state-dir <dir>");
+	return homedir ? posix.join(homedir, ".config", "vaultore") : undefined;
+}
+
+/**
+ * The approvals file of this machine, with the approvals kept where they were
+ * before copied in once (#277): only while the new file does not exist, so a
+ * revoke after the move stays revoked. The old file is left as it is, and no
+ * longer read. With `--state-dir`, the folder given is used as it is.
+ */
+export async function openApprovalStore(
+	stateDir: string,
+	legacyDir: string | undefined,
+	ops: ApprovalStoreOps & { onImported?: (from: string, to: string) => void } = {}
+): Promise<ApprovalStore> {
+	const store = new ApprovalStore(stateDir, ops);
+	if (legacyDir !== undefined && resolve(legacyDir) !== resolve(stateDir)) {
+		const legacy = new ApprovalStore(legacyDir, ops);
+		if (await store.importOnce(legacy)) ops.onImported?.(legacy.file, store.file);
 	}
-	return posix.join(homedir, ".config", "vaultore");
+	return store;
 }
 
 // =============================================================================
