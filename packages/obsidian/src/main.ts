@@ -35,6 +35,8 @@ import {
   recordMissedSlots,
   computeNextRun,
   describeHolder,
+  describeRun,
+  summarizeRun,
   errorMessage,
   isWorkflowFrontmatter,
   resolveInVaultRoot,
@@ -836,7 +838,10 @@ export default class VaultOrePlugin extends Plugin {
         startNotice = new Notice(`VaultOre: Running ${file.basename}...`, 0);
       }
 
-      await this.executor.runWorkflow({
+      // The cells this run started: the outputs it returns also hold results
+      // of earlier runs, which must not count towards how this one went.
+      const ran: string[] = [];
+      const workflow = await this.executor.runWorkflow({
         platform: this.adapter,
         workflowPath: file.path,
         content,
@@ -846,13 +851,14 @@ export default class VaultOrePlugin extends Plugin {
           if (event === "cell:started") {
             const cellId = (data as { cellId?: string })?.cellId;
             if (cellId) {
+              ran.push(cellId);
               startNotice ??= new Notice(`VaultOre: Running ${file.basename}...`, 0);
               startNotice.setMessage(`VaultOre: Running cell ${cellId}...`);
             }
           }
         },
       });
-      new Notice("VaultOre: Workflow completed");
+      new Notice(`VaultOre: ${describeRun(file.basename, summarizeRun(workflow.cells, workflow.outputs, ran))}`);
     } catch (err) {
       // The other runner has this occurrence: nothing to tell the user about
       // every minute; `vaultore schedules log` shows who ran it.
@@ -1151,7 +1157,8 @@ export default class VaultOrePlugin extends Plugin {
     const startNotice = new Notice(`VaultOre: Running cell ${cell.attributes.id}...`, 0);
 
     try {
-      await this.executor.runWorkflow({
+      const ran: string[] = [];
+      const workflow = await this.executor.runWorkflow({
         platform: this.adapter,
         workflowPath: file.path,
         content,
@@ -1161,13 +1168,14 @@ export default class VaultOrePlugin extends Plugin {
           if (event === "cell:started") {
             const cellId = (data as { cellId?: string })?.cellId;
             if (cellId) {
+              ran.push(cellId);
               startNotice.setMessage(`VaultOre: Running cell ${cellId}...`);
             }
           }
         },
       });
       startNotice.hide();
-      new Notice(`VaultOre: Cell ${cell.attributes.id} completed`);
+      new Notice(`VaultOre: ${describeRun(`Cell ${cell.attributes.id}`, summarizeRun(workflow.cells, workflow.outputs, ran))}`);
     } catch (err) {
       startNotice.hide();
       new Notice(runFailureNotice(err));

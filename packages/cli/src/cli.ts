@@ -18,7 +18,7 @@
 
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { clearInterval, setInterval } from "node:timers";
 import {
 	RunLockHeldError,
@@ -34,7 +34,10 @@ import {
 	WorkflowExecutor,
 	WorkflowScheduler,
 	VERSION,
+	describeRun,
 	errorMessage,
+	runSucceeded,
+	summarizeRun,
 } from "@vaultore/core";
 import type { ScheduledSlot, SlotClaim } from "@vaultore/core";
 import { NodeAdapter } from "./adapter";
@@ -188,21 +191,26 @@ async function cmdRun(args: ParsedArgs, catchUp?: { slot: Date | undefined }): P
 		},
 	});
 
-	let failed = 0;
+	// The same summary as the plugin's notice (#290).
+	const summary = summarizeRun(result.cells, result.outputs, ran);
 	for (const cellId of ran) {
 		const output = result.outputs.get(cellId);
 		if (output === undefined) continue;
-		const mark = output.meta.status === "success" ? "ok" : output.meta.status;
+		const mark =
+			output.meta.status === "success" ? "ok" : summary.blocked.includes(cellId) ? "not run" : output.meta.status;
 		process.stdout.write(`  ${cellId}: ${mark} (${output.meta.duration}ms)\n`);
-		if (output.meta.status !== "success") {
-			failed += 1;
-			if (output.meta.error) {
-				process.stderr.write(`error: ${cellId}: ${output.meta.error}\n`);
-			}
+		if (output.meta.status !== "success" && output.meta.error) {
+			process.stderr.write(`error: ${cellId}: ${output.meta.error}\n`);
 		}
 	}
 
-	return failed > 0 ? 1 : 0;
+	const outcome = describeRun(basename(workflowPath, ".md"), summary);
+	if (runSucceeded(summary)) {
+		process.stdout.write(`[vaultore] ${outcome}\n`);
+		return 0;
+	}
+	process.stderr.write(`error: ${outcome}\n`);
+	return 1;
 }
 
 /** Reports a note meant as a workflow that the scan could not read. */
