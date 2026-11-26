@@ -59,6 +59,13 @@ vi.mock("@vaultore/core", async () => {
     SHORT_LOCK_WAIT_MS: actual.SHORT_LOCK_WAIT_MS,
     noteScheduleState: actual.noteScheduleState,
     approveNote: actual.approveNote,
+    approvalOf: actual.approvalOf,
+    approvalCovers: actual.approvalCovers,
+    approvedPermissions: actual.approvedPermissions,
+    bindingOf: actual.bindingOf,
+    reviewApproval: actual.reviewApproval,
+    scheduledNoteOf: actual.scheduledNoteOf,
+    ownerName: actual.ownerName,
     revokeNote: actual.revokeNote,
     own: actual.own,
     grantHash: actual.grantHash,
@@ -80,14 +87,8 @@ vi.mock("@vaultore/core", async () => {
       // A run with no cells, as the executor returns one.
       runWorkflow = vi.fn().mockResolvedValue({ cells: [], outputs: new Map() });
     },
-    WorkflowParser: class {
-      // The note's text is kept: a schedule approval hashes it (#301).
-      parse = vi.fn((content: string) => ({
-        frontmatter: {},
-        cells: [],
-        rawContent: content,
-      }));
-    },
+    // The real one: a schedule approval binds the note's content and permissions (#299).
+    WorkflowParser: actual.WorkflowParser,
     WorkflowScheduler: actual.WorkflowScheduler,
     computeNextRun: actual.computeNextRun,
     describeRun: actual.describeRun,
@@ -753,7 +754,7 @@ describe("VaultOrePlugin", () => {
       it("hands the slot to the executor for a scheduled run", async () => {
         const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
         plugin.app.vault.getAbstractFileByPath = vi.fn().mockReturnValue(file) as never;
-        plugin.app.vault.read = vi.fn().mockResolvedValue("---\nore: true\n---\n") as never;
+        plugin.app.vault.read = vi.fn().mockResolvedValue(`---\nore: true\nname: daily\nschedule: "${scheduled.schedule}"\n---\n`) as never;
         // Obsidian's to run, approved with this schedule (#301).
         plugin.app.metadataCache.getFileCache = () => ({ frontmatter: { ore: true, schedule: scheduled.schedule } });
         await plugin.setRunScheduledWorkflows(true);
@@ -763,7 +764,15 @@ describe("VaultOrePlugin", () => {
 
         await (plugin as any).runWorkflowByPath("notes/daily.md", scheduled);
 
-        expect(executor.runWorkflow).toHaveBeenCalledWith(expect.objectContaining({ workflowPath: "notes/daily.md", scheduled }));
+        expect(executor.runWorkflow).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workflowPath: "notes/daily.md",
+            scheduled,
+            runner: "Obsidian",
+            // With the permissions it was approved with, asking nobody (#299).
+            unattended: { approval: expect.objectContaining({ owner: "obsidian", permissions: expect.any(Object) }), binding: "content" },
+          })
+        );
       });
 
       // #269: runs no runner fired are recorded once, shown, and resolved.
@@ -776,7 +785,7 @@ describe("VaultOrePlugin", () => {
           await (await adapter().claimSlot!("notes/daily.md", { schedule: HOURLY, slot: lastRun })).finish({ result: "completed" });
           const file = Object.assign(new TFile(), { path: "notes/daily.md", basename: "daily" });
           plugin.app.vault.getAbstractFileByPath = vi.fn().mockReturnValue(file) as never;
-          plugin.app.vault.read = vi.fn().mockResolvedValue("---\nore: true\n---\n") as never;
+          plugin.app.vault.read = vi.fn().mockResolvedValue(`---\nore: true\nname: daily\nschedule: "${HOURLY}"\n---\n`) as never;
           Notice.shown.length = 0;
         });
 
@@ -826,7 +835,9 @@ describe("VaultOrePlugin", () => {
           expect((await readSlotRecord({ directory: runLocks.slots })).find((e) => e.kind === "missed")?.state).toBe("dismissed");
         });
 
-        it("are caught up with one run that holds the gap", async () => {
+        it("are caught up with one run that holds the gap, with the note's approval (#299)", async () => {
+          plugin.app.metadataCache.getFileCache = () => ({ frontmatter: { ore: true, schedule: HOURLY } });
+          await plugin.setScheduleOwner("notes/daily.md", "agent");
           await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
           const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
           executor.runWorkflow.mockClear();
@@ -834,8 +845,27 @@ describe("VaultOrePlugin", () => {
           await plugin.catchUpMissedRun(plugin.missedRuns[0]!);
 
           expect(executor.runWorkflow).toHaveBeenCalledTimes(1);
-          expect(executor.runWorkflow.mock.calls[0]?.[0]).toMatchObject({ workflowPath: "notes/daily.md", slotClaim: expect.anything() });
+          expect(executor.runWorkflow.mock.calls[0]?.[0]).toMatchObject({
+            workflowPath: "notes/daily.md",
+            slotClaim: expect.anything(),
+            // The agent's approval, under its binding, though Obsidian catches up.
+            unattended: { approval: { owner: "agent" }, binding: "content" },
+          });
           expect(plugin.missedRuns).toEqual([]);
+        });
+
+        it("are not caught up, and the gap stays open, when the note has no approval that covers it", async () => {
+          await plugin.lookForMissedRuns("notes/daily.md", HOURLY);
+          const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
+          executor.runWorkflow.mockClear();
+
+          await plugin.catchUpMissedRun(plugin.missedRuns[0]!);
+
+          expect(executor.runWorkflow).not.toHaveBeenCalled();
+          expect(Notice.shown.at(-1)).toBe(
+            "VaultOre: not catching up notes/daily.md: it is not approved to run on schedule; approve it under Scheduled workflows first"
+          );
+          expect(plugin.missedRuns).toHaveLength(1);
         });
 
         // After a sleep both runners look; the user hears of the gap in
@@ -1025,7 +1055,8 @@ describe("scheduled workflows", () => {
 
   const scheduler = () => (plugin as any).scheduler as InstanceType<typeof WorkflowScheduler>;
   const armed = () => scheduler().list().map((entry) => `${entry.path} ${entry.cronExpression}`);
-  const refresh = () => (plugin as any).refreshScheduledWorkflows();
+  // Reads the approved notes again, then re-arms, as a vault change does.
+  const refresh = (): Promise<void> => (plugin as any).refreshScheduledNow();
 
   function renderSettings(): RecordedSetting[] {
     const calls = (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls;
@@ -1069,6 +1100,12 @@ describe("scheduled workflows", () => {
     plugin.app.vault.getMarkdownFiles = () => Object.keys(notes).map(note);
     plugin.app.vault.getAbstractFileByPath = (path: string) => (path in notes ? note(path) : null);
     plugin.app.vault.modify = vi.fn();
+    // The note as written, from its frontmatter: an approval binds what the note runs (#299).
+    plugin.app.vault.read = async (file: { path: string }) => {
+      const frontmatter = notes[file.path];
+      if (frontmatter === undefined) throw new Error(`File not found: ${file.path}`);
+      return `---\n${JSON.stringify({ name: file.path, ...frontmatter })}\n---\n\n\`\`\`ore:shell id=one\necho ${String(frontmatter["cell"] ?? "one")}\n\`\`\`\n`;
+    };
     plugin.app.metadataCache.getFileCache = (file: { path: string }) =>
       file.path in notes ? { frontmatter: notes[file.path] } : null;
     // A desktop vault: the scheduling consent is keyed by its root (#276).
@@ -1082,12 +1119,12 @@ describe("scheduled workflows", () => {
     vi.unstubAllGlobals();
   });
 
-  it("is off by default and arms nothing, including notes that arrive by sync", () => {
+  it("is off by default and arms nothing, including notes that arrive by sync", async () => {
     useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
-    refresh();
+    await refresh();
 
     expect(armed()).toEqual([]);
-    expect(plugin.schedules).toEqual({ obsidianScheduling: false, notes: {} });
+    expect(plugin.schedules).toEqual({ obsidianScheduling: false, obsidianBinding: "strict", notes: {} });
   });
 
   it("lists every scheduled workflow note with its schedule and a toggle", () => {
@@ -1151,8 +1188,15 @@ describe("scheduled workflows", () => {
     expect(JSON.parse(readFileSync(machineSettings.schedules, "utf8")).vaults).toEqual({
       [await (plugin as unknown as { adapter: { getVaultRoot(): Promise<string> } }).adapter.getVaultRoot()]: {
         obsidianScheduling: true,
+        obsidianBinding: "strict",
         notes: {
-          "Workflows/daily.md": { owner: "obsidian", schedule: "0 18 * * *", hash: expect.any(String), approvedAt: expect.any(String) },
+          "Workflows/daily.md": {
+            owner: "obsidian",
+            schedule: "0 18 * * *",
+            hash: expect.any(String),
+            approvedAt: expect.any(String),
+            permissions: expect.objectContaining({ network: { value: "deny", source: "frontmatter" } }),
+          },
         },
       },
     });
@@ -1192,7 +1236,7 @@ describe("scheduled workflows", () => {
 
     await reload(OLD_DATA);
 
-    expect(plugin.schedules).toEqual({ obsidianScheduling: false, notes: {} });
+    expect(plugin.schedules).toEqual({ obsidianScheduling: false, obsidianBinding: "strict", notes: {} });
     expect(armed()).toEqual([]);
   });
 
@@ -1260,7 +1304,7 @@ describe("scheduled workflows", () => {
 
     await plugin.loadSchedules();
 
-    expect(plugin.schedules).toEqual({ obsidianScheduling: false, notes: {} });
+    expect(plugin.schedules).toEqual({ obsidianScheduling: false, obsidianBinding: "strict", notes: {} });
     expect(Notice.shown.some((m) => m.includes("scheduled workflows stay off") && m.includes("schedules.json"))).toBe(true);
   });
 
@@ -1270,12 +1314,12 @@ describe("scheduled workflows", () => {
     await toggle("Workflows/daily.md", true);
 
     entry(notes, "Workflows/daily.md").schedule = "* * * * *";
-    refresh();
+    await refresh();
 
     expect(armed()).toEqual([]);
     const daily = row("Workflows/daily.md");
     expect(at(daily.dropdowns).value).toBe("obsidian");
-    expect(daily.desc).toMatch(/changed from "0 18 \* \* \*" to "\* \* \* \* \*"/);
+    expect(daily.desc).toMatch(/changed since it was approved \(schedule was "0 18 \* \* \*"\)/);
   });
 
   it("lists notes that appear later without arming them", async () => {
@@ -1284,7 +1328,7 @@ describe("scheduled workflows", () => {
     await toggle("Workflows/daily.md", true);
 
     notes["Inbox/from-sync.md"] = { ore: true, schedule: "* * * * *" };
-    refresh();
+    await refresh();
 
     expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
     expect(at(row("Inbox/from-sync.md").dropdowns).value).toBe("off");
@@ -1305,7 +1349,7 @@ describe("scheduled workflows", () => {
 
     // Another note changes: nothing is re-registered.
     notes["Notes/other.md"] = { title: "x" };
-    refresh();
+    await refresh();
     expect(unregister).not.toHaveBeenCalled();
 
     // Only the note whose approval changed is touched.
@@ -1361,8 +1405,8 @@ describe("scheduled workflows", () => {
     await toggle("Run scheduled workflows", true);
     await plugin.setScheduleOwner("Workflows/typo.md", "obsidian");
 
-    refresh();
-    refresh();
+    await refresh();
+    await refresh();
 
     expect(armed()).toEqual([]);
     // Once for this note (the record of /mock-vault, which does not exist, warns apart).
@@ -1375,6 +1419,133 @@ describe("scheduled workflows", () => {
   });
 
   // One approval per note on this computer, owned by Obsidian or the agent (#301).
+  // #299: an approval holds the permissions scheduled runs get; approving
+  // again asks only about what changed.
+  describe("the permissions a note runs with on schedule", () => {
+    type Answers = Partial<Record<"network" | "buildNetwork" | "vaultRead" | "vaultWrite", "allow" | "deny">>;
+    let asked: Array<{ path: string; needsAnswer: string[]; changed: string[] }>;
+    let answer: Answers | null;
+
+    beforeEach(() => {
+      asked = [];
+      answer = {};
+      vi.spyOn(plugin, "askForReview").mockImplementation(async (path, _owner, review) => {
+        asked.push({
+          path,
+          needsAnswer: review.needsAnswer,
+          changed: review.permissions.filter((p) => p.status === "changed" || p.status === "answer-dropped").map((p) => p.key),
+        });
+        return answer;
+      });
+    });
+
+    const held = () => plugin.schedules.notes["Workflows/daily.md"]?.permissions;
+
+    it("approves a note that asks nothing without a dialog", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+
+      await choose("Workflows/daily.md", "obsidian");
+
+      expect(asked).toEqual([]);
+      expect(held()?.network).toEqual({ value: "deny", source: "frontmatter" });
+    });
+
+    it("asks for an answer to each ask, and keeps it for scheduled runs", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", permissions: { network: "ask" } } });
+      answer = { network: "allow" };
+
+      await choose("Workflows/daily.md", "obsidian");
+
+      expect(asked).toEqual([{ path: "Workflows/daily.md", needsAnswer: ["network"], changed: [] }]);
+      expect(held()?.network).toEqual({ value: "allow", source: "answer" });
+    });
+
+    it("approves nothing when the review is cancelled, and the row shows Off again", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", permissions: { network: "ask" } } });
+      answer = null;
+      const daily = row("Workflows/daily.md");
+
+      await at(daily.dropdowns).changeHandler!("obsidian");
+
+      expect(plugin.schedules.notes).toEqual({});
+      expect(at(daily.dropdowns).value).toBe("off");
+    });
+
+    it("approves again after a cell changed with one click and no question, keeping the answer", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", permissions: { network: "ask" } } });
+      answer = { network: "allow" };
+      await toggle("Run scheduled workflows", true);
+      await choose("Workflows/daily.md", "obsidian");
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", permissions: { network: "ask" }, cell: "edited" } });
+      await refresh();
+      expect(armed()).toEqual([]);
+      asked = [];
+
+      await at(row("Workflows/daily.md").buttons).clickHandler!();
+
+      expect(asked).toEqual([]);
+      expect(held()?.network).toEqual({ value: "allow", source: "answer" });
+      expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
+    });
+
+    it("asks only for a permission newly at ask, and shows one the frontmatter changed", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+      await choose("Workflows/daily.md", "obsidian");
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", permissions: { network: "ask", vaultWrite: "allow" } } });
+      await refresh();
+      answer = { network: "deny" };
+
+      await at(row("Workflows/daily.md").buttons).clickHandler!();
+
+      expect(asked).toEqual([{ path: "Workflows/daily.md", needsAnswer: ["network"], changed: ["vaultWrite"] }]);
+      expect(held()).toMatchObject({ network: { value: "deny", source: "answer" }, vaultWrite: { value: "allow", source: "frontmatter" } });
+    });
+
+    it("says once that a note changed, not on every refresh", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+      await choose("Workflows/daily.md", "obsidian");
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", cell: "edited" } });
+
+      await refresh();
+      await refresh();
+
+      const told = Notice.shown.filter((m) => m.includes("changed since you approved it"));
+      expect(told).toEqual([
+        "VaultOre: Workflows/daily.md changed since you approved it, so it does not run on schedule. Review it under Settings → VaultOre → Scheduled workflows.",
+      ]);
+    });
+
+    it("lets a cell change under narrow binding, and stops the note when a permission changes", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+      await toggle("Run scheduled workflows", true);
+      await choose("Workflows/daily.md", "obsidian");
+      await at(row("What an approval covers").dropdowns).changeHandler!("narrow");
+      expect(plugin.schedules.obsidianBinding).toBe("narrow");
+
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", cell: "edited" } });
+      await refresh();
+      expect(armed()).toEqual(["Workflows/daily.md 0 18 * * *"]);
+
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", cell: "edited", permissions: { network: "allow" } } });
+      await refresh();
+      expect(armed()).toEqual([]);
+      expect(row("Workflows/daily.md").desc).toMatch(/changed since it was approved \(network is now allow\)/);
+    });
+
+    it("does not fire a note that changed after it was armed", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
+      await toggle("Run scheduled workflows", true);
+      await choose("Workflows/daily.md", "obsidian");
+      const executor = (plugin as unknown as { executor: { runWorkflow: ReturnType<typeof vi.fn> } }).executor;
+      executor.runWorkflow.mockClear();
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", permissions: { network: "allow" } } });
+
+      await (plugin as any).runWorkflowByPath("Workflows/daily.md", { schedule: "0 18 * * *", slot: new Date() });
+
+      expect(executor.runWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
   describe("handing a note to vaultore agent", () => {
     const actualCore = () => vi.importActual<typeof import("@vaultore/core")>("@vaultore/core");
     const root = () => (plugin as unknown as { adapter: { getVaultRoot(): Promise<string> } }).adapter.getVaultRoot();
@@ -1414,13 +1585,14 @@ describe("scheduled workflows", () => {
 
     it("says when the note changed since it was handed to the agent", async () => {
       useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *" } });
-      plugin.app.vault.read = async () => "---\nore: true\nname: before\n---\n";
       await choose("Workflows/daily.md", "agent");
-      plugin.app.vault.read = async () => "---\nore: true\nname: after\n---\n";
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", cell: "edited" } });
 
-      await plugin.refreshAgentStatus();
+      await refresh();
 
-      expect(row("Workflows/daily.md").desc).toMatch(/changed since; approve it again/);
+      expect(row("Workflows/daily.md").desc).toMatch(
+        /Handed to vaultore agent, but it changed since it was approved \(its frontmatter or a cell\), so it does not run\. Review it/
+      );
     });
 
     it("arms it in Obsidian again once handed back", async () => {
