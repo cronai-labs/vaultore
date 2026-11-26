@@ -23,6 +23,7 @@ import {
 } from "../types";
 import { detectRuntimes, execContainer } from "../runtime";
 import { errorMessage } from "../errors";
+import { isRecord, vaultKeyFor } from "../settings/vault-state-store";
 import {
   OutputSerializer,
   TemplateInterpolator,
@@ -636,18 +637,25 @@ async function resolvePermissions(
   // device and leaves the stored decisions as they are.
   if (asked.length > 0) {
     const device = await platform.decisionDevice();
-    const vault = await platform.getVaultRoot();
-    const stored = platform.getSetting<DeviceDecisions>("vaultore.deviceDecisions") ?? {};
-    const forNote = ownEntry<Record<string, DeviceDecision>>(stored, workflowPath) ?? {};
+    // The vault's real path, so that a vault opened through a symbolic link
+    // is the same vault, as for the run locks and the approvals.
+    const vault = await vaultKeyFor(await platform.getVaultRoot());
+    // Read out of a file anyone who can write the vault can change: anything
+    // that is not a record is no decision.
+    const storedValue = platform.getSetting<unknown>("vaultore.deviceDecisions");
+    const stored: DeviceDecisions = isRecord(storedValue) ? (storedValue as DeviceDecisions) : {};
+    const noteValue = ownEntry<unknown>(stored, workflowPath);
+    const forNote: Record<string, DeviceDecision> = isRecord(noteValue) ? (noteValue as Record<string, DeviceDecision>) : {};
 
     // A decision applies only to the content it was given for (#69), and
     // only on the device that made it (#284): one whose MAC does not verify
     // was not made here, or was changed since, and counts as undecided.
-    const mine = ownEntry<DeviceDecision>(forNote, device.id);
+    const mineValue = ownEntry<unknown>(forNote, device.id);
+    const mine = isRecord(mineValue) ? (mineValue as DeviceDecision) : undefined;
     let current: StoredDecision | undefined;
-    if (mine !== undefined) {
-      const expected = device.sign(decisionText(vault, workflowPath, device.id, mine));
-      if (typeof mine.mac === "string" && sameMac(mine.mac, expected)) {
+    if (mineValue !== undefined) {
+      const expected = mine === undefined ? "" : device.sign(decisionText(vault, workflowPath, device.id, mine));
+      if (mine !== undefined && typeof mine.mac === "string" && sameMac(mine.mac, expected)) {
         if (mine.workflowHash === workflowHash) current = mine;
       } else {
         platform.log("warn", `The stored permission decision for ${workflowPath} was not made here or was changed; asking again`);
@@ -656,12 +664,24 @@ async function resolvePermissions(
     // Turned on in this machine's settings, never by the vault: decisions
     // made on another device, then one stored before decisions carried a
     // device, apply too.
-    if (current === undefined && device.acceptOtherDevices) {
-      current =
-        Object.entries(forNote).find(([id, decision]) => id !== device.id && decision?.workflowHash === workflowHash)?.[1] ??
-        [ownEntry<StoredDecision>(platform.getSetting("vaultore.permissionDecisions"), workflowPath)].find(
-          (decision) => decision?.workflowHash === workflowHash
+    const elsewhere =
+      Object.entries(forNote).find(
+        ([id, decision]) => id !== device.id && isRecord(decision) && decision.workflowHash === workflowHash
+      )?.[1] ??
+      [ownEntry<unknown>(platform.getSetting("vaultore.permissionDecisions"), workflowPath)].find(
+        (decision): decision is StoredDecision => isRecord(decision) && decision["workflowHash"] === workflowHash
+      );
+    if (current === undefined && elsewhere !== undefined) {
+      if (device.acceptOtherDevices) {
+        current = elsewhere;
+      } else {
+        // Said once per run, so that an upgrade that asks again is explained.
+        platform.log(
+          "info",
+          `An answer for ${workflowPath} given on another device, or before answers were kept per device, does not apply here; ` +
+            "asking again. Permission answers from other devices (vaultore permissions other-devices) changes that"
         );
+      }
     }
 
     for (const key of asked) {

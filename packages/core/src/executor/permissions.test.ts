@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowExecutor } from "./index";
 import { nodeTimers } from "../testing/timers";
@@ -43,7 +46,8 @@ function vault(
 	files: Record<string, string>,
 	links: Record<string, Error> = {},
 	redirects: Record<string, string> = {},
-	configDir = ".obsidian"
+	configDir = ".obsidian",
+	root = "/vault"
 ) {
 	const settings = new Map<string, unknown>();
 	const reads: string[] = [];
@@ -67,12 +71,12 @@ function vault(
 			path in files || Object.keys(files).some((file) => file.startsWith(`${path}/`)),
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
-		getVaultRoot: async () => "/vault",
+		getVaultRoot: async () => root,
 		acquireRunLock: memoryRunLocks().acquireRunLock,
 		resolveInVault: async (path: string) => {
-			const refused = links[path];
+			const refused = Object.prototype.hasOwnProperty.call(links, path) ? links[path] : undefined;
 			if (refused) throw refused;
-			return redirects[path] ?? path;
+			return Object.prototype.hasOwnProperty.call(redirects, path) ? (redirects[path] as string) : path;
 		},
 		getSetting: <T>(key: string) => settings.get(key) as T | undefined,
 		setSetting: async (key: string, value: unknown) => {
@@ -95,14 +99,18 @@ function vault(
 }
 
 let requests: string[];
+// A vault root that exists: a decision is bound to the vault's real path (#284).
+let realVault: string;
 
 beforeEach(() => {
 	requests = [];
+	realVault = mkdtempSync(join(tmpdir(), "vaultore-permissions-vault-"));
 	vi.mocked(execContainer).mockReset();
 });
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	rmSync(realVault, { recursive: true, force: true });
 });
 
 async function run(
@@ -294,7 +302,7 @@ describe("grants are bound to the note's content (#69)", () => {
 
 	/** One vault and settings store across runs, as in a real session. */
 	function session(confirm?: (message: string) => Promise<boolean>) {
-		const v = vault({ "Private/secret.md": SECRET });
+		const v = vault({ "Private/secret.md": SECRET }, {}, {}, ".obsidian", realVault);
 		const prompts: string[] = [];
 		if (confirm) {
 			(v.platform as { confirm?: unknown }).confirm = async (message: string) => {
@@ -385,7 +393,7 @@ describe("decisions are bound to the device that made them (#284)", () => {
 
 	/** One vault and its settings, as sync shares them, run on whichever device is current. */
 	function shared(answer = true) {
-		const v = vault({ "Private/secret.md": SECRET });
+		const v = vault({ "Private/secret.md": SECRET }, {}, {}, ".obsidian", realVault);
 		const prompts: string[] = [];
 		(v.platform as { confirm?: unknown }).confirm = async (message: string) => {
 			prompts.push(message);
@@ -461,6 +469,86 @@ describe("decisions are bound to the device that made them (#284)", () => {
 		await new WorkflowExecutor().runWorkflow({ platform: s.platform, workflowPath: "other.md", content: GRANTED });
 
 		expect(s.prompts).toHaveLength(2);
+	});
+
+	it.each([
+		["null", null],
+		["a string", "allow"],
+	])("asks again when this device's entry is %s, and does not fail the run", async (_what, value) => {
+		const s = shared();
+		await s.runOn(HERE);
+		const decisions = s.stored();
+		(decisions["wf.md"] as Record<string, unknown>)[HERE] = value;
+		s.settings.set("vaultore.deviceDecisions", decisions);
+
+		expect(await s.runOn(HERE)).toBe("success");
+		expect(s.prompts).toHaveLength(2);
+	});
+
+	it("asks again when the note's entry or the whole store is not a record", async () => {
+		const s = shared();
+		s.settings.set("vaultore.deviceDecisions", { "wf.md": "allow" });
+		expect(await s.runOn(HERE)).toBe("success");
+		s.settings.set("vaultore.deviceDecisions", ["allow"]);
+		expect(await s.runOn(HERE)).toBe("success");
+
+		expect(s.prompts).toHaveLength(2);
+		expect(Object.keys(s.stored()["wf.md"] ?? {})).toEqual([HERE]);
+	});
+
+	it("is the same decision for the vault opened through a symbolic link", async () => {
+		const s = shared();
+		await s.runOn(HERE);
+		const link = `${realVault}-link`;
+		symlinkSync(realVault, link);
+		try {
+			(s.platform as { getVaultRoot: unknown }).getVaultRoot = async () => link;
+			await s.runOn(HERE);
+		} finally {
+			rmSync(link, { force: true });
+		}
+
+		expect(s.prompts).toHaveLength(1);
+	});
+
+	it("stores a note named __proto__ as an entry like any other", async () => {
+		const s = shared();
+		Object.defineProperty(s.files, "__proto__", { value: GRANTED, enumerable: true, writable: true });
+		await new WorkflowExecutor().runWorkflow({ platform: s.platform, workflowPath: "__proto__", content: GRANTED });
+
+		const entry = Object.getOwnPropertyDescriptor(s.stored(), "__proto__")?.value as Record<string, unknown> | undefined;
+		expect(Object.keys(entry ?? {})).toEqual([HERE]);
+		expect(HERE in {}).toBe(false);
+	});
+
+	it("says in the log why it asks again for content answered on another device", async () => {
+		const s = shared();
+		const logs: string[] = [];
+		(s.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
+		await s.runOn(THERE);
+		await s.runOn(HERE);
+
+		expect(logs.filter((line) => line.startsWith("An answer for wf.md given on another device"))).toHaveLength(1);
+	});
+
+	// The CLI cannot ask: without --yes it denies, and that answer is kept like
+	// one given (#28). After the upgrade, an agent run without --yes that
+	// relied on an earlier grant keeps network denied for this content, also
+	// for a later run with --yes. The Upgrade-Note says to grant first.
+	it("keeps a deny given without --yes on this device, also for a later run with --yes", async () => {
+		const s = shared(false);
+		await s.runOn(THERE);
+		expect(s.stored()["wf.md"]?.[THERE]?.["network"]).toBe("deny");
+		(s.platform as { confirm?: unknown }).confirm = async () => true;
+		await s.runOn(HERE);
+		expect(s.stored()["wf.md"]?.[HERE]?.["network"]).toBe("allow");
+
+		(s.platform as { confirm?: unknown }).confirm = async () => false;
+		const third = "c".repeat(32);
+		await s.runOn(third);
+		(s.platform as { confirm?: unknown }).confirm = async () => true;
+		expect(await s.runOn(third)).toBe("error");
+		expect(s.stored()["wf.md"]?.[third]?.["network"]).toBe("deny");
 	});
 
 	it("neither reads the device nor stores anything for a note that asks nothing", async () => {
