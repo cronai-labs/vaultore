@@ -572,6 +572,21 @@ function sameMac(a: string, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+/**
+ * Several decisions as one, per permission: a deny in any of them wins over
+ * an allow. Undefined when there are none.
+ */
+function strictest(decisions: StoredDecision[]): StoredDecision | undefined {
+  if (decisions.length === 0) return undefined;
+  const merged: StoredDecision = {};
+  for (const key of PERMISSION_KEYS) {
+    const answers = decisions.map((decision) => decision[key]);
+    if (answers.includes("deny")) merged[key] = "deny";
+    else if (answers.includes("allow")) merged[key] = "allow";
+  }
+  return merged;
+}
+
 /** An own property only, from a record read out of a file. */
 function ownEntry<T>(record: unknown, key: string): T | undefined {
   if (typeof record !== "object" || record === null) return undefined;
@@ -662,15 +677,19 @@ async function resolvePermissions(
       }
     }
     // Turned on in this machine's settings, never by the vault: decisions
-    // made on another device, then one stored before decisions carried a
-    // device, apply too.
-    const elsewhere =
-      Object.entries(forNote).find(
-        ([id, decision]) => id !== device.id && isRecord(decision) && decision.workflowHash === workflowHash
-      )?.[1] ??
-      [ownEntry<unknown>(platform.getSetting("vaultore.permissionDecisions"), workflowPath)].find(
+    // made on other devices, and one stored before decisions carried a
+    // device, apply too. Where they disagree, a deny wins, whatever order
+    // the file lists them in.
+    const elsewhere = strictest(
+      [
+        ...Object.entries(forNote)
+          .filter(([id]) => id !== device.id)
+          .map(([, decision]) => decision as unknown),
+        ownEntry<unknown>(platform.getSetting("vaultore.permissionDecisions"), workflowPath),
+      ].filter(
         (decision): decision is StoredDecision => isRecord(decision) && decision["workflowHash"] === workflowHash
-      );
+      )
+    );
     if (current === undefined && elsewhere !== undefined) {
       if (device.acceptOtherDevices) {
         current = elsewhere;

@@ -1348,7 +1348,8 @@ class VaultOreSettingsTab extends PluginSettingTab {
               "Off by default, and set for each account on each computer. Your answers to a note's permission " +
               "requests apply only on the computer where you gave them, so a note that arrives through sync asks again. " +
               "When on, answers given on another computer, or before this version, apply here too while the note is " +
-              "unchanged. Shared with vaultore (vaultore permissions other-devices).",
+              "unchanged, a deny winning where they disagree, and are kept as this computer's own: turning this off " +
+              "again does not withdraw them. Shared with vaultore (vaultore permissions other-devices).",
             control: { type: "toggle", key: "decisionsFromOtherDevices" },
           },
         ],

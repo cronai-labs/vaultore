@@ -262,7 +262,9 @@ They are kept as `deviceDecisions` in the plugin's settings (`.obsidian/plugins/
 
 **The MAC** is HMAC-SHA256 with the device's key over the vault's path, the note's path, the device id, `workflowHash`, `grantedAt` and the answers. A decision applies only when its MAC verifies. So one written by anyone who can only write the vault, one changed from `deny` to `allow`, and one copied to another note, vault or device are not decisions: the user is asked again, and the log says so. Each device keeps its own entry, so computers that share a vault do not replace each other's answers.
 
-**Decisions from other devices** apply only when this machine's `settings.json` (beside `device.json`, not in the vault, so sync cannot turn it on) sets `decisionsFromOtherDevices: true`: in the plugin, **Permission answers from other devices**; in the CLI, `vaultore permissions other-devices apply`. Then a decision from another device for the same content applies, and after it one stored before decisions carried a device. A value other than `true` or `false` is an error naming the file.
+**Decisions from other devices** apply only when this machine's `settings.json` (beside `device.json`, not in the vault, so sync cannot turn it on) sets `decisionsFromOtherDevices: true`: in the plugin, **Permission answers from other devices**; in the CLI, `vaultore permissions other-devices apply`. Then the decisions from other devices for the same content, and one stored before decisions carried a device, apply together: where they disagree on a permission, a deny wins, whatever order the file lists them in. A value other than `true` or `false` is an error naming the file.
+
+**An answer taken from another device becomes this device's own:** the run stores it under this device's id, with this device's MAC, as if it had been given here. Turning the setting off again therefore does not withdraw answers already taken over; they apply until the note changes. And a deny wins only among answers not yet taken over: a deny that another device gives later, or that arrives through sync later, does not replace an allow this device took over before. This device's own decision is looked up first.
 
 **Stored before #284,** decisions were one per note under `permissionDecisions`. That key is read only when decisions from other devices apply, and never written, so an older runner on another computer keeps its own until it is updated.
 
@@ -474,9 +476,9 @@ Merge frontmatter permissions over the defaults
 For each permission at "ask":
   stored decision for this path, this device and the same content hash, whose MAC verifies?
     yes → use it
-  else, with decisions from other devices on: one from another device,
-  or one stored before decisions carried a device, for the same content hash?
-    yes → use it
+  else, with decisions from other devices on: those from other devices,
+  and one stored before decisions carried a device, for the same content hash?
+    yes → use them, a deny winning; store the result as this device's own
     no  → prompt (plugin modal; CLI: --yes allows, else deny)
   │
   ▼

@@ -618,6 +618,38 @@ describe("decisions are bound to the device that made them (#284)", () => {
 
 			expect(s.prompts).toHaveLength(2);
 		});
+
+		it.each([
+			["the allow first", [true, false]],
+			["the deny first", [false, true]],
+		])("lets a deny win where other devices disagree, with %s in the file", async (_order, answers) => {
+			const s = shared();
+			const others = [THERE, "c".repeat(32)];
+			for (const [index, id] of others.entries()) {
+				(s.platform as { confirm?: unknown }).confirm = async (message: string) => {
+					s.prompts.push(message);
+					return answers[index];
+				};
+				await s.runOn(id);
+			}
+
+			expect(await s.runOn(HERE, GRANTED, { acceptOtherDevices: true })).toBe("error");
+			expect(s.prompts).toHaveLength(2);
+			expect(s.stored()["wf.md"]?.[HERE]).toMatchObject({ network: "deny" });
+		});
+
+		it.each([
+			["allows", "deny", "error"],
+			["denies", "allow", "error"],
+		])("lets a deny win between another device that %s and an answer stored before answers carried a device", async (_what, legacyAnswer, status) => {
+			const s = shared(legacyAnswer === "deny");
+			await s.runOn(THERE);
+			const hash = s.stored()["wf.md"]![THERE]!["workflowHash"];
+			s.settings.set("vaultore.permissionDecisions", { "wf.md": { network: legacyAnswer, workflowHash: hash } });
+
+			expect(await s.runOn(HERE, GRANTED, { acceptOtherDevices: true })).toBe(status);
+			expect(s.prompts).toHaveLength(1);
+		});
 	});
 });
 

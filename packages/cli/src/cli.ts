@@ -127,7 +127,9 @@ An answer to a note's "ask" permission is kept for the note's content and
 this device (this account on this computer): a note that arrives through
 sync, or was answered on another computer, is asked again, so without --yes
 it is denied. 'permissions other-devices apply' lets answers given elsewhere,
-or before answers carried a device, apply here too; 'ask' turns that off.
+or before answers carried a device, apply here too, a deny winning where
+they disagree; an answer applied that way is kept as this device's own.
+'ask' turns that off again for answers not yet kept.
 
 Secrets are read from the environment:
   VAULTORE_OPENAI_APIKEY (or OPENAI_API_KEY)

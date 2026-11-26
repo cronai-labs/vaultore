@@ -207,7 +207,7 @@ paths share the approvals, the record and the locks. Running once beyond one acc
 
 What sync carries depends on your sync. iCloud, Nextcloud, Syncthing and Obsidian Sync with
 plugin settings on carry `.obsidian/plugins/vaultore/data.json`, which holds the plugin's other
-settings and its permission decisions. A permission decision applies only on the account and computer that made it, so a note that arrives through sync asks again on each computer; **Permission answers from other devices** in the plugin, or `vaultore permissions other-devices apply`, lets answers from elsewhere apply too. Run records and the result callouts
+settings and its permission decisions. A permission decision applies only on the account and computer that made it, so a note that arrives through sync asks again on each computer; **Permission answers from other devices** in the plugin, or `vaultore permissions other-devices apply`, lets answers from elsewhere apply too: where they disagree a deny wins, and an answer taken over is kept as this computer's own, so turning the setting off does not withdraw it. Run records and the result callouts
 in notes travel with the vault, so two computers write into the same notes.
 
 **Let one computer schedule:** approve the note there only, in Obsidian or for the agent.
