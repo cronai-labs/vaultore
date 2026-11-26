@@ -832,7 +832,7 @@ export default class VaultOrePlugin extends Plugin {
     if (!this.scheduledBeforeUpgrade || this.schedules.obsidianScheduling) return;
     if (this.app.loadLocalStorage(SCHEDULING_MOVED_NOTICE_KEY) !== null) return;
     new Notice(
-      "VaultOre: scheduled workflows are now turned on for each account on each computer, and are off for yours here. " +
+      "VaultOre: scheduled workflows are now turned on separately for each account on each computer, and are off here. " +
         "To run them here, turn them on and approve your notes under Settings → VaultOre → Scheduled workflows.",
       0
     );
@@ -861,10 +861,8 @@ export default class VaultOrePlugin extends Plugin {
       legacyApprovals: legacyApprovalsPath({ env: process.env, platform: process.platform, homedir: homedir() }),
       onImported: (from, to) => {
         this.adapter.log("info", `Copied vaultore agent's approvals from ${from} to ${to}`);
-        new Notice(
-          "VaultOre: the notes approved for vaultore agent are now listed under Settings → VaultOre → Scheduled workflows, " +
-            "and run by the agent as before."
-        );
+        // Said once the notes are read, naming those that wait for an answer.
+        this.approvalsImported = true;
       },
       onLegacyChanged: (from) => {
         this.adapter.log("warn", `${from} changed since its approvals were copied in; the change is not used`);
@@ -891,6 +889,37 @@ export default class VaultOrePlugin extends Plugin {
     }
     await this.refreshAgentStatus();
     await this.refreshScheduledNow();
+    if (this.approvalsImported) {
+      this.approvalsImported = false;
+      this.noticeImportedApprovals();
+    }
+  }
+
+  // Approvals of 0.4.x were copied in at this start (#301).
+  private approvalsImported = false;
+
+  /**
+   * Tells which of the agent's approvals of 0.4.x run as before, and which
+   * wait for an answer: those held no answers, so a note with an `ask` does
+   * not run until approved again with one (#310).
+   */
+  private noticeImportedApprovals(): void {
+    const waiting = Object.entries(this.schedules.notes)
+      .filter(([path, approval]) => {
+        const state = this.noteState(path);
+        return approval.permissions === undefined && state?.state === "changed" && state.review.needsAnswer.length > 0;
+      })
+      .map(([path]) => path);
+    const where = "Settings → VaultOre → Scheduled workflows";
+    new Notice(
+      waiting.length === 0
+        ? `VaultOre: the notes approved for vaultore agent are now listed under ${where}, and the agent runs them as before.`
+        : `VaultOre: the notes approved for vaultore agent are now listed under ${where}. ` +
+            `${waiting.join(", ")} ${waiting.length === 1 ? "asks" : "ask"} for a permission, which approvals of earlier versions held no answer for, ` +
+            `so ${waiting.length === 1 ? "it does" : "they do"} not run until you answer: Review under ${where}, ` +
+            "or vaultore schedules approve <note> --allow <permission>. The others run as before.",
+      0
+    );
   }
 
   // Each approved note as it is now, read from the note (#299): what its
@@ -1611,7 +1640,6 @@ function parseNumericSetting(key: NumericSetting, raw: string): number | undefin
   return Number.isFinite(parsed) && NUMERIC_SETTINGS[key].valid(parsed) ? parsed : null;
 }
 
-/** Who runs the note on this computer, as the row's dropdown shows it. */
 /** What changed in a note since its approval, in a few words (#299). */
 export function describeChange(approval: NoteApproval, note: { schedule: string }, review: ApprovalReview): string {
   const parts: string[] = [];
@@ -1623,6 +1651,7 @@ export function describeChange(approval: NoteApproval, note: { schedule: string 
   return parts.length > 0 ? parts.join(", ") : "its frontmatter or a cell";
 }
 
+/** Who runs the note on this computer, as the row's dropdown shows it. */
 function ownerChoice(note: ScheduledNote): "off" | ScheduleOwner {
   return note.approval?.owner ?? "off";
 }
@@ -2039,6 +2068,11 @@ class VaultOreSettingsTab extends PluginSettingTab {
     const state = note.state;
     if (state === undefined) return `${schedule}. Approved for ${ownerName(approval.owner)}; reading the note.`;
     if (state.state === "changed") {
+      // Copied from 0.4.x, whose approvals held no answers: nothing changed (#310).
+      if (approval.permissions === undefined && state.review.needsAnswer.length > 0) {
+        const asks = state.review.needsAnswer.join(", ");
+        return `${schedule}. Handed to ${ownerName(approval.owner)} by an earlier version, whose approvals held no answers; ${asks} ${state.review.needsAnswer.length === 1 ? "asks" : "ask"}, so it does not run until you answer. Review it to answer.`;
+      }
       const where = approval.owner === "agent" ? "Handed to vaultore agent, but it" : "It";
       return `${schedule}. ${where} changed since it was approved (${describeChange(approval, note, state.review)}), so it does not run. Review it to run it again.`;
     }

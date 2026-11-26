@@ -790,6 +790,13 @@ async function resolvePermissions(
       if (answer === "allow" || answer === "deny") {
         resolved[key] = answer;
         lineage[key] = { value: answer, source: "answer", ...(current?.grantedAt !== undefined ? { at: current.grantedAt } : {}) };
+        // Said, so that an answer given in the other runner, or a deny that
+        // `--yes` does not change, is not applied unseen (#310).
+        platform.log(
+          answer === "deny" ? "warn" : "info",
+          `${key} for ${workflowPath}: ${answer}, as answered${current?.grantedAt !== undefined ? ` on ${current.grantedAt}` : ""} ` +
+            `for this content on this computer (kept in ${store.file})`
+        );
         continue;
       }
       const approved = platform.confirm

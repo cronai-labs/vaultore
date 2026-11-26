@@ -718,7 +718,7 @@ async function catchUpApproval(vaultRoot: string, path: string, content: string)
 	const refused = catchUpRefusal(schedules, approval);
 	if (refused !== undefined) return refused;
 	const binding = bindingOf(schedules, approval.owner);
-	if (!approvalCovers(approval, note, binding)) return changedReason(path, reviewApproval(approval, note));
+	if (!approvalCovers(approval, note, binding)) return changedReason(path, reviewApproval(approval, note), approval);
 	return { approval, binding };
 }
 

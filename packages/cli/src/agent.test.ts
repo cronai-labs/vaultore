@@ -151,6 +151,19 @@ describe("planRegistrations", () => {
 		);
 	});
 
+	// #310: an approval of 0.4.x held no answers; the note did not change.
+	it("says an approval of an earlier version holds no answer, rather than that the note changed", () => {
+		const legacy = { owner: "agent" as const, hash: "h1", schedule: "0 9 * * *", approvedAt: "2026-10-01T00:00:00.000Z" };
+		const plan = planRegistrations(
+			[scheduled("a.md", "h1", "0 9 * * *", { ...DEFAULTS, network: "ask" })],
+			schedules({ "a.md": legacy })
+		);
+
+		expect(plan.skipped[0]?.reason).toBe(
+			"it was approved by an earlier version, whose approvals held no answers, and network asks: approve it with an answer, vaultore schedules approve a.md --allow network (or --deny network)"
+		);
+	});
+
 	it("names a permission whose frontmatter value changed", () => {
 		const plan = planRegistrations(
 			[scheduled("a.md", "h2", "0 9 * * *", { ...DEFAULTS, vaultWrite: "allow" })],

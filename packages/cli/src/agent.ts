@@ -6,7 +6,7 @@
  */
 
 import { bindingOf, errorMessage, noteScheduleState, ownerName } from "@vaultore/core";
-import type { ApprovalReview, NoteScheduleState, UnattendedApproval, VaultSchedules } from "@vaultore/core";
+import type { ApprovalReview, NoteApproval, NoteScheduleState, UnattendedApproval, VaultSchedules } from "@vaultore/core";
 import type { ScheduledNote } from "./schedules";
 
 /**
@@ -49,11 +49,16 @@ export interface SkippedNote {
  * approves it again: with an answer for each permission newly at `ask`
  * (#299). Completes "<path>: …".
  */
-export function changedReason(path: string, review: ApprovalReview): string {
+export function changedReason(path: string, review: ApprovalReview, approval?: NoteApproval): string {
 	const changed = review.permissions.filter((p) => p.status === "changed" || p.status === "answer-dropped").map((p) => `${p.key} is now ${p.now}`);
 	const what = changed.length > 0 ? `; ${changed.join(", ")}` : "";
 	if (review.needsAnswer.length > 0) {
 		const keys = review.needsAnswer.join(",");
+		// Copied from 0.4.x, whose approvals held no answers: nothing changed (#310).
+		if (approval !== undefined && approval.permissions === undefined) {
+			return `it was approved by an earlier version, whose approvals held no answers, and ${review.needsAnswer.join(", ")} ` +
+				`${review.needsAnswer.length === 1 ? "asks" : "ask"}: approve it with an answer, vaultore schedules approve ${path} --allow ${keys} (or --deny ${keys})`;
+		}
 		return `it changed since it was approved${what}; ${review.needsAnswer.join(", ")} now ${review.needsAnswer.length === 1 ? "asks" : "ask"}: ` +
 			`approve it with an answer, vaultore schedules approve ${path} --allow ${keys} (or --deny ${keys})`;
 	}
@@ -68,7 +73,7 @@ function skipReason(state: NoteScheduleState, path: string): string | undefined 
 		case "not-approved":
 			return "it is not approved";
 		case "changed":
-			return changedReason(path, state.review);
+			return changedReason(path, state.review, state.approval);
 		case "delegated":
 		case "off":
 			return `it is handed to ${ownerName(state.approval.owner)}`;

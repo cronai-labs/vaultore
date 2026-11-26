@@ -433,6 +433,22 @@ describe("answers kept for this account on this computer, outside the vault (#29
 		expect(cli.prompts).toHaveLength(0);
 	});
 
+	// #310: a deny given in Obsidian holds for `vaultore run --yes` too; it is said, not applied unseen.
+	it("says which kept answer it used, and when it was given", async () => {
+		await runner(false).runNote();
+		const cli = runner(true);
+		const log = vi.fn();
+		Object.assign(cli.platform, { log });
+
+		await cli.runNote();
+
+		expect(cli.prompts).toHaveLength(0);
+		expect(log).toHaveBeenCalledWith(
+			"warn",
+			expect.stringMatching(/^network for wf\.md: deny, as answered on \S+ for this content on this computer \(kept in .*answers\.json\)$/)
+		);
+	});
+
 	it("asks again in a vault whose answers file is another's: another account, or another computer", async () => {
 		await runner().runNote();
 		answersFile = join(stateDir, "other-account", "answers.json");
