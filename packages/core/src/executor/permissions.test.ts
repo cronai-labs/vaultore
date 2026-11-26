@@ -531,24 +531,32 @@ describe("decisions are bound to the device that made them (#284)", () => {
 		expect(logs.filter((line) => line.startsWith("An answer for wf.md given on another device"))).toHaveLength(1);
 	});
 
-	// The CLI cannot ask: without --yes it denies, and that answer is kept like
-	// one given (#28). After the upgrade, an agent run without --yes that
-	// relied on an earlier grant keeps network denied for this content, also
-	// for a later run with --yes. The Upgrade-Note says to grant first.
-	it("keeps a deny given without --yes on this device, also for a later run with --yes", async () => {
-		const s = shared(false);
-		await s.runOn(THERE);
-		expect(s.stored()["wf.md"]?.[THERE]?.["network"]).toBe("deny");
-		(s.platform as { confirm?: unknown }).confirm = async () => true;
-		await s.runOn(HERE);
-		expect(s.stored()["wf.md"]?.[HERE]?.["network"]).toBe("allow");
+	// The CLI without --yes asks nobody: the permission is denied for that run,
+	// and nothing is kept, so a later run with --yes is asked and can allow.
+	// Before, that deny was kept like an answer (#28), and after the upgrade an
+	// agent run without --yes would have locked a note that had been granted.
+	it("keeps no deny when nobody could be asked, so a later run that can ask allows", async () => {
+		const s = shared();
+		const logs: string[] = [];
+		(s.platform as { log: unknown }).log = (_level: string, message: string) => logs.push(message);
+		(s.platform as { confirm?: unknown }).confirm = async () => undefined;
 
-		(s.platform as { confirm?: unknown }).confirm = async () => false;
-		const third = "c".repeat(32);
-		await s.runOn(third);
+		expect(await s.runOn(HERE)).toBe("error");
+		expect(s.settings.has("vaultore.deviceDecisions")).toBe(false);
+		expect(logs).toContain("network for wf.md is denied for this run: nobody could be asked, and nothing was kept");
+
 		(s.platform as { confirm?: unknown }).confirm = async () => true;
-		expect(await s.runOn(third)).toBe("error");
-		expect(s.stored()["wf.md"]?.[third]?.["network"]).toBe("deny");
+		expect(await s.runOn(HERE)).toBe("success");
+		expect(s.stored()["wf.md"]?.[HERE]?.["network"]).toBe("allow");
+	});
+
+	it("keeps a deny a person gave", async () => {
+		const s = shared(false);
+		await s.runOn(HERE);
+		(s.platform as { confirm?: unknown }).confirm = async () => true;
+
+		expect(await s.runOn(HERE)).toBe("error");
+		expect(s.stored()["wf.md"]?.[HERE]?.["network"]).toBe("deny");
 	});
 
 	it("neither reads the device nor stores anything for a note that asks nothing", async () => {

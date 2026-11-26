@@ -305,9 +305,8 @@ vaultore --version | --help
   `ANTHROPIC_API_KEY`).
 - `--config-dir <name>`: when Obsidian is set to use another config folder than `.obsidian`,
   name it, so that it is skipped when looking for workflows and hidden from cells.
-- Permissions at `ask` are denied unless you pass `--yes`, and the decision is stored in the
-  config file, for this account on this computer. A `deny` stored that way sticks until the note changes
-  ([#28](https://github.com/cronai-labs/vaultore/issues/28)). `vaultore permissions other-devices apply` lets decisions made on another computer apply here.
+- Permissions at `ask` are denied for the run unless you pass `--yes`; `--yes` grants them, and
+  that answer is stored in the config file, for this account on this computer, until the note changes. A run without `--yes` stores nothing. `vaultore permissions other-devices apply` lets decisions made on another computer apply here.
 - `vaultore agent` is a scheduler daemon. **It runs a scheduled note only after
   `vaultore schedules approve <note.md>`**, and only while the note's frontmatter and cells are
   what you approved: an edit to either, including one that arrives through sync, stops it until

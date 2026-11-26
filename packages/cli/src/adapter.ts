@@ -270,15 +270,16 @@ export class NodeAdapter implements PlatformAdapter {
 		stream.write(`[vaultore:${type}] ${message}\n`);
 	}
 
-	async confirm(message: string): Promise<boolean> {
+	/** `--yes` answers yes; without it nobody is asked, so there is no answer to keep. */
+	async confirm(message: string): Promise<boolean | undefined> {
 		if (this.assumeYes) {
 			process.stderr.write(`[vaultore] auto-approved (--yes): ${message}\n`);
 			return true;
 		}
 		process.stderr.write(
-			`[vaultore] denied (non-interactive, pass --yes to grant): ${message}\n`
+			`[vaultore] denied for this run (non-interactive, pass --yes to grant): ${message}\n`
 		);
-		return false;
+		return undefined;
 	}
 
 	log(level: "debug" | "info" | "warn" | "error", message: string, data?: unknown): void {

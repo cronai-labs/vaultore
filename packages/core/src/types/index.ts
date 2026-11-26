@@ -613,7 +613,11 @@ export interface PlatformAdapter {
     type: "info" | "warning" | "error"
   ): void;
   showProgress?(title: string): ProgressHandle;
-  confirm?(message: string): Promise<boolean>;
+  /**
+   * Asks the user. `undefined` means nobody could be asked (the CLI without
+   * `--yes`): the permission is denied for this run, and nothing is stored.
+   */
+  confirm?(message: string): Promise<boolean | undefined>;
 
   // Logging
   log(

@@ -684,24 +684,30 @@ async function resolvePermissions(
       }
     }
 
+    // The answers to keep: given now, or kept before. A permission nobody
+    // could be asked about is denied for this run only, so that a later run
+    // that can ask (the CLI with --yes) is not bound by a deny nobody gave.
+    const answered: (typeof PERMISSION_KEYS)[number][] = [];
     for (const key of asked) {
       const answer = current?.[key];
       if (answer === "allow" || answer === "deny") {
         resolved[key] = answer;
+        answered.push(key);
         continue;
       }
-      if (!platform.confirm) {
-        resolved[key] = "deny";
+      const approved = platform.confirm
+        ? await platform.confirm(`VaultOre permission request: ${key} for ${workflowPath}. Allow?`)
+        : undefined;
+      resolved[key] = approved === true ? "allow" : "deny";
+      if (approved === undefined) {
+        platform.log("warn", `${key} for ${workflowPath} is denied for this run: nobody could be asked, and nothing was kept`);
         continue;
       }
-      const approved = await platform.confirm(
-        `VaultOre permission request: ${key} for ${workflowPath}. Allow?`
-      );
-      resolved[key] = approved ? "allow" : "deny";
+      answered.push(key);
     }
 
     const decision: StoredDecision = {
-      ...Object.fromEntries(asked.map((key) => [key, resolved[key]])),
+      ...Object.fromEntries(answered.map((key) => [key, resolved[key]])),
       workflowHash,
       grantedAt: (current === mine ? mine?.grantedAt : undefined) ?? new Date().toISOString(),
     };
@@ -712,7 +718,7 @@ async function resolvePermissions(
     nextForNote[device.id] = entry;
     const next = Object.assign(Object.create(null) as DeviceDecisions, stored);
     next[workflowPath] = nextForNote;
-    if (JSON.stringify(mine) !== JSON.stringify(entry)) {
+    if (answered.length > 0 && JSON.stringify(mine) !== JSON.stringify(entry)) {
       await platform.setSetting("vaultore.deviceDecisions", next);
     }
   }

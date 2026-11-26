@@ -111,8 +111,8 @@ in principle; the order is not fixed. Grouped:
 
 - Write permission per path ([#108](https://github.com/cronai-labs/vaultore/issues/108)),
   choosing what a grant is bound to ([#70](https://github.com/cronai-labs/vaultore/issues/70)),
-  the remaining items of [#28](https://github.com/cronai-labs/vaultore/issues/28) (a sticky CLI
-  `deny`, global caps).
+  the remaining items of [#28](https://github.com/cronai-labs/vaultore/issues/28) (clearing
+  stored decisions, global caps).
 - Sandbox options beyond containers: an OS process sandbox, embeddable microVMs, the WASM tier
   ([#103](https://github.com/cronai-labs/vaultore/issues/103);
   [sandbox spec](../specs/sandbox-spec.md)).

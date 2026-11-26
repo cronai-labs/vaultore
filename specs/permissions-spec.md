@@ -231,9 +231,10 @@ permission. A note that asks nothing reads and stores no decision.
 
 - **Obsidian plugin:** a modal per permission, "VaultOre permission request: `<permission>`
   for `<path>`. Allow?", with **Allow** and **Deny**. Closing it denies.
-- **CLI:** non-interactive. Without `--yes` the answer is `deny`; with `--yes` it is `allow`.
-  Either is printed to stderr.
-- **No way to ask** (an adapter without `confirm`): `deny`.
+- **CLI:** non-interactive. With `--yes` the answer is `allow`. Without it nobody is asked: the
+  permission is denied for this run and nothing is stored, so a later run with `--yes` is asked
+  and can allow. Either is printed to stderr.
+- **No way to ask** (an adapter without `confirm`): denied for this run, nothing stored.
 
 A denied permission does not stop the run: it runs without that permission, and cells that
 needed it fail.
@@ -279,10 +280,10 @@ setting ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
 - the decision was made on another device, or before decisions carried a device, unless decisions from other devices apply;
 - its MAC does not verify.
 
-A stored `deny` is reused like an `allow`. In the CLI this means one run without `--yes` keeps
-the permission denied for that content, even on later runs with `--yes`
-([#28](https://github.com/cronai-labs/vaultore/issues/28)). There is no command or setting to
-clear decisions; remove the note's entry from the file above.
+A stored `deny` is reused like an `allow`; only an answer a person gave (a modal, or `--yes`) is
+stored. There is no command or setting to clear decisions
+([#28](https://github.com/cronai-labs/vaultore/issues/28)); remove the note's entry from the
+file above.
 
 ---
 

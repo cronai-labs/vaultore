@@ -119,9 +119,9 @@ describe("NodeAdapter", () => {
 		expect(await adapter.getSecret("openai.apiKey")).toBeUndefined();
 	});
 
-	it("denies confirmations unless --yes", async () => {
+	it("asks nobody unless --yes, so no answer is kept", async () => {
 		const denying = new NodeAdapter({ vaultRoot: vault, quiet: true });
-		expect(await denying.confirm("allow?")).toBe(false);
+		expect(await denying.confirm("allow?")).toBeUndefined();
 
 		const granting = new NodeAdapter({ vaultRoot: vault, quiet: true, assumeYes: true });
 		expect(await granting.confirm("allow?")).toBe(true);
