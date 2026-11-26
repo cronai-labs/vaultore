@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { WorkflowExecutor } from "./index";
+import { WorkflowExecutor, scheduledNoteOf } from "./index";
+import type { UnattendedApproval } from "./index";
+import { WorkflowParser } from "../parser";
+import { approveNote, approvedPermissions, reviewApproval } from "../settings/schedules";
+import type { VaultSchedules } from "../settings/schedules";
 import { RunLockHeldError } from "../lock/run-lock";
 import { SlotTakenError } from "../scheduler/slot-record";
 import type { PlatformAdapter } from "../types";
@@ -75,8 +79,17 @@ function vault(overrides: Partial<PlatformAdapter> = {}) {
 	return { files, locks, record, logged, platform };
 }
 
-function scheduledRun(platform: PlatformAdapter, content = NOTE) {
-	return new WorkflowExecutor().runWorkflow({ platform, workflowPath: PATH, content, scheduled: SCHEDULED });
+/** The note approved to run on schedule as `content` is, as Obsidian approves it. */
+async function approved(content = NOTE): Promise<UnattendedApproval> {
+	const note = await scheduledNoteOf(new WorkflowParser().parse(content, PATH));
+	if (!note) throw new Error("no schedule");
+	const schedules: VaultSchedules = { obsidianScheduling: true, obsidianBinding: "strict", notes: Object.create(null) };
+	approveNote(schedules, note, "obsidian", approvedPermissions(reviewApproval(undefined, note)), new Date("2026-11-20T00:00:00Z"));
+	return { approval: schedules.notes[PATH] as UnattendedApproval["approval"], binding: "content" };
+}
+
+async function scheduledRun(platform: PlatformAdapter, content = NOTE) {
+	return new WorkflowExecutor().runWorkflow({ platform, workflowPath: PATH, content, scheduled: SCHEDULED, unattended: await approved(content) });
 }
 
 beforeEach(() => {
@@ -138,6 +151,8 @@ describe("a scheduled run", () => {
 			workflowPath: PATH,
 			content: v.files[PATH] as string,
 			scheduled: { ...SCHEDULED, slot: new Date(SLOT.getTime() + 3_600_000) },
+			// Approved before the first run wrote its output into the note.
+			unattended: await approved(),
 		});
 
 		expect(execContainer).toHaveBeenCalledTimes(2);
@@ -244,7 +259,7 @@ describe("a catch-up, which holds its slot before the run (#269)", () => {
 		const v = vault();
 		const h = held();
 
-		await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: NOTE, slotClaim: h.claim });
+		await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: NOTE, slotClaim: h.claim, unattended: await approved() });
 
 		expect(h.outcomes).toMatchObject([{ result: "completed" }]);
 		expect(v.record.slots.size).toBe(0);
@@ -267,5 +282,113 @@ describe("a catch-up, which holds its slot before the run (#269)", () => {
 		await expect(
 			new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: NOTE, scheduled: SCHEDULED, slotClaim: held().claim })
 		).rejects.toThrow("not both");
+	});
+});
+
+describe("an unattended run's permissions (#299)", () => {
+	const ASKS = NOTE.replace("network: deny", "network: ask");
+	const runJson = (files: Record<string, string>) => {
+		const path = Object.keys(files).find((file) => file.endsWith("/run.json"));
+		return JSON.parse(files[path as string] as string) as Record<string, unknown>;
+	};
+
+	it("is refused without an approval, and its slot recorded skipped with the reason", async () => {
+		const v = vault();
+
+		const run = new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: NOTE, scheduled: SCHEDULED });
+
+		await expect(run).rejects.toThrow("is not approved to run on schedule on this computer");
+		expect(execContainer).not.toHaveBeenCalled();
+		expect(v.record.slots.get(KEY)).toMatchObject({ result: "skipped" });
+		expect(Object.keys(v.files).some((path) => path.endsWith("/run.json"))).toBe(false);
+	});
+
+	it("is refused when the note's permissions changed since it was approved, naming when", async () => {
+		const v = vault();
+		const edited = NOTE.replace("vaultRead: deny", "vaultRead: allow");
+		v.files[PATH] = edited;
+
+		const run = new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: edited, scheduled: SCHEDULED, unattended: await approved() });
+
+		await expect(run).rejects.toThrow("changed since it was approved on 2026-11-20T00:00:00.000Z; approve it again");
+		expect(v.record.slots.get(KEY)).toMatchObject({ result: "skipped" });
+	});
+
+	it("is refused when a cell changed since it was approved, under strict binding, and runs under narrow", async () => {
+		const edited = NOTE.replace("echo one", "echo two");
+		const strict = vault();
+		strict.files[PATH] = edited;
+
+		await expect(
+			new WorkflowExecutor().runWorkflow({ platform: strict.platform, workflowPath: PATH, content: edited, scheduled: SCHEDULED, unattended: await approved() })
+		).rejects.toThrow("changed since it was approved");
+		expect(execContainer).not.toHaveBeenCalled();
+
+		const narrow = vault();
+		narrow.files[PATH] = edited;
+		await new WorkflowExecutor().runWorkflow({
+			platform: narrow.platform,
+			workflowPath: PATH,
+			content: edited,
+			scheduled: SCHEDULED,
+			unattended: { ...(await approved()), binding: "schedule" },
+		});
+		expect(execContainer).toHaveBeenCalledTimes(1);
+	});
+
+	it("runs with the answer given at approval, asks nobody and stores nothing", async () => {
+		const confirm = vi.fn(async () => true);
+		const setSetting = vi.fn(async () => undefined);
+		const v = vault({ confirm, setSetting } as Partial<PlatformAdapter>);
+		v.files[PATH] = ASKS;
+		const note = await scheduledNoteOf(new WorkflowParser().parse(ASKS, PATH));
+		const schedules: VaultSchedules = { obsidianScheduling: true, obsidianBinding: "strict", notes: Object.create(null) };
+		approveNote(schedules, note!, "agent", approvedPermissions(reviewApproval(undefined, note!), { network: "allow" }), new Date("2026-11-20T00:00:00Z"));
+
+		await new WorkflowExecutor().runWorkflow({
+			platform: v.platform,
+			workflowPath: PATH,
+			content: ASKS,
+			scheduled: SCHEDULED,
+			runner: "vaultore agent",
+			unattended: { approval: schedules.notes[PATH]!, binding: "content" },
+		});
+
+		expect(confirm).not.toHaveBeenCalled();
+		expect(setSetting).not.toHaveBeenCalled();
+		const record = runJson(v.files);
+		expect(record["trigger"]).toEqual({ kind: "schedule", runner: "vaultore agent", slot: SLOT.toISOString(), owner: "agent", approvedAt: "2026-11-20T00:00:00.000Z" });
+		expect(record["permissions"]).toMatchObject({
+			network: { value: "allow", source: "approval", at: "2026-11-20T00:00:00.000Z" },
+			vaultRead: { value: "deny", source: "frontmatter" },
+		});
+		expect(vi.mocked(execContainer).mock.calls[0]?.[2]).toMatchObject({ networkEnabled: true });
+	});
+
+	it("records a catch-up as one, with the slot of its gap and the approval's owner", async () => {
+		const v = vault();
+		const finish = vi.fn(async () => undefined);
+
+		await new WorkflowExecutor().runWorkflow({
+			platform: v.platform,
+			workflowPath: PATH,
+			content: NOTE,
+			runner: "vaultore schedules catch-up",
+			slotClaim: { slot: SLOT, finish },
+			unattended: await approved(),
+		});
+
+		expect(runJson(v.files)["trigger"]).toMatchObject({ kind: "catch-up", runner: "vaultore schedules catch-up", slot: SLOT.toISOString(), owner: "obsidian" });
+	});
+
+	it("records a run started by hand as manual, and refuses an approval given with one", async () => {
+		const v = vault();
+		await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: NOTE, runner: "Obsidian" });
+		expect(runJson(v.files)["trigger"]).toEqual({ kind: "manual", runner: "Obsidian" });
+		expect(runJson(v.files)["permissions"]).toMatchObject({ network: { value: "deny", source: "frontmatter" } });
+
+		await expect(
+			new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: PATH, content: v.files[PATH] as string, unattended: await approved() })
+		).rejects.toThrow("not for a run started by hand");
 	});
 });

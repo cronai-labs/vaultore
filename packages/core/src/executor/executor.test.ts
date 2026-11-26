@@ -132,6 +132,7 @@ describe("finalizeRunContext", () => {
 		startedAt: "2026-08-19T07:03:43.626Z",
 		workflowPath: "wf.md",
 		outputRoot: "_vaultore",
+		trigger: { kind: "manual" as const },
 	};
 
 	function capturingPlatform() {
