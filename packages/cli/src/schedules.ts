@@ -7,40 +7,45 @@
  */
 
 import {
+	APPROVAL_PERMISSION_KEYS,
 	MAX_LATE_AFTER_MINUTES,
 	MIN_LATE_AFTER_MINUTES,
 	WorkflowParser,
 	approveNote,
+	approvedPermissions,
 	computeNextRun,
 	errorMessage,
-	grantHash,
 	isLateAfterMinutes,
 	noteScheduleState,
 	own,
 	ownerName,
 	readMachineSettings,
+	reviewApproval,
 	revokeNote,
+	scheduledNoteOf as coreScheduledNoteOf,
 	writeMachineSettings,
 } from "@vaultore/core";
 import { SHORT_WAIT } from "./wait";
-import type { ScheduleOwner, SlotEntry, VaultSchedules, VaultStateStore, Workflow } from "@vaultore/core";
+import type {
+	ApprovalPermissionKey,
+	ApprovalReview,
+	ScheduleOwner,
+	ScheduledNoteNow,
+	SlotEntry,
+	VaultSchedules,
+	VaultStateStore,
+	Workflow,
+} from "@vaultore/core";
 import type { DiscoveredWorkflow } from "./scan";
 
 const parser = new WorkflowParser();
 
-/** A workflow note with a schedule, and the hash an approval of it is bound to. */
-export interface ScheduledNote {
-	/** Vault-relative path. */
-	path: string;
-	schedule: string;
-	/** `grantHash`: the front matter and each cell's attributes and source. */
-	hash: string;
-}
+/** A workflow note with a schedule, as an approval sees it: its hash and its permissions. */
+export type ScheduledNote = ScheduledNoteNow;
 
 async function scheduledNoteOf(path: string, workflow: Workflow): Promise<ScheduledNote | undefined> {
-	const schedule = workflow.frontmatter.schedule;
-	if (!schedule) return undefined;
-	return { path, schedule: String(schedule), hash: await grantHash(workflow, parser) };
+	const note = await coreScheduledNoteOf(workflow, parser);
+	return note === undefined ? undefined : { ...note, path };
 }
 
 /** The scheduled notes among the discovered workflows, in the order found. */
@@ -163,11 +168,68 @@ export function ownerFrom(flag: string | boolean | undefined): ScheduleOwner {
 	throw new Error(`--owner takes agent or obsidian, got '${String(flag)}'`);
 }
 
+/** Answers for permissions at `ask`, from `--allow` and `--deny`: comma-separated names (#299). */
+export type ApprovalAnswers = Partial<Record<ApprovalPermissionKey, "allow" | "deny">>;
+
+/** `--allow a,b --deny c` as answers; refuses a name it does not know, or one given both ways. */
+export function answersFrom(allow: string | boolean | undefined, deny: string | boolean | undefined): ApprovalAnswers {
+	const answers: ApprovalAnswers = {};
+	for (const [flag, value, answer] of [
+		["allow", allow, "allow"],
+		["deny", deny, "deny"],
+	] as const) {
+		if (value === undefined) continue;
+		if (typeof value !== "string" || value === "") throw new Error(`--${flag} takes permission names, as in --${flag} network,vaultWrite`);
+		for (const name of value.split(",").map((part) => part.trim())) {
+			if (!(APPROVAL_PERMISSION_KEYS as readonly string[]).includes(name)) {
+				throw new Error(`--${flag}: ${name} is no permission; they are ${APPROVAL_PERMISSION_KEYS.join(", ")}`);
+			}
+			const key = name as ApprovalPermissionKey;
+			if (answers[key] !== undefined && answers[key] !== answer) throw new Error(`${key} is given to both --allow and --deny`);
+			answers[key] = answer;
+		}
+	}
+	return answers;
+}
+
+const STATUS_LABELS: Record<ApprovalReview["permissions"][number]["status"], string> = {
+	kept: "kept",
+	new: "new",
+	changed: "changed",
+	"needs-answer": "asks",
+	"answer-dropped": "dropped",
+};
+
+/** What an approval holds, one line per permission, and what changed against the one before. */
+export function formatReview(review: ApprovalReview, answers: ApprovalAnswers): string[] {
+	return review.permissions.map((p) => {
+		const answer = answers[p.key];
+		const value = answer ?? p.result?.value ?? "?";
+		const source =
+			answer !== undefined || p.result?.source === "answer" ? "answer" : p.status === "needs-answer" ? "needs an answer" : "frontmatter";
+		const before = p.status === "changed" && p.before ? `${p.before.value} -> ` : "";
+		const label = answer !== undefined && p.status === "kept" ? "answered" : STATUS_LABELS[p.status];
+		const dropped = p.status === "answer-dropped" && p.before ? ` (the answer ${p.before.value} no longer applies)` : "";
+		return `  ${label.padEnd(9)}${p.key.padEnd(13)}${before}${value} (${source})${dropped}`;
+	});
+}
+
+/** A refusal inside the store's update: nothing is written. */
+class Refused extends Error {
+	constructor(readonly lines: string[]) {
+		super(lines.join("; "));
+	}
+}
+
 /**
- * Approve the notes as they are now, to run in `owner`. All of them or none:
- * one refused note (unreadable, no workflow, no schedule) leaves the approvals
+ * Approve the notes as they are now, to run in `owner`, with the permissions
+ * unattended runs get (#299): those the frontmatter sets, and `answers` for
+ * those at `ask`. Approving again asks only about what changed: an answer
+ * given before is kept. All of them or none: one refused note (unreadable, no
+ * workflow, no schedule, an `ask` without an answer) leaves the approvals
  * untouched. Approving a note already approved as it is, for the same owner,
- * changes nothing; approving it for the other owner hands it over.
+ * changes nothing; approving it for the other owner hands it over, with the
+ * same review.
  */
 export async function approveSchedules(options: {
 	/** Vault-relative note paths. */
@@ -176,10 +238,15 @@ export async function approveSchedules(options: {
 	store: VaultStateStore<VaultSchedules>;
 	vaultKey: string;
 	owner?: ScheduleOwner;
+	answers?: ApprovalAnswers;
 	now?: () => Date;
 }): Promise<ScheduleCommandResult> {
 	const now = options.now ?? (() => new Date());
 	const owner = options.owner ?? "agent";
+	const answers = options.answers ?? {};
+	if (Object.keys(answers).length > 0 && options.paths.length > 1) {
+		return { ok: false, lines: ["--allow and --deny answer for one note at a time; nothing was approved"] };
+	}
 
 	const notes: ScheduledNote[] = [];
 	const refusals: string[] = [];
@@ -195,26 +262,53 @@ export async function approveSchedules(options: {
 	}
 
 	const lines: string[] = [];
-	const written = await options.store.update(options.vaultKey, (schedules) => {
-		for (const note of notes) {
-			const before = own(schedules.notes, note.path);
-			if (before?.owner === owner && before.hash === note.hash && before.schedule === note.schedule) {
-				lines.push(`already approved ${note.path} [${note.schedule}] for ${ownerName(owner)}`);
-				continue;
+	let written: boolean;
+	try {
+		// Reviewed inside the update: against the approvals as they are when
+		// written, not as they were read before.
+		written = await options.store.update(options.vaultKey, (schedules) => {
+			const refused: string[] = [];
+			for (const note of notes) {
+				const before = own(schedules.notes, note.path);
+				const review = reviewApproval(before, note);
+				if (
+					before?.owner === owner &&
+					before.hash === note.hash &&
+					before.schedule === note.schedule &&
+					!review.changed &&
+					Object.keys(answers).length === 0
+				) {
+					lines.push(`already approved ${note.path} [${note.schedule}] for ${ownerName(owner)}`);
+					continue;
+				}
+				let permissions;
+				try {
+					permissions = approvedPermissions(review, answers);
+				} catch (err) {
+					const keys = review.needsAnswer.join(",");
+					const hint = review.needsAnswer.length > 0 ? `; answer with --allow ${keys} or --deny ${keys}` : "";
+					refused.push(`not approving ${note.path}: ${errorMessage(err)}${hint}`, ...formatReview(review, answers));
+					continue;
+				}
+				const replaced =
+					before === undefined
+						? ""
+						: before.owner !== owner
+							? ` (handed over from ${ownerName(before.owner)})`
+							: ` (replaces the approval of ${before.approvedAt})`;
+				approveNote(schedules, note, owner, permissions, now());
+				lines.push(`approved ${note.path} [${note.schedule}] for ${ownerName(owner)}${replaced}`);
+				if (review.changed || Object.keys(answers).length > 0) lines.push(...formatReview(review, answers));
+				if (owner === "obsidian" && !schedules.obsidianScheduling) {
+					lines.push(`  Obsidian runs it once "Run scheduled workflows" is on in VaultOre's settings`);
+				}
 			}
-			const replaced =
-				before === undefined
-					? ""
-					: before.owner !== owner
-						? ` (handed over from ${ownerName(before.owner)})`
-						: ` (replaces the approval of ${before.approvedAt})`;
-			approveNote(schedules, note, owner, now());
-			lines.push(`approved ${note.path} [${note.schedule}] for ${ownerName(owner)}${replaced}`);
-			if (owner === "obsidian" && !schedules.obsidianScheduling) {
-				lines.push(`  Obsidian runs it once "Run scheduled workflows" is on in VaultOre's settings`);
-			}
-		}
-	});
+			if (refused.length > 0) throw new Refused(refused);
+		});
+	} catch (err) {
+		if (err instanceof Refused) return { ok: false, lines: [...err.lines, "nothing was approved"] };
+		throw err;
+	}
 	if (written) lines.push(`stored in ${options.store.file}`);
 	return { ok: true, lines };
 }

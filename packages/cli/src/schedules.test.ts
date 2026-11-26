@@ -7,6 +7,7 @@ import { schedulesStore, vaultKeyFor } from "@vaultore/core";
 import type { VaultSchedules, VaultStateStore } from "@vaultore/core";
 import { discoverWorkflows } from "./scan";
 import {
+	answersFrom,
 	approveSchedules,
 	formatScheduleList,
 	formatSlotLog,
@@ -17,11 +18,11 @@ import {
 	scheduledNotes,
 } from "./schedules";
 
-const note = (schedule: string | undefined, code = "1 + 1;"): string => `---
+const note = (schedule: string | undefined, code = "1 + 1;", network = "deny"): string => `---
 ore: true
 name: Test
 ${schedule === undefined ? "" : `schedule: "${schedule}"\n`}permissions:
-  network: deny
+  network: ${network}
 ---
 
 # Test
@@ -103,12 +104,31 @@ describe("schedules approve", () => {
 		expect(result.ok).toBe(true);
 		expect(result.lines).toEqual([
 			"approved Workflows/daily.md [0 9 * * 1-5] for vaultore agent",
+			"  new      network      deny (frontmatter)",
+			"  new      buildNetwork deny (frontmatter)",
+			"  new      vaultRead    allow (frontmatter)",
+			"  new      vaultWrite   deny (frontmatter)",
 			`stored in ${store.file}`,
 		]);
 		const { note: read } = await readScheduledNote(readNote, "Workflows/daily.md");
+		const fromFrontmatter = (value: string) => ({ value, source: "frontmatter" });
 		expect(await store.forVault(key)).toEqual({
 			obsidianScheduling: false,
-			notes: { "Workflows/daily.md": { owner: "agent", hash: read.hash, schedule: "0 9 * * 1-5", approvedAt: NOW } },
+			obsidianBinding: "strict",
+			notes: {
+				"Workflows/daily.md": {
+					owner: "agent",
+					hash: read.hash,
+					schedule: "0 9 * * 1-5",
+					approvedAt: NOW,
+					permissions: {
+						network: fromFrontmatter("deny"),
+						buildNetwork: fromFrontmatter("deny"),
+						vaultRead: fromFrontmatter("allow"),
+						vaultWrite: fromFrontmatter("deny"),
+					},
+				},
+			},
 		});
 	});
 
@@ -160,14 +180,14 @@ describe("schedules approve", () => {
 			"not approving manual.md: it has no schedule",
 			"nothing was approved",
 		]);
-		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, notes: {} });
+		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, obsidianBinding: "strict", notes: {} });
 	});
 
 	it("keeps another vault's approvals apart", async () => {
 		write("daily.md", note("0 9 * * 1-5"));
 		await approve(["daily.md"]);
 
-		expect(await store.forVault("/some/other/vault")).toEqual({ obsidianScheduling: false, notes: {} });
+		expect(await store.forVault("/some/other/vault")).toEqual({ obsidianScheduling: false, obsidianBinding: "strict", notes: {} });
 	});
 
 	// One approval per note on this computer (#301).
@@ -176,8 +196,8 @@ describe("schedules approve", () => {
 
 		const result = await approveSchedules({ paths: ["daily.md"], readNote, store, vaultKey: key, owner: "obsidian", now: () => new Date(NOW) });
 
-		expect(result.lines).toEqual([
-			"approved daily.md [0 9 * * 1-5] for Obsidian",
+		expect(result.lines[0]).toBe("approved daily.md [0 9 * * 1-5] for Obsidian");
+		expect(result.lines.slice(-2)).toEqual([
 			'  Obsidian runs it once "Run scheduled workflows" is on in VaultOre\'s settings',
 			`stored in ${store.file}`,
 		]);
@@ -196,6 +216,101 @@ describe("schedules approve", () => {
 	});
 });
 
+describe("schedules approve, with the permissions unattended runs get (#299)", () => {
+	const approveWith = (paths: string[], answers: Parameters<typeof answersFrom> = [undefined, undefined], owner?: "agent" | "obsidian") =>
+		approveSchedules({ paths, readNote, store, vaultKey: key, now: () => new Date(NOW), answers: answersFrom(...answers), ...(owner ? { owner } : {}) });
+
+	it("refuses a note whose ask has no answer, naming it and how to answer", async () => {
+		write("daily.md", note("0 9 * * 1-5", "1 + 1;", "ask"));
+
+		const result = await approveWith(["daily.md"]);
+
+		expect(result.ok).toBe(false);
+		expect(result.lines[0]).toBe("not approving daily.md: network needs an answer; answer with --allow network or --deny network");
+		expect(result.lines).toContain("  asks     network      ? (needs an answer)");
+		expect(result.lines.at(-1)).toBe("nothing was approved");
+		expect((await store.forVault(key)).notes).toEqual({});
+	});
+
+	it("approves it with the answer given, kept as an answer", async () => {
+		write("daily.md", note("0 9 * * 1-5", "1 + 1;", "ask"));
+
+		const result = await approveWith(["daily.md"], ["network", undefined]);
+
+		expect(result.ok).toBe(true);
+		expect(result.lines).toContain("  asks     network      allow (answer)");
+		expect((await store.forVault(key)).notes["daily.md"]?.permissions?.network).toEqual({ value: "allow", source: "answer" });
+	});
+
+	it("approves again after a cell changed with nothing asked, keeping the answer, and says nothing per permission", async () => {
+		write("daily.md", note("0 9 * * 1-5", "1 + 1;", "ask"));
+		await approveWith(["daily.md"], ["network", undefined]);
+		write("daily.md", note("0 9 * * 1-5", "2 + 2;", "ask"));
+
+		const result = await approveWith(["daily.md"]);
+
+		expect(result.ok).toBe(true);
+		expect(result.lines).toEqual([`approved daily.md [0 9 * * 1-5] for vaultore agent (replaces the approval of ${NOW})`, `stored in ${store.file}`]);
+		expect((await store.forVault(key)).notes["daily.md"]?.permissions?.network).toEqual({ value: "allow", source: "answer" });
+	});
+
+	it("asks only for a permission newly at ask, and shows the rest as kept", async () => {
+		write("daily.md", note("0 9 * * 1-5"));
+		await approveWith(["daily.md"]);
+		write("daily.md", note("0 9 * * 1-5", "1 + 1;", "ask"));
+
+		const refused = await approveWith(["daily.md"]);
+		expect(refused.lines[0]).toBe("not approving daily.md: network needs an answer; answer with --allow network or --deny network");
+		expect(refused.lines).toContain("  kept     vaultRead    allow (frontmatter)");
+
+		const result = await approveWith(["daily.md"], [undefined, "network"]);
+		expect(result.ok).toBe(true);
+		expect((await store.forVault(key)).notes["daily.md"]?.permissions?.network).toEqual({ value: "deny", source: "answer" });
+	});
+
+	it("shows a permission the frontmatter changed, and approves it without a question", async () => {
+		write("daily.md", note("0 9 * * 1-5"));
+		await approveWith(["daily.md"]);
+		write("daily.md", note("0 9 * * 1-5", "1 + 1;", "allow"));
+
+		const result = await approveWith(["daily.md"]);
+
+		expect(result.ok).toBe(true);
+		expect(result.lines).toContain("  changed  network      deny -> allow (frontmatter)");
+	});
+
+	it("carries an answer over on a handover", async () => {
+		write("daily.md", note("0 9 * * 1-5", "1 + 1;", "ask"));
+		await approveWith(["daily.md"], ["network", undefined]);
+
+		const result = await approveWith(["daily.md"], [undefined, undefined], "obsidian");
+
+		expect(result.ok).toBe(true);
+		expect(result.lines[0]).toBe("approved daily.md [0 9 * * 1-5] for Obsidian (handed over from vaultore agent)");
+		expect((await store.forVault(key)).notes["daily.md"]).toMatchObject({ owner: "obsidian", permissions: { network: { value: "allow", source: "answer" } } });
+	});
+
+	it("refuses answers for several notes at once, and an answer where the frontmatter decides", async () => {
+		write("a.md", note("0 9 * * 1-5", "1 + 1;", "ask"));
+		write("b.md", note("0 9 * * 1-5"));
+
+		expect((await approveWith(["a.md", "b.md"], ["network", undefined])).lines).toEqual([
+			"--allow and --deny answer for one note at a time; nothing was approved",
+		]);
+		const fixed = await approveWith(["b.md"], ["network", undefined]);
+		expect(fixed.ok).toBe(false);
+		expect(fixed.lines[0]).toBe("not approving b.md: network is set by the frontmatter, not asked");
+	});
+
+	it.each([
+		[["net", undefined], "--allow: net is no permission; they are network, buildNetwork, vaultRead, vaultWrite"],
+		[["network", "network"], "network is given to both --allow and --deny"],
+		[[true, undefined], "--allow takes permission names, as in --allow network,vaultWrite"],
+	] as const)("refuses the flags %j", (flags, message) => {
+		expect(() => answersFrom(...(flags as unknown as Parameters<typeof answersFrom>))).toThrow(message);
+	});
+});
+
 describe("schedules revoke", () => {
 	it("removes the approval", async () => {
 		write("daily.md", note("0 9 * * 1-5"));
@@ -205,7 +320,7 @@ describe("schedules revoke", () => {
 
 		expect(result.ok).toBe(true);
 		expect(result.lines).toEqual(["revoked daily.md (was run by vaultore agent)", `stored in ${store.file}`]);
-		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, notes: {} });
+		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, obsidianBinding: "strict", notes: {} });
 	});
 
 	it("says so when there was nothing to revoke, and that is not an error", async () => {
@@ -221,7 +336,7 @@ describe("schedules revoke", () => {
 		rmSync(join(vault, "daily.md"));
 
 		expect((await revoke(["daily.md"])).lines[0]).toBe("revoked daily.md (was run by vaultore agent)");
-		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, notes: {} });
+		expect(await store.forVault(key)).toEqual({ obsidianScheduling: false, obsidianBinding: "strict", notes: {} });
 	});
 });
 

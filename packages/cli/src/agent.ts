@@ -5,8 +5,8 @@
  * import.
  */
 
-import { errorMessage, noteScheduleState, ownerName } from "@vaultore/core";
-import type { NoteScheduleState, VaultSchedules } from "@vaultore/core";
+import { bindingOf, errorMessage, noteScheduleState, ownerName } from "@vaultore/core";
+import type { ApprovalReview, NoteScheduleState, UnattendedApproval, VaultSchedules } from "@vaultore/core";
 import type { ScheduledNote } from "./schedules";
 
 /**
@@ -44,15 +44,31 @@ export interface SkippedNote {
 	reason: string;
 }
 
+/**
+ * What changed in a note since it was approved, and the command that
+ * approves it again: with an answer for each permission newly at `ask`
+ * (#299). Completes "<path>: …".
+ */
+export function changedReason(path: string, review: ApprovalReview): string {
+	const changed = review.permissions.filter((p) => p.status === "changed" || p.status === "answer-dropped").map((p) => `${p.key} is now ${p.now}`);
+	const what = changed.length > 0 ? `; ${changed.join(", ")}` : "";
+	if (review.needsAnswer.length > 0) {
+		const keys = review.needsAnswer.join(",");
+		return `it changed since it was approved${what}; ${review.needsAnswer.join(", ")} now ${review.needsAnswer.length === 1 ? "asks" : "ask"}: ` +
+			`approve it with an answer, vaultore schedules approve ${path} --allow ${keys} (or --deny ${keys})`;
+	}
+	return `it changed since it was approved${what}; approve it again: vaultore schedules approve ${path}`;
+}
+
 /** Why the agent does not run a note; undefined when it does. */
-function skipReason(state: NoteScheduleState): string | undefined {
+function skipReason(state: NoteScheduleState, path: string): string | undefined {
 	switch (state.state) {
 		case "approved":
 			return undefined;
 		case "not-approved":
 			return "it is not approved";
 		case "changed":
-			return "it changed since it was approved";
+			return changedReason(path, state.review);
 		case "delegated":
 		case "off":
 			return `it is handed to ${ownerName(state.approval.owner)}`;
@@ -76,7 +92,7 @@ export function planRegistrations(
 		const state = noteScheduleState("agent", schedules, note);
 		if (state.state === "approved") register.push(note);
 		else if (state.state === "delegated") delegated.push(note);
-		else skipped.push({ path: note.path, reason: skipReason(state) ?? "" });
+		else skipped.push({ path: note.path, reason: skipReason(state, note.path) ?? "" });
 	}
 	return { register, skipped, delegated };
 }
@@ -85,30 +101,34 @@ export function planRegistrations(
  * Wrap `run` so a due note runs only if it is approved as it is at that
  * moment. The rescan that armed it may be minutes old: the note is read again,
  * and so are the approvals, so an edit, a deletion or a revoke since then is
- * honoured. `run` gets the content that was checked, so what runs is what was
- * approved. A note that may not run is passed to `onRefuse`.
+ * honoured. `run` gets the content that was checked and the approval it was
+ * checked against, so what runs is what was approved, with the permissions
+ * approved (#299). A note that may not run is passed to `onRefuse`.
  */
 export function createApprovedRunner<A = void>(options: {
 	readNote: (path: string) => Promise<{ note: ScheduledNote; content: string }>;
 	schedules: () => Promise<VaultSchedules>;
-	run: (path: string, content: string, arg: A) => Promise<void>;
+	run: (path: string, content: string, arg: A, unattended: UnattendedApproval) => Promise<void>;
 	onRefuse: (path: string, reason: string) => void;
 }): (path: string, arg: A) => Promise<void> {
 	return async (path, arg) => {
 		let content: string;
+		let unattended: UnattendedApproval;
 		try {
 			const read = await options.readNote(path);
-			const reason = skipReason(noteScheduleState("agent", await options.schedules(), read.note));
-			if (reason !== undefined) {
-				options.onRefuse(path, reason);
+			const schedules = await options.schedules();
+			const state = noteScheduleState("agent", schedules, read.note);
+			if (state.state !== "approved") {
+				options.onRefuse(path, skipReason(state, path) ?? "");
 				return;
 			}
 			content = read.content;
+			unattended = { approval: state.approval, binding: bindingOf(schedules, "agent") };
 		} catch (err) {
 			options.onRefuse(path, errorMessage(err));
 			return;
 		}
-		await options.run(path, content, arg);
+		await options.run(path, content, arg, unattended);
 	};
 }
 
