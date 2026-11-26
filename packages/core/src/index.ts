@@ -219,6 +219,7 @@ export type { LockHolder, LockOptions } from "./lock";
 export {
   acquireRunLock,
   runLockDirectory,
+  userStateDirectory,
   runLockPath,
   RunLockHeldError,
 } from "./lock/run-lock";

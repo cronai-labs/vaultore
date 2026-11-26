@@ -130,6 +130,32 @@ export class VaultStateStore<V> {
 		}
 	}
 
+	/**
+	 * Copies another file of the same kind into this one's place, once: only
+	 * while this file does not exist, decided under its lock. Once written, the
+	 * file is never removed (an empty one lists no vaults), so a later import
+	 * changes nothing, also after every entry was taken away again. The other
+	 * file is read and checked as this one is, and left as it is. Returns
+	 * whether anything was copied.
+	 */
+	async importOnce(from: VaultStateStore<V>): Promise<boolean> {
+		// Checked first without the lock, so that a command that only reads,
+		// once the move is done or when there is nothing to move, creates no
+		// folder and takes no lock; decided again under it.
+		if ((await exists(this.file)) || !(await exists(from.file))) return false;
+		await fs.mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
+		const release = await this.lock();
+		try {
+			if (await exists(this.file)) return false;
+			if (!(await exists(from.file))) return false;
+			const file = await from.read();
+			await this.write({ format: this.spec.format, version: this.spec.version, vaults: file.vaults });
+			return true;
+		} finally {
+			await release();
+		}
+	}
+
 	private async read(): Promise<StateFile<V>> {
 		let text: string;
 		try {
@@ -204,6 +230,16 @@ export class VaultStateStore<V> {
 			if (err instanceof LockHeldError) throw new VaultStateStoreError(err.message);
 			throw err;
 		}
+	}
+}
+
+async function exists(path: string): Promise<boolean> {
+	try {
+		await fs.lstat(path);
+		return true;
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw err;
 	}
 }
 
