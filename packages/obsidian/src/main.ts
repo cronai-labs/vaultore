@@ -866,6 +866,13 @@ export default class VaultOrePlugin extends Plugin {
             "and run by the agent as before."
         );
       },
+      onLegacyChanged: (from) => {
+        this.adapter.log("warn", `${from} changed since its approvals were copied in; the change is not used`);
+        new Notice(
+          `VaultOre: ${from} changed since its approvals were copied in, so the change is not used. ` +
+            "Approve those notes under Settings → VaultOre → Scheduled workflows, and remove the old file."
+        );
+      },
     });
     return this.schedulesStore;
   }

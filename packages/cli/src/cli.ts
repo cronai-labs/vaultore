@@ -558,6 +558,11 @@ async function openSchedulesFor(vaultRoot: string): Promise<{ store: VaultStateS
 				`[vaultore] copied the agent's approvals from ${from} to ${to}, which Obsidian reads too; ` +
 					`the old file is no longer read and can be removed\n`
 			),
+		onLegacyChanged: (from) =>
+			process.stderr.write(
+				`[vaultore] ${from} changed since its approvals were copied in, so the change is not used: ` +
+					`approve those notes with vaultore schedules approve, and remove the old file\n`
+			),
 	});
 	return { store, vaultKey: await vaultKeyFor(vaultRoot) };
 }
