@@ -203,11 +203,13 @@ export class VaultStateStore<V> {
 				return false;
 			}
 			const file = await this.read();
+			// Read and checked before it is marked: one that cannot be read is
+			// not marked copied, and says so at each open until repaired (#328).
+			const source = file.imported?.includes(from.file) ? {} : await from.readVaults();
 			marker.imports.push({ from: from.file, sha256, importedAt: new Date().toISOString() });
 			await this.writeMarker(marker);
 			// Copied before the marker existed: the marker now says so.
 			if (file.imported?.includes(from.file)) return false;
-			const source = await from.readVaults();
 			const vaults: Record<string, V> = Object.assign(Object.create(null) as Record<string, V>, file.vaults);
 			for (const [vault, entry] of Object.entries(source)) {
 				const into = this.spec.copy(own(vaults, vault));
