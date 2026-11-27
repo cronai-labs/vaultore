@@ -48,11 +48,11 @@
 	"scripts": {
 		"build": "node ./node_modules/tsup/dist/cli-default.js",
 		"dev": "node ./node_modules/tsup/dist/cli-default.js --watch",
-		"test": "vitest --run --passWithNoTests",
+		"test": "vitest --run",
 		"test:watch": "vitest --watch",
 		"test:coverage": "vitest --coverage",
 		"test:integration": "vitest --run --config vitest.integration.config.mts",
-		"test:canonical": "vitest --run --config vitest.canonical.config.mts --passWithNoTests",
+		"test:canonical": "vitest --run --config vitest.canonical.config.mts",
 		"typecheck": "tsc -p tsconfig.test.json",
 		"lint": "cd ../.. && eslint --config packages/core/eslint.config.mjs packages/core",
 		"clean": "rm -rf dist"
