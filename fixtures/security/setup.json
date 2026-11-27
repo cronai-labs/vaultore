@@ -1,0 +1,62 @@
+{
+	"$comment": "The vault each fixture in this folder is run in by packages/core/src/fixtures/security.integration.test.ts, and what it expects. files: created before the run; links: symbolic links to a folder outside the vault that holds secret.md; stateDirectory: VaultOre's own folder, inside the vault; cells: each cell's expected status; unchanged: files that must read the same after the run; absent: paths that must not exist after it. A person running a fixture by hand can build the same vault.",
+	"hidden-folders.md": {
+		"files": {
+			".obsidian/plugins/vaultore/data.json": "{\"settings\":\"the plugin's\"}",
+			".obsidian/app.json": "{}",
+			".vaultore/config.json": "{\"permissionDecisions\":{}}"
+		},
+		"cells": { "probe": "success" },
+		"unchanged": [".obsidian/plugins/vaultore/data.json", ".vaultore/config.json"],
+		"absent": [".obsidian/vaultore-probe.txt", ".vaultore/vaultore-probe.txt"]
+	},
+	"host-tool-folders.md": {
+		"files": {
+			".git/config": "[core]\n\trepositoryformatversion = 0\n",
+			".git/HEAD": "ref: refs/heads/main\n",
+			".git/hooks/pre-commit.sample": "#!/bin/sh\n",
+			".claude/settings.json": "{\"hooks\":{}}",
+			".vscode/tasks.json": "{\"tasks\":[]}",
+			".envrc": "export A=1\n"
+		},
+		"cells": { "probe": "success" },
+		"unchanged": [".git/config", ".claude/settings.json", ".vscode/tasks.json", ".envrc"],
+		"absent": [".git/hooks/vaultore-probe"]
+	},
+	"top-level-read-only.md": {
+		"files": { "Notes/a.md": "a" },
+		"cells": { "probe": "success" },
+		"unchanged": ["Notes/a.md"],
+		"absent": ["vaultore-probe.md", "vaultore-probe", ".git-vaultore-probe"]
+	},
+	"own-folder-at-home.md": {
+		"files": {
+			".config/vaultore/schedules.json": "{\"format\":\"vaultore.schedules\",\"version\":1,\"vaults\":{}}",
+			".config/vaultore/answers.json": "{}",
+			".config/other/settings.json": "{}"
+		},
+		"stateDirectory": ".config/vaultore",
+		"cells": { "probe": "success" },
+		"unchanged": [".config/vaultore/schedules.json", ".config/vaultore/answers.json"],
+		"absent": [".config/vaultore/vaultore-probe.txt"]
+	},
+	"link-out-of-vault.md": {
+		"files": {},
+		"links": { "vaultore-link-out": "outside" },
+		"cells": { "probe": "success" },
+		"unchanged": [],
+		"absent": []
+	},
+	"no-network.md": {
+		"files": {},
+		"cells": { "probe": "success" },
+		"unchanged": [],
+		"absent": []
+	},
+	"note-template-into-hidden.md": {
+		"files": { ".obsidian/app.json": "{\"secret\":\"the plugin's\"}" },
+		"cells": { "exact": "error", "otherSpelling": "error" },
+		"unchanged": [".obsidian/app.json"],
+		"absent": []
+	}
+}

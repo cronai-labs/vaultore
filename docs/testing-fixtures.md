@@ -1,6 +1,6 @@
-# Testing Fixtures: Canonical Workflows
+# Testing Fixtures: Canonical Workflows and Security Probes
 
-> **Location:** `fixtures/canonical/`
+> **Location:** `fixtures/canonical/`, `fixtures/security/`
 
 The notes in `fixtures/canonical/` are real workflows that double as tests and as examples.
 Each one shows a use of VaultOre and is read by the test suites below.
@@ -13,6 +13,7 @@ Each one shows a use of VaultOre and is read by the test suites below.
 |-------|----------------|-------|
 | `bun run test:canonical` | Every fixture parses: it is a workflow, has cells, and its cell ids are unique (`packages/core/src/fixtures/fixtures.canonical.test.ts`). **It does not run them** | Nothing: no engine, no vault, no API key |
 | `bun run --cwd packages/core test:integration` | Runs `smart-inbox.md` end to end in real containers, with the AI provider stubbed (`smart-inbox.integration.test.ts`) | A running engine (`VAULTORE_IT_ENGINE`, default `colima`) |
+| `bun run --cwd packages/core test:integration -t security` | Runs every note in `fixtures/security/` in a real container, in the vault `setup.json` gives it, and checks its cells and the vault's files afterwards (`security.integration.test.ts`) | A running engine |
 | By hand | Running a fixture in Obsidian or with the CLI | An engine; API keys for fixtures with `ore:ai` cells |
 
 One fixture's parse test can be run alone by name:
@@ -102,6 +103,26 @@ On Colima, use virtiofs file sharing. With sshfs, a cell can read a stale copy o
 ([#124](https://github.com/cronai-labs/vaultore/issues/124)): `readInbox` then misses items added
 a moment before the run, which the next run files, and `tickInbox`'s write is refused, so the
 cell fails and the inbox stays as it was.
+
+---
+
+## Security Fixtures
+
+The notes in `fixtures/security/` each probe one boundary of the sandbox from inside a container (#341). Each has one probe cell that tries what a cell must not do, and fails, naming each check that did not hold. `note-template-into-hidden.md` is the exception: its two AI cells are expected to fail, and one that succeeds has sent the file. The probes create only files named `vaultore-probe…`, and only when a boundary fails, and check whether an existing file could be written without writing it, so they can be run in a real vault, on any engine. That is how the engines CI does not run are checked (#340).
+
+`setup.json` gives the vault each one runs in for the integration test, which a person can build by hand to make a run telling.
+
+| Fixture | Boundary | Telling where |
+|---------|----------|---------------|
+| [hidden-folders.md](../fixtures/security/hidden-folders.md) | `.obsidian/` and `.vaultore/` not seen, and not writable in any spelling | Any host; the other spellings matter on macOS and Windows |
+| [host-tool-folders.md](../fixtures/security/host-tool-folders.md) | `.git`, `.claude`, `.vscode`, `.envrc` read-only under `vaultWrite` | A vault that is a git repository |
+| [top-level-read-only.md](../fixtures/security/top-level-read-only.md) | Nothing created at the vault's top level through the mount; the run's folder writable | Any vault |
+| [own-folder-at-home.md](../fixtures/security/own-folder-at-home.md) | VaultOre's own folder not seen or writable where the vault holds it | A vault at the home folder |
+| [link-out-of-vault.md](../fixtures/security/link-out-of-vault.md) | A symbolic link out of the vault shows nothing | A vault with a link named `vaultore-link-out` |
+| [no-network.md](../fixtures/security/no-network.md) | No network without the permission | A computer that is online |
+| [note-template-into-hidden.md](../fixtures/security/note-template-into-hidden.md) | `{{note:}}` into `.obsidian/` fails before anything is sent | Any vault with a provider set up |
+
+Run against the code before #337, the first four fail and name what crossed; known gaps that are not checked are #338 (reading another spelling on macOS and Windows) and #339 (a git repository in a subfolder).
 
 ---
 
