@@ -112,6 +112,7 @@ describe("VaultOrePlugin", () => {
   beforeEach(async () => {
     rmSync(machineSettings.path, { force: true });
     rmSync(machineSettings.schedules, { force: true });
+    rmSync(`${machineSettings.schedules}.imports.json`, { force: true });
     rmSync(machineSettings.answers, { force: true });
     vi.useFakeTimers();
     // Core's timers come from window; tests run without a DOM.
@@ -1073,6 +1074,7 @@ describe("scheduled workflows", () => {
   beforeEach(async () => {
     rmSync(machineSettings.path, { force: true });
     rmSync(machineSettings.schedules, { force: true });
+    rmSync(`${machineSettings.schedules}.imports.json`, { force: true });
     rmSync(machineSettings.answers, { force: true });
     vi.useFakeTimers();
     // The plugin debounces with window.setTimeout; tests run without a DOM.
@@ -1215,7 +1217,7 @@ describe("scheduled workflows", () => {
     scheduleApprovals: { "Workflows/daily.md": "0 18 * * *" },
     defaultModel: "gpt-5-mini",
   };
-  const movedNotice = () => Notice.shown.filter((m) => m.includes("now turned on for each account on each computer"));
+  const movedNotice = () => Notice.shown.filter((m) => m.includes("now turned on separately for each account on each computer, and are off here"));
 
   // A data.json synced from a machine with an older VaultOre still carries
   // the switch and approvals: they arm nothing here.
@@ -1687,9 +1689,37 @@ describe("scheduled workflows", () => {
         await reload(null);
 
         expect(plugin.schedules.notes["Workflows/daily.md"]?.owner).toBe("agent");
-        expect(Notice.shown.filter((m) => m.includes("approved for vaultore agent are now listed"))).toHaveLength(1);
+        expect(Notice.shown.filter((m) => m.includes("approved for vaultore agent are now listed"))).toEqual([
+          "VaultOre: the notes approved for vaultore agent are now listed under Settings → VaultOre → Scheduled workflows, and the agent runs them as before.",
+        ]);
         await reload(null);
         expect(Notice.shown.filter((m) => m.includes("approved for vaultore agent are now listed"))).toHaveLength(1);
+      } finally {
+        rmSync(machineSettings.legacyApprovals, { force: true });
+      }
+    });
+
+    // #310: an approval of 0.4.x held no answers, so a note with an ask waits.
+    it("names the agent's notes of 0.4.x that wait for an answer, and says why without calling them changed", async () => {
+      useVault({ "Workflows/daily.md": { ore: true, schedule: "0 18 * * *", permissions: { network: "ask" } } });
+      writeFileSync(
+        machineSettings.legacyApprovals,
+        JSON.stringify({
+          format: "vaultore.schedule-approvals",
+          version: 1,
+          vaults: { [await root()]: { "Workflows/daily.md": { hash: "h", schedule: "0 18 * * *", approvedAt: "2026-10-01T00:00:00.000Z" } } },
+        })
+      );
+      Notice.shown.length = 0;
+      try {
+        await reload(null);
+
+        const told = Notice.shown.filter((m) => m.includes("approved for vaultore agent are now listed"));
+        expect(told).toHaveLength(1);
+        expect(told[0]).toMatch(/Workflows\/daily\.md asks for a permission, which approvals of earlier versions held no answer for, so it does not run until you answer/);
+        expect(row("Workflows/daily.md").desc).toBe(
+          'Schedule "0 18 * * *". Handed to vaultore agent by an earlier version, whose approvals held no answers; network asks, so it does not run until you answer. Review it to answer.'
+        );
       } finally {
         rmSync(machineSettings.legacyApprovals, { force: true });
       }
