@@ -17,6 +17,8 @@ import {
 	revokeNote,
 	schedulesPath,
 	schedulesStore,
+	scheduledSince,
+	setObsidianScheduling,
 } from "./schedules";
 import type { ApprovedPermissions, NotePermissions, ScheduledNoteNow, VaultSchedules } from "./schedules";
 import { VaultStateStoreError } from "./vault-state-store";
@@ -204,6 +206,54 @@ describe("a catch-up follows the owner's scheduling (#307)", () => {
 
 	it("allows a note the agent runs, whatever the switch, as it stays scheduled while the agent is stopped", () => {
 		expect(catchUpRefusal(schedules(false), approval("agent"))).toBeUndefined();
+	});
+});
+
+describe("since when a note is scheduled (#308)", () => {
+	const approvedAt = "2026-11-20T08:00:00.000Z";
+	const withNote = (owner: "obsidian" | "agent"): VaultSchedules => ({
+		obsidianScheduling: false,
+		obsidianBinding: "strict",
+		notes: { "a.md": { owner, schedule: "0 9 * * *", hash: "h", approvedAt } },
+	});
+
+	it("notes when Run scheduled workflows is turned on, and only then", () => {
+		const schedules = withNote("obsidian");
+		setObsidianScheduling(schedules, true, new Date("2026-11-22T12:00:00.000Z"));
+		setObsidianScheduling(schedules, true, new Date("2026-11-23T12:00:00.000Z"));
+		expect(schedules.obsidianSchedulingSince).toBe("2026-11-22T12:00:00.000Z");
+
+		setObsidianScheduling(schedules, false);
+		expect(schedules).not.toHaveProperty("obsidianSchedulingSince");
+	});
+
+	it("is the later of the approval and the switch turned on, for a note Obsidian runs", () => {
+		const schedules = withNote("obsidian");
+		expect(scheduledSince(schedules, "a.md")).toBeUndefined();
+		setObsidianScheduling(schedules, true, new Date("2026-11-22T12:00:00.000Z"));
+		expect(scheduledSince(schedules, "a.md")).toEqual(new Date("2026-11-22T12:00:00.000Z"));
+		schedules.obsidianSchedulingSince = "2026-11-01T00:00:00.000Z";
+		expect(scheduledSince(schedules, "a.md")).toEqual(new Date(approvedAt));
+	});
+
+	it("is the approval for a note the agent runs, whatever the switch", () => {
+		expect(scheduledSince(withNote("agent"), "a.md")).toEqual(new Date(approvedAt));
+	});
+
+	it("is nothing for a note with no approval", () => {
+		expect(scheduledSince(withNote("agent"), "b.md")).toBeUndefined();
+	});
+
+	it("is kept in the file, and refused when it is no time", async () => {
+		const store = schedulesStore({ path: join(dir, "schedules.json") });
+		await store.update("/v", (entry) => setObsidianScheduling(entry, true, new Date("2026-11-22T12:00:00.000Z")));
+		expect((await store.forVault("/v")).obsidianSchedulingSince).toBe("2026-11-22T12:00:00.000Z");
+
+		writeFileSync(
+			join(dir, "schedules.json"),
+			JSON.stringify({ format: "vaultore.schedules", version: 1, vaults: { "/v": { obsidianScheduling: true, obsidianSchedulingSince: "soon", notes: {} } } })
+		);
+		await expect(store.forVault("/v")).rejects.toThrow(/no valid time for when scheduling was turned on/);
 	});
 });
 

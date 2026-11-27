@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -220,6 +220,75 @@ describe("a gap", () => {
 		await claim.finish({ result: "completed" });
 		await pruneSlotRecord({ directory: slots, now: new Date(at("2026-11-24T11:15:00Z").getTime() + 31 * DAY) });
 		expect(await readSlotRecord({ directory: slots })).toEqual([]);
+	});
+});
+
+// #308: the record keeps what a later look needs, within the history kept.
+describe("what the record keeps", () => {
+	const DAILY = "0 9 * * *";
+	const ranDaily = async (slot: Date) => {
+		const claim = await claimSlot({ vaultRoot, notePath: NOTE, schedule: DAILY, slot, by: "vaultore agent", directory: slots, pruneIntervalMs: 0, now: slot });
+		await claim.finish({ result: "completed" });
+	};
+	const lookDaily = (now: Date, options: { keepDays?: number; scheduledSince?: Date; armedAt?: Date } = {}) =>
+		recordMissedSlots({ vaultRoot, notePath: NOTE, schedule: DAILY, by: "vaultore agent", directory: slots, now, ...options });
+	const open = async () => (await readSlotRecord({ directory: slots })).filter((e) => e.kind === "missed" && e.state === "missed");
+
+	it("keeps an open gap that began before the history kept, while its last slot is inside it", async () => {
+		await ran(at("2026-11-20T10:15:00Z"));
+		const now = at("2026-11-21T09:30:00Z");
+		const [gap] = await look(now, { keepDays: 1 });
+		expect(gap).toBeDefined();
+
+		await pruneSlotRecord({ directory: slots, keepDays: 1, now: new Date(now.getTime() + 2 * 3_600_000) });
+
+		expect((await open()).map((e) => e.slot)).toEqual([gap!.slot]);
+	});
+
+	it("prunes a gap once its last slot is older than the history kept", async () => {
+		await ran(at("2026-11-20T10:15:00Z"));
+		const now = at("2026-11-21T09:30:00Z");
+		await look(now, { keepDays: 1 });
+
+		await pruneSlotRecord({ directory: slots, keepDays: 1, now: new Date(now.getTime() + 2 * DAY) });
+
+		expect(await readSlotRecord({ directory: slots })).toEqual([]);
+	});
+
+	it("finds the runs missed since the note was scheduled, when its last decision was pruned", async () => {
+		await ranDaily(at("2026-11-21T09:00:00Z"));
+		await pruneSlotRecord({ directory: slots, keepDays: 1, now: at("2026-11-23T09:30:00Z") });
+		expect(await readSlotRecord({ directory: slots })).toEqual([]);
+
+		const now = at("2026-11-24T10:00:00Z");
+		const gaps = await lookDaily(now, { keepDays: 1, scheduledSince: at("2026-11-20T08:00:00Z"), armedAt: now });
+
+		// Within the day kept: the 24th's occurrence (cron runs in local time).
+		const expected = occurrencesBetween(DAILY, at("2026-11-23T10:00:00Z"), at("2026-11-24T10:00:00Z"));
+		expect(expected).toHaveLength(1);
+		expect(gaps.map((g) => [g.slot.toISOString(), g.count])).toEqual([[expected[0]!.toISOString(), 1]]);
+	});
+
+	it("records no run from before the note was scheduled, though an older decision is kept", async () => {
+		await ranDaily(at("2026-11-21T09:00:00Z"));
+
+		// Scheduling turned on again at noon on the 23rd: the 22nd and 23rd were not scheduled.
+		const gaps = await lookDaily(at("2026-11-24T10:00:00Z"), { scheduledSince: at("2026-11-23T12:00:00Z") });
+
+		const expected = occurrencesBetween(DAILY, at("2026-11-23T12:00:00Z"), at("2026-11-24T10:00:00Z"));
+		expect(expected).toHaveLength(1);
+		expect(gaps.map((g) => [g.slot.toISOString(), g.count])).toEqual([[expected[0]!.toISOString(), 1]]);
+	});
+
+	it("dismisses the gaps of a note deleted since", async () => {
+		await ran(at("2026-11-24T10:15:00Z"));
+		await look(at("2026-11-24T15:20:00Z"));
+		unlinkSync(join(vaultRoot, NOTE));
+
+		const dismissed = await dismissMissedSlots(resolveOptions());
+
+		expect(dismissed).toHaveLength(1);
+		expect(await open()).toEqual([]);
 	});
 });
 

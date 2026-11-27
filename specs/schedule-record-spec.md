@@ -53,7 +53,8 @@ A gap has its own states, on the same files:
 | Missed | decision `missed` | the user catches it up or dismisses it | dismissed → Dismissed; caught up → Catching up |
 | Dismissed | decision, resolution `dismissed` | nothing (final) | pruned |
 | Catching up | decision, resolution `caught-up` | its resolver runs the note, once for the whole gap | the run ends → Done; the resolver is gone → Abandoned |
-| Done, Abandoned, Pruned | as for a claim | as for a claim | as for a claim |
+| Done, Abandoned | as for a claim | as for a claim | as for a claim |
+| Pruned | none | nothing | never; a gap is as old as its last slot (`until`), so an open gap that began before the history kept stays until it ends before it ([#308](https://github.com/cronai-labs/vaultore/issues/308)) |
 
 ### Every occurrence is decided
 
@@ -64,10 +65,12 @@ Each occurrence of an armed note's schedule ends up either claimed (in time) or 
 - **Of occurrences due at once,** after an arming or a late tick, only the latest runs; the others are claimed and recorded as `skipped` ("a later occurrence came due at the same time and ran instead"). Found in the app: arming a minute schedule fired two at once, and the older one ran while the newer was skipped as "still running".
 - **A slot fired while its note still runs** is claimed and recorded as `skipped` (the agent: "the previous run is still in progress"; the plugin: "the note was still running"), not dropped before its claim.
 
-What a gap looks back to:
+What a gap looks back to: the latest of these ([#308](https://github.com/cronai-labs/vaultore/issues/308)).
 
 - **The note's last decided slot of the same schedule.** A record of another schedule says nothing: after a change from daily to every minute, the minutes before were never scheduled.
-- **Otherwise, when the runner armed the note** (less the late setting, as it still fires what is younger): a note scheduled for the first time has nothing backfilled, but a runner that armed it and then slept records what it slept through.
+- **Since when the note is scheduled:** its approval; for a note Obsidian runs, also when "Run scheduled workflows" was last turned on (`obsidianSchedulingSince` in `schedules.json`). Nothing before is missed: a note approved or switched on just now has nothing backfilled, and the hours the switch was off are not missed runs. A note the agent runs is scheduled while the agent is stopped. This also bounds a note whose last decision was pruned (a monthly schedule under 30 days, a short history), whose runs since would otherwise go unrecorded.
+- **The start of the history kept.**
+- A runner that does not know since when (no approval at hand) uses when it armed the note, less the late setting, as it still fires what is younger.
 
 And:
 
@@ -75,7 +78,7 @@ And:
 - **A claim inside a gap is refused,** so runners that disagree on the threshold (one read the file before a change, the other after; an older version) still run no slot twice: the slot is reported as skipped, "one of N missed runs …". A gap starts right after the note's last decided slot, so only the latest decision before a slot can hold it: one listing and one read per claim. Left open: a claim and a gap written in the same instant, each before seeing the other; the slot then runs, and is also counted in the gap.
 - **A look for gaps ignores decisions after its own bound:** a late tick claims its in-time slot while it looks, in either order, and a claim that lands first must not hide the slots before it.
 - **Told once:** each open gap is told once per runner session, whoever recorded it: the plugin as a notice naming the note and the number of runs (also for a gap the agent recorded), the agent on stderr for the gaps it recorded.
-- **Arming again counts:** a note whose scheduling was switched off and on again, in the plugin or by revoking and re-approving it for the agent, reports the occurrences in between as missed, since nothing tells them from occurrences missed while the runner was closed. Dismiss them.
+- **Switching off is not missing:** a note whose scheduling was switched off and on again, in the plugin or by revoking and re-approving it, reports nothing in between as missed: it is scheduled again only from then.
 
 ## Events
 
@@ -96,7 +99,8 @@ For a gap:
 | The user dismisses it | → Dismissed | refused: "already dismissed" | refused: "being caught up" | refused: "already caught up" |
 | The user catches it up | → Catching up; the note runs once, unattended, with the permissions of its schedule approval; refused before the gap is taken when no approval covers the note, or when Obsidian runs it and Run scheduled workflows is off ([permissions-spec §6.3](permissions-spec.md#63-unattended-permissions)) | refused: "dismissed" | refused, as Dismissed | refused, as Dismissed |
 | A runner looks for gaps | none: the gap is decided | none | none | none |
-| Retention ends | removed | removed | kept while its resolver runs | removed |
+| Retention ends (by its last slot) | removed | removed | kept while its resolver runs | removed |
+| Its note is deleted or renamed | dismissable; not caught up ("no longer exists") | – | – | – |
 
 Pruning removes a slot's files once the slot is older than the shorter of 30 days and the runner's setting, and never before a day has passed: that day keeps the claim for a runner that fires the same slot late, after its machine slept. With the history switched off, the setting is that one day.
 
@@ -106,9 +110,9 @@ Pruning removes a slot's files once the slot is older than the shorter of 30 day
 2. Only a claim starts a scheduled run, so a slot runs at most once while its record is kept.
 3. A runner claims only a slot it would run; one that may not run the note leaves it to the other.
 4. Only the claimer writes the outcome, once.
-5. Pruning never removes a slot less than a day old.
+5. Pruning never removes a slot less than a day old, nor a gap whose last slot is inside the history kept.
 6. A gap is resolved once, and a catch-up runs the note once for the whole gap.
-7. Every occurrence of an armed note is claimed or part of a gap: the scheduler fires each one younger than the late setting, and a gap covers what is older.
+7. Every occurrence of an armed note since it was scheduled, within the history kept, is claimed or part of a gap: the scheduler fires each one younger than the late setting, and a gap covers what is older.
 8. The record is outside the vault: sync does not carry it, and a cell cannot read or write it.
 
 ## Surfaces

@@ -31,6 +31,12 @@ export interface VaultSchedules {
 	/** The plugin's "Run scheduled workflows": whether it runs the notes it owns. */
 	obsidianScheduling: boolean;
 	/**
+	 * When "Run scheduled workflows" was last turned on, ISO 8601; absent
+	 * while it is off. The notes Obsidian runs are scheduled only since then,
+	 * so no run before it is missed (#308).
+	 */
+	obsidianSchedulingSince?: string;
+	/**
 	 * What the plugin's approvals bind: the note's content (`strict`, the
 	 * default) or only its schedule and permissions (`narrow`). The agent's
 	 * always bind the content.
@@ -87,6 +93,10 @@ export function schedulesStore(options: SchedulesStoreOptions = {}): VaultStateS
 				if (!isRecord(entry) || typeof entry["obsidianScheduling"] !== "boolean" || !isRecord(entry["notes"])) {
 					return `the entry for vault ${vault} is incomplete`;
 				}
+				const since = entry["obsidianSchedulingSince"];
+				if (since !== undefined && (typeof since !== "string" || Number.isNaN(Date.parse(since)))) {
+					return `the entry for vault ${vault} has no valid time for when scheduling was turned on`;
+				}
 				const binding = entry["obsidianBinding"];
 				if (binding !== undefined && binding !== "strict" && binding !== "narrow") {
 					return `the entry for vault ${vault} names no binding VaultOre knows`;
@@ -99,6 +109,7 @@ export function schedulesStore(options: SchedulesStoreOptions = {}): VaultStateS
 			},
 			copy: (entry) => ({
 				obsidianScheduling: entry?.obsidianScheduling ?? false,
+				...(entry?.obsidianSchedulingSince !== undefined ? { obsidianSchedulingSince: entry.obsidianSchedulingSince } : {}),
 				// Missing in a file written before the setting: strict.
 				obsidianBinding: entry?.obsidianBinding ?? "strict",
 				// Without a prototype: a note path such as "__proto__" is an entry like any other.
@@ -394,6 +405,34 @@ export function noteScheduleState(runner: ScheduleOwner, schedules: VaultSchedul
 	}
 	if (runner === "obsidian" && !schedules.obsidianScheduling) return { state: "off", approval };
 	return { state: "approved", approval };
+}
+
+/**
+ * Turns Obsidian's "Run scheduled workflows" on or off, noting when it was
+ * turned on: the notes it runs are scheduled from then (#308).
+ */
+export function setObsidianScheduling(schedules: VaultSchedules, on: boolean, now: Date = new Date()): void {
+	if (on && !schedules.obsidianScheduling) schedules.obsidianSchedulingSince = now.toISOString();
+	if (!on) delete schedules.obsidianSchedulingSince;
+	schedules.obsidianScheduling = on;
+}
+
+/**
+ * Since when the note at `path` is scheduled as its approval says: since it
+ * was approved, and for a note Obsidian runs, since "Run scheduled
+ * workflows" was turned on, whichever is later. Undefined while it is not
+ * scheduled: no approval, or Obsidian's and the switch off. A note the agent
+ * runs is scheduled while the agent is stopped (#308).
+ */
+export function scheduledSince(schedules: VaultSchedules, path: string): Date | undefined {
+	const approval = approvalOf(schedules, path);
+	if (approval === undefined) return undefined;
+	const approved = new Date(approval.approvedAt);
+	if (Number.isNaN(approved.getTime())) return undefined;
+	if (approval.owner === "agent") return approved;
+	if (!schedules.obsidianScheduling) return undefined;
+	const on = schedules.obsidianSchedulingSince === undefined ? approved : new Date(schedules.obsidianSchedulingSince);
+	return on > approved ? on : approved;
 }
 
 /**

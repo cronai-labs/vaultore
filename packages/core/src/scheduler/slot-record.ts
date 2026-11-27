@@ -19,7 +19,7 @@ import { CronExpressionParser } from "cron-parser";
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describeHolder, holderGoneBecause } from "../lock";
 import type { LockHolder, LockOptions } from "../lock";
 import { noteKey, userStateDirectory } from "../lock/run-lock";
@@ -336,6 +336,12 @@ async function readJson<T>(path: string): Promise<T | undefined> {
 
 /** One slot as the record shows it. */
 export interface SlotEntry {
+	/**
+	 * The record's folder for the note: the key its claims are kept under. A
+	 * gap is resolved through it, so a note deleted or renamed since can still
+	 * have its gaps dismissed (#308).
+	 */
+	key: string;
 	/** The note, vault-relative, as its claim names it. */
 	note: string;
 	/** The vault's real path, as its claim names it. */
@@ -399,7 +405,7 @@ async function entryOf(
 	decision: SlotDecisionRecord,
 	options: Pick<LockOptions, "isAlive" | "host" | "bootTime">
 ): Promise<SlotEntry> {
-	const base = { note: decision.note, vault: decision.vault, schedule: String(decision.schedule), slot, claimedBy: decision };
+	const base = { key: basename(dir), note: decision.note, vault: decision.vault, schedule: String(decision.schedule), slot, claimedBy: decision };
 	if (!isKnownDecision(decision)) {
 		return {
 			...base,
@@ -518,6 +524,10 @@ export async function pruneSlotRecord(options: PruneOptions = {}): Promise<numbe
 				const name = file.slice(0, -".claim.json".length);
 				const slot = slotFromName(name);
 				if (slot === undefined || slot.getTime() >= cutoff) continue;
+				// A gap is as old as its last slot: one that began before the history
+				// kept may end inside it, and is kept until it does not (#308).
+				const decision = await readJson<SlotDecisionRecord>(path);
+				if (decision?.kind === "missed" && new Date(decision.until).getTime() >= cutoff) continue;
 				const outcomePath = join(dir, `${name}.outcome.json`);
 				const resolvedPath = join(dir, `${name}.resolved.json`);
 				const hasOutcome = (await readJson<SlotOutcomeRecord>(outcomePath)) !== undefined;
@@ -606,6 +616,14 @@ export interface RecordMissedOptions extends Pick<LockOptions, "host"> {
 	 * note has none, since nothing is backfilled.
 	 */
 	armedAt?: Date;
+	/**
+	 * Since when the note is scheduled with this schedule: its approval, and
+	 * for a note Obsidian runs, "Run scheduled workflows" turned on
+	 * (`scheduledSince` in settings/schedules). Gaps are looked for after it,
+	 * also when the note's last decision was pruned, and not while it was
+	 * not scheduled (#308). Given, `armedAt` is not used.
+	 */
+	scheduledSince?: Date;
 	/** The runner's late threshold (`lateAfterMs`); a gap covers only slots older. Default LATE_AFTER_MS. */
 	lateAfterMs?: number;
 	directory?: string;
@@ -638,12 +656,18 @@ export async function recordMissedSlots(options: RecordMissedOptions): Promise<R
 		// A record of another schedule says nothing about this one: after a
 		// change from daily to every minute, the minutes before it were never
 		// scheduled.
+		const decided = last !== undefined && last.schedule === options.schedule ? last.slot : undefined;
+		const scheduled = options.scheduledSince;
+		// After the last decision, but not before the note was scheduled: the
+		// time it was switched off is no gap. When this runner armed it bounds
+		// only a note with neither, as slots it slept through after arming are
+		// gaps.
 		const since =
-			last !== undefined && last.schedule === options.schedule
-				? last.slot
-				: options.armedAt !== undefined
-					? new Date(options.armedAt.getTime() - margin)
-					: undefined;
+			decided !== undefined
+				? scheduled !== undefined && scheduled > decided
+					? scheduled
+					: decided
+				: (scheduled ?? (options.armedAt !== undefined ? new Date(options.armedAt.getTime() - margin) : undefined));
 		if (since === undefined) return recorded;
 		const after = since.getTime() > earliest.getTime() ? since : earliest;
 		const slots = occurrencesBetween(options.schedule, after, until);
@@ -749,10 +773,9 @@ export interface ResolveMissedOptions extends Pick<LockOptions, "host" | "isAliv
 export async function dismissMissedSlots(options: ResolveMissedOptions): Promise<SlotEntry[]> {
 	const gaps = await openGapsFor(options, "dismiss");
 	const directory = options.directory ?? slotRecordDirectory();
-	const noteDir = join(directory, await noteKey(options.vaultRoot, options.notePath));
 	const dismissed: SlotEntry[] = [];
 	for (const gap of gaps) {
-		const done = await writeResolution(noteDir, gap, "dismissed", options);
+		const done = await writeResolution(join(directory, gap.key), gap, "dismissed", options);
 		if (done) dismissed.push(gap);
 	}
 	if (dismissed.length === 0) {
@@ -777,7 +800,7 @@ export async function catchUpMissedSlot(options: ResolveMissedOptions): Promise<
 		);
 	}
 	const directory = options.directory ?? slotRecordDirectory();
-	const noteDir = join(directory, await noteKey(options.vaultRoot, options.notePath));
+	const noteDir = join(directory, gap.key);
 	const token = await writeResolution(noteDir, gap, "caught-up", options);
 	if (token === undefined) {
 		throw new MissedSlotError(

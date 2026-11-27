@@ -392,6 +392,7 @@ describe("schedules list", () => {
 describe("formatSlotLog", () => {
 	const claimedBy = { pid: 42, host: "h", since: "2026-11-24T10:15:01.000Z", by: "Obsidian" };
 	const base = {
+		key: "k",
 		kind: "claimed" as const,
 		note: "Workflows/daily.md",
 		vault: "/vault",
