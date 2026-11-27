@@ -150,11 +150,6 @@ export interface ContainerExecOptions {
   /** Process cap; defaults to `DEFAULT_PIDS_LIMIT`. Ignored by Apple container. */
   pidsLimit?: number;
   /**
-   * Container paths hidden behind an empty read-only tmpfs. Each must exist
-   * under a mount, or the engine has to create the mount point.
-   */
-  maskedPaths?: string[];
-  /**
    * The container's name, which a timeout uses to kill it. `execContainer`
    * picks a unique one when it is not given.
    */

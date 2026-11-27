@@ -253,24 +253,6 @@ describe("container hardening (#28)", () => {
     const { args } = buildRunCommand("docker", baseOptions);
     expect(args).toContain(`--user=${containerUser()}`);
   });
-
-  for (const engine of [...dockerFamily, "apple"] as RuntimeEngine[]) {
-    it(`${engine}: hides masked paths behind an empty read-only tmpfs`, () => {
-      const { args } = buildRunCommand(engine, {
-        ...hardened,
-        maskedPaths: ["/workspace/.obsidian"],
-      });
-      const tmpfs = args.filter((_, i) => args[i - 1] === "--tmpfs");
-      expect(tmpfs).toEqual([
-        "/tmp:rw,noexec,nosuid,nodev,mode=1777",
-        "/workspace/.obsidian:ro,noexec,nosuid,nodev",
-      ]);
-      // After the vault mount it covers, so engines that mount in argument
-      // order also get it right.
-      const vault = args.indexOf("/vault:/workspace:ro");
-      expect(args.indexOf("/workspace/.obsidian:ro,noexec,nosuid,nodev")).toBeGreaterThan(vault);
-    });
-  }
 });
 
 describe("containerUser", () => {

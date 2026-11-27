@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WorkflowExecutor } from "./index";
 import { IT_ENGINE, filesystemPlatform, makeIntegrationVaultRoot } from "../testing/integration-vault";
@@ -252,6 +252,7 @@ describe("VaultOre's own folder is hidden from cells where the vault holds it (#
 		try {
 			mkdirSync(join(home, ".config/vaultore"), { recursive: true });
 			writeFileSync(join(home, ".config/vaultore/schedules.json"), APPROVALS);
+			writeFileSync(join(home, ".config/other.json"), "[]");
 			const content = `---
 ore: true
 name: it
@@ -266,6 +267,10 @@ ${ts(`const attempt = async (f) => { try { await f(); return "ok"; } catch { ret
 	read: await attempt(() => Bun.file("/workspace/.config/vaultore/schedules.json").text()),
 	write: await attempt(() => Bun.write("/workspace/.config/vaultore/schedules.json", "{}")),
 	beside: await attempt(() => Bun.write("/workspace/.config/other.json", "{}")),
+	// .config is split around VaultOre's folder (#336): its entries are
+	// mounted, and nothing new can be created beside them.
+	besideNew: await attempt(() => Bun.write("/workspace/.config/new.json", "{}")),
+	otherCase: await attempt(() => Bun.write("/workspace/.config/VaultOre/schedules.json", "{}")),
 })`)}
 `;
 			writeFileSync(join(home, "wf.md"), content);
@@ -275,10 +280,84 @@ ${ts(`const attempt = async (f) => { try { await f(); return "ok"; } catch { ret
 
 			const output = workflow.outputs.get("c");
 			expect(output?.meta.status).toBe("success");
-			expect(output?.value).toEqual({ read: "denied", write: "denied", beside: "ok" });
+			expect(output?.value).toEqual({ read: "denied", write: "denied", beside: "ok", besideNew: "denied", otherCase: "denied" });
 			expect(readFileSync(join(home, ".config/vaultore/schedules.json"), "utf8")).toBe(APPROVALS);
 		} finally {
 			rmSync(home, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("each entry of the vault is a mount of its own (#336)", { timeout: 120_000 }, () => {
+	const probe = ts(`const fs = require("node:fs");
+const attempt = (f) => { try { f(); return "ok"; } catch { return "denied"; } };
+const w = "/workspace";
+({
+	// Another spelling of a left-out folder reaches nothing on any host.
+	readConfigOtherCase: attempt(() => fs.readFileSync(w + "/.Obsidian/plugins/vaultore/data.json")),
+	writeStateOtherCase: attempt(() => { fs.mkdirSync(w + "/.VAULTORE", { recursive: true }); fs.writeFileSync(w + "/.VAULTORE/x", "y"); }),
+	// What tools on the host act on can be read, not changed.
+	readGitConfig: attempt(() => fs.readFileSync(w + "/.git/config")),
+	writeGitHook: attempt(() => fs.writeFileSync(w + "/.git/hooks/post-commit", "#!/bin/sh\\n")),
+	writeGitConfig: attempt(() => fs.appendFileSync(w + "/.git/config", "\\n")),
+	writeClaude: attempt(() => fs.writeFileSync(w + "/.claude/settings.json", "{}")),
+	writeEnvrc: attempt(() => fs.appendFileSync(w + "/.envrc", "\\n")),
+	// Nothing new at the top level; everything else as before.
+	createTopLevel: attempt(() => fs.writeFileSync(w + "/new.md", "n")),
+	writeTopLevelNote: attempt(() => fs.writeFileSync(w + "/top.md", "changed")),
+	writeInFolder: attempt(() => fs.writeFileSync(w + "/Notes/a.md", "changed")),
+	createInFolder: attempt(() => fs.writeFileSync(w + "/Notes/new.md", "n")),
+	readNestedNote: attempt(() => fs.readFileSync(w + "/Notes/repo/readme.md")),
+	readThroughLink: attempt(() => fs.readFileSync(w + "/outside/secret.md")),
+})`);
+
+	it("leaves out VaultOre's folders in every spelling and keeps the tools' folders read-only", async () => {
+		const vault = makeIntegrationVaultRoot();
+		const outside = makeIntegrationVaultRoot();
+		try {
+			const files: Record<string, string> = {
+				".obsidian/plugins/vaultore/data.json": PLUGIN_SETTINGS,
+				".git/config": "[core]\n",
+				".git/hooks/.keep": "",
+				".claude/settings.json": '{"hooks":{}}',
+				".envrc": "export A=1\n",
+				"top.md": "top",
+				"Notes/a.md": "a",
+				"Notes/repo/readme.md": "nested",
+			};
+			for (const [path, text] of Object.entries(files)) {
+				mkdirSync(join(vault, path, ".."), { recursive: true });
+				writeFileSync(join(vault, path), text);
+			}
+			writeFileSync(join(outside, "secret.md"), SECRET);
+			symlinkSync(outside, join(vault, "outside"));
+
+			const r = await runCell("allow", "allow", probe, vault);
+
+			expect(r.status).toBe("success");
+			expect(r.value).toEqual({
+				readConfigOtherCase: "denied",
+				writeStateOtherCase: "denied",
+				readGitConfig: "ok",
+				writeGitHook: "denied",
+				writeGitConfig: "denied",
+				writeClaude: "denied",
+				writeEnvrc: "denied",
+				createTopLevel: "denied",
+				writeTopLevelNote: "ok",
+				writeInFolder: "ok",
+				createInFolder: "ok",
+				readNestedNote: "ok",
+				readThroughLink: "denied",
+			});
+			expect(existsSync(join(vault, ".git/hooks/post-commit"))).toBe(false);
+			expect(readFileSync(join(vault, ".git/config"), "utf8")).toBe("[core]\n");
+			expect(readFileSync(join(vault, ".envrc"), "utf8")).toBe("export A=1\n");
+			expect(existsSync(join(vault, ".vaultore/x"))).toBe(false);
+			expect(readFileSync(join(vault, "top.md"), "utf8")).toBe("changed");
+		} finally {
+			rmSync(vault, { recursive: true, force: true });
+			rmSync(outside, { recursive: true, force: true });
 		}
 	});
 });

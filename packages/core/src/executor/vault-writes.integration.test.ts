@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WorkflowExecutor } from "./index";
 import { filesystemPlatform, makeIntegrationVaultRoot } from "../testing/integration-vault";
@@ -17,6 +17,9 @@ let root: string;
 
 beforeAll(() => {
 	root = makeIntegrationVaultRoot();
+	// The cells signal through a folder: nothing new can be created at the
+	// vault's top level (#336).
+	mkdirSync(join(root, "signals"));
 });
 
 afterAll(() => {
@@ -76,13 +79,13 @@ text.length`);
 	it("refuses to overwrite a note the user edited after the cell read it, and applies nothing", async () => {
 		writeFileSync(path("edited.md"), "- [ ] a\n");
 		const run = runCell(`const text = await vault.read("edited.md");
-await Bun.write("/workspace/edited.marker", "read");
+await Bun.write("/workspace/signals/edited.marker", "read");
 await Bun.sleep(5000);
 await vault.write("side-effect.md", "written by the cell");
 await vault.write("edited.md", text.replace("[ ]", "[x]"));
 "done"`);
 
-		await waitFor("edited.marker");
+		await waitFor("signals/edited.marker");
 		writeFileSync(path("edited.md"), "- [ ] a\n- [ ] typed during the run\n");
 		const r = await run;
 
@@ -94,12 +97,12 @@ await vault.write("edited.md", text.replace("[ ]", "[x]"));
 
 	it("refuses to overwrite a note created after the cell found it missing", async () => {
 		const run = runCell(`const found = await vault.exists("created.md");
-await Bun.write("/workspace/created.marker", "checked");
+await Bun.write("/workspace/signals/created.marker", "checked");
 await Bun.sleep(5000);
 if (!found) await vault.write("created.md", "from the cell");
 found`);
 
-		await waitFor("created.marker");
+		await waitFor("signals/created.marker");
 		writeFileSync(path("created.md"), "the user's note");
 		const r = await run;
 

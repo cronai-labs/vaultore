@@ -195,7 +195,6 @@ export const DEFAULT_PIDS_LIMIT = 256;
 export const CONTAINER_TMP = "/tmp";
 
 const TMP_TMPFS = `${CONTAINER_TMP}:rw,noexec,nosuid,nodev,mode=1777`;
-const MASK_TMPFS_OPTIONS = "ro,noexec,nosuid,nodev";
 
 /**
  * The user a cell runs as when the host offers no usable uid: Windows has no
@@ -305,12 +304,6 @@ export function buildRunCommand(
       const mode = mount.readonly ? "ro" : "rw";
       args.push("-v", `${mount.source}:${mount.target}:${mode}`);
     }
-  }
-
-  // After the mounts they cover: Docker sorts mounts by depth anyway, but an
-  // engine that mounts in argument order would otherwise bury the tmpfs.
-  for (const path of options.maskedPaths ?? []) {
-    args.push("--tmpfs", `${path}:${MASK_TMPFS_OPTIONS}`);
   }
 
   args.push(options.image);
