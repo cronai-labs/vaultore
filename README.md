@@ -84,7 +84,8 @@ setting, shared by both runners, is kept in `~/.config/vaultore/settings.json`
 (`%APPDATA%\vaultore\settings.json`). Your consent is kept there too, never in the vault, so
 that sync cannot grant it: "Run scheduled workflows" and the notes you approved to run on
 schedule, with their permissions, in `schedules.json`; your answers to notes' permission
-requests in `answers.json`. While `vaultore agent` runs a vault, it holds a lock file in
+requests in `answers.json` (or, when you choose not to share them between Obsidian and the
+command line, `answers-obsidian.json` and `answers-cli.json`). While `vaultore agent` runs a vault, it holds a lock file in
 `agents/`. It also looks for the engine's command-line tool in the directories on your `PATH` and in fixed
 install locations (macOS: `/usr/local/bin`, `/opt/homebrew/bin`,
 `/Applications/Docker.app/Contents/Resources/bin/docker`; Linux: `/usr/bin`; Windows: the
@@ -155,6 +156,7 @@ top of it.
 | AI request timeout | 120 seconds | |
 | Default runtime engine | Docker | A workflow's `runtime.engine` overrides it |
 | Output folder | `_vaultore` | Where run outputs are written |
+| Share permission answers with vaultore | on | Whether an answer to a note's permission request, given in Obsidian or with `vaultore run`, counts in both; off, each keeps its own. One value for your account on this computer (`vaultore permissions share`) |
 | OpenAI API key, Anthropic API key | none | The name of a secret in Obsidian's secret storage |
 | Scheduled-run history | 30 days | How long what each scheduled run came to is kept, 0 to 30 days; 0 keeps each for a day only |
 | Late after | 2 minutes | How late a scheduled run may start and still run, 2 to 60 minutes; later, it is listed under "Missed runs". One value for your account on this computer, shared with `vaultore agent`, not stored in the vault |
@@ -308,7 +310,7 @@ vaultore --version | --help
 - `--config-dir <name>`: when Obsidian is set to use another config folder than `.obsidian`,
   name it, so that it is skipped when looking for workflows and hidden from cells.
 - In `vaultore run`, permissions at `ask` that are not answered yet are denied for the run unless you pass `--yes`; `--yes` allows them, and
-  that answer is kept for this account on this computer, until the note changes, in `~/.config/vaultore/answers.json`, which Obsidian uses too: an answer given in either applies in both, a Deny included, which `--yes` does not change. A run says which kept answer it used. A run without `--yes` stores nothing. `vaultore permissions forget <note.md> [<permission>...]` forgets a note's answers, or those named, so that the next run asks again; in Obsidian, the command **Forget permission answers for this note** does the same.
+  that answer is kept for this account on this computer, until the note changes, in `~/.config/vaultore/answers.json`, which Obsidian uses too: an answer given in either applies in both, a Deny included, which `--yes` does not change. Whether they share answers is your choice: `vaultore permissions share off` (or Obsidian's **Share permission answers with vaultore**) gives each its own file, and each asks for itself; switching copies nothing. A run says which kept answer it used. A run without `--yes` stores nothing. `vaultore permissions forget <note.md> [<permission>...]` forgets a note's answers, or those named, so that the next run asks again; in Obsidian, the command **Forget permission answers for this note** does the same.
 - `vaultore agent` is a scheduler daemon. **It runs a scheduled note only after
   `vaultore schedules approve <note.md>`**, or **By the agent** in Obsidian's settings, and only while the note's frontmatter and cells are
   what you approved: an edit to either, including one that arrives through sync, stops it until
@@ -340,7 +342,8 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | `locks/` | One lock file per running note, removed when the run ends | both runners |
 | `slots/` | What each scheduled occurrence came to, and missed runs; 30 days at most | both runners |
 | `settings.json` | "Late after", for your account on this computer | both runners |
-| `answers.json` and `.lock` | Your answers to notes' permission requests, for runs you start, per vault and note, with the content they were given for | both runners |
+| `answers.json` and `.lock` | Your answers to notes' permission requests, for runs you start, per vault and note, with the content they were given for | both runners, while they share answers (the default) |
+| `answers-obsidian.json`, `answers-cli.json` and `.lock` | The same, each runner's own, when you chose not to share them | each runner |
 | `schedules.json` and `.lock` | **Run scheduled workflows**, and each approved note with who runs it, per vault | both runners |
 | `schedules.json.imports.json` | Which `approvals.json` of an earlier version was copied in, with its SHA-256, so it is copied once | both runners |
 | `agents/` | One lock per vault while `vaultore agent` runs it, which Obsidian reads to say whether it does | the agent |

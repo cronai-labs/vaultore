@@ -31,7 +31,7 @@ import {
 	claimSlot,
 	describeHolder,
 	errorMessage,
-	answersStore,
+	answersStoreFor,
 	resolveInVaultRoot,
 	runLockDirectory,
 } from "@vaultore/core";
@@ -224,7 +224,7 @@ export class NodeAdapter implements PlatformAdapter {
 
 	/** The answers this account gave on this computer, shared with the plugin (#299). A change waits a moment for the plugin's. */
 	permissionAnswers() {
-		return answersStore({ wait: { timers: this.timers, ms: SHORT_LOCK_WAIT_MS }, ...this.answersOptions });
+		return answersStoreFor("cli", { wait: { timers: this.timers, ms: SHORT_LOCK_WAIT_MS }, ...this.answersOptions });
 	}
 
 	getSetting<T>(key: string): T | undefined {

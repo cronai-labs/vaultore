@@ -62,7 +62,7 @@ import {
 	createSkipReporter,
 	planRegistrations,
 } from "./agent";
-import { forgetNoteAnswers, permissionNamesFrom } from "./permissions";
+import { forgetNoteAnswers, permissionNamesFrom, shareAnswersSetting } from "./permissions";
 import { buildScheduleManifest, discoverWorkflows } from "./scan";
 import {
 	answersFrom,
@@ -104,6 +104,7 @@ Usage:
   vaultore schedules dismiss <workflow.md> [<slot>] [--vault <dir>]
   vaultore schedules late-after [<minutes> | default]
   vaultore permissions forget <workflow.md> [<permission>...] [--vault <dir>]
+  vaultore permissions share [on | off]
   vaultore --version | --help
 
 Options:
@@ -150,7 +151,8 @@ both runners read (Obsidian's "Late after" is the same setting).
 An answer to a note's "ask" permission in 'vaultore run' is kept for the
 note's content, for this account on this computer, outside the vault in
 ~/.config/vaultore/answers.json, which Obsidian uses too: an answer given in
-either counts in both. A note that arrives through sync, or was answered on
+either counts in both, unless 'permissions share off' (or Obsidian's "Share
+permission answers with vaultore") keeps each runner's answers its own. A note that arrives through sync, or was answered on
 another computer, is asked again, so without --yes it is denied. A kept
 answer, a Deny included, is used as it is; 'permissions forget' forgets a
 note's answers, or those named, so that the next run asks again.
@@ -664,6 +666,19 @@ async function cmdSchedulesDismiss(args: ParsedArgs): Promise<number> {
  * machine: the file both runners read (Obsidian's "Late after"). A running
  * agent follows a change within a minute.
  */
+/** `vaultore permissions share [on | off]` (#331). */
+async function cmdPermissionsShare(args: ParsedArgs): Promise<number> {
+	let line: string;
+	try {
+		line = await shareAnswersSetting(args.positional[0], machineSettingsPath(), SHORT_WAIT);
+	} catch (err) {
+		process.stderr.write(`error: ${errorMessage(err)}\n\n` + usage());
+		return 2;
+	}
+	process.stdout.write(line + "\n");
+	return 0;
+}
+
 /** `vaultore permissions forget <note.md> [<permission>...]` (#322). */
 async function cmdPermissionsForget(args: ParsedArgs): Promise<number> {
 	const [noteArg, ...names] = args.positional;
@@ -680,7 +695,7 @@ async function cmdPermissionsForget(args: ParsedArgs): Promise<number> {
 	}
 	const adapter = new NodeAdapter({ vaultRoot, quiet: true });
 	const line = await forgetNoteAnswers({
-		store: adapter.permissionAnswers(),
+		store: await adapter.permissionAnswers(),
 		vaultKey: await vaultKeyFor(vaultRoot),
 		notePath,
 		names: permissions,
@@ -831,6 +846,7 @@ async function main(): Promise<number> {
 		case "permissions": {
 			const sub = args.positional.shift();
 			if (sub === "forget") return cmdPermissionsForget(args);
+			if (sub === "share") return cmdPermissionsShare(args);
 			process.stderr.write(`error: unknown permissions subcommand '${sub ?? ""}'\n\n` + usage());
 			return 2;
 		}

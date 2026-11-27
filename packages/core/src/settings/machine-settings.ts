@@ -19,6 +19,13 @@ export interface MachineSettings {
 	 * Absent: 2. Later, the occurrence is a missed run (#269).
 	 */
 	lateAfterMinutes?: number;
+	/**
+	 * Whether Obsidian and the CLI share the answers given for runs started by
+	 * hand (`answers.json`), or each keeps its own (`answers-obsidian.json`,
+	 * `answers-cli.json`). Absent: shared. One value for both, so the two
+	 * cannot disagree (#331).
+	 */
+	shareAnswers?: boolean;
 }
 
 export const MIN_LATE_AFTER_MINUTES = 2;
@@ -88,6 +95,12 @@ export async function readMachineSettings(options: MachineSettingsOptions = {}):
 		}
 		settings.lateAfterMinutes = raw["lateAfterMinutes"];
 	}
+	if (raw["shareAnswers"] !== undefined) {
+		if (typeof raw["shareAnswers"] !== "boolean") {
+			throw new Error(`${path}: shareAnswers must be true or false, got ${JSON.stringify(raw["shareAnswers"])}`);
+		}
+		settings.shareAnswers = raw["shareAnswers"];
+	}
 	return settings;
 }
 
@@ -107,6 +120,9 @@ export async function writeMachineSettings(
 			`Late after must be a whole number of minutes from ${MIN_LATE_AFTER_MINUTES} to ${MAX_LATE_AFTER_MINUTES}, ` +
 				`got ${String(changes.lateAfterMinutes)}`
 		);
+	}
+	if (changes.shareAnswers !== undefined && typeof changes.shareAnswers !== "boolean") {
+		throw new Error(`Sharing answers must be on or off, got ${String(changes.shareAnswers)}`);
 	}
 	await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 });
 	// Read, change and write under a lock: Obsidian and a vaultore command
