@@ -28,7 +28,7 @@ Permissions, their defaults and how `ask` is resolved are in [permissions-spec.m
 
 ## Permissions (Ore §4)
 
-[permissions-spec.md](permissions-spec.md) §2–§5: defaults, what each permission controls in VaultOre (mounts, masked folders, network), stored decisions and how `ask` is asked. A scheduled run and a catch-up ask nothing: they run with the permissions held by the note's schedule approval, answered when it was approved (§6.3), and `run.json` records the trigger and each permission's source.
+[permissions-spec.md](permissions-spec.md) §2–§5: defaults, what each permission controls in VaultOre (mounts, masked folders, network), stored decisions and how `ask` is asked. `vaultWrite` lets cells change the vault's folders; its top level is changed through `vault.write` only (§4.1). Ore §4.3's hidden folders: a cell can neither see nor change them under their own spelling, and cannot change them under any other; on macOS and Windows it can read them under another spelling (`.Obsidian`), which falls short of §4.3 ([#338](https://github.com/cronai-labs/vaultore/issues/338)). A scheduled run and a catch-up ask nothing: they run with the permissions held by the note's schedule approval, answered when it was approved (§6.3), and `run.json` records the trigger and each permission's source.
 
 ## Cells (Ore §5)
 

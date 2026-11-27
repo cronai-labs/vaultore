@@ -28,8 +28,9 @@ Everything in this section is in the code on `main`. The specs describe each par
 **Permissions** ([permissions spec](../specs/permissions-spec.md))
 
 - `network`, `vaultRead` and `vaultWrite` per workflow, enforced at the container: no vault
-  mount, the run directory only, the vault read-only, or the vault read-write. `.obsidian/`,
-  `.vaultore/` and VaultOre's own folder are hidden from cells.
+  mount, the run directory only, the vault read-only, or its folders read-write.
+  `.obsidian/`, `.vaultore/` and VaultOre's own folder are hidden and read-only; `.git`,
+  `.claude`, `.vscode` and `.envrc` are read-only.
 - An answer to `ask`, for a run started by hand, is bound to the note's frontmatter and cells,
   asked again when either changes, and kept for the account on the computer, outside the vault,
   shared by the plugin and the CLI, until forgotten. Scheduled runs and catch-ups never ask: they run with the

@@ -231,15 +231,24 @@ The defaults ([permissions spec](specs/permissions-spec.md), the single source):
 |------------|---------|----------|
 | `network` | `deny` | Network for container cells; required by AI cells |
 | `vaultRead` | `allow` | Whether the vault is mounted into containers; `{{note:}}` |
-| `vaultWrite` | `deny` | Whether that mount is writable |
+| `vaultWrite` | `deny` | Whether the vault's folders are writable; the top level only through `vault.write` |
 | `buildNetwork` | `deny` | Nothing yet (reserved for planned Python and Go cells) |
 
-**The mount enforces them.** A container cell sees the whole vault read-only, the whole vault
-read-write, only its own run directory, or nothing, depending on `vaultRead` and `vaultWrite`.
-Obsidian's config folder (`.obsidian/`, or the folder Obsidian is set to use instead), which
-holds the plugin and its settings, and `.vaultore/`, which holds the CLI's settings, are hidden
-from every cell; so is VaultOre's own folder (`~/.config/vaultore`) in a vault that holds it,
-such as a vault at your home folder.
+**The mount enforces them.** A container cell sees the vault read-only, the vault with its
+folders read-write, only its own run directory, or nothing, depending on `vaultRead` and
+`vaultWrite`. The vault's top level stays read-only: a cell writes a top-level note only
+through `vault.write`. Obsidian's config folder (`.obsidian/`, or the folder Obsidian is set to
+use instead), which holds the plugin and its settings, and `.vaultore/`, which holds the CLI's
+settings, are hidden from every cell and never writable; so is VaultOre's own folder
+(`~/.config/vaultore`) in a vault that holds it, such as a vault at your home folder. On macOS
+and Windows a cell can still read them under another spelling of their names (`.Obsidian`),
+since those file systems ignore letter case. What tools on your computer act on, `.git`,
+`.claude`, `.vscode` and `.envrc` at the vault's top level, is read-only to cells even with
+`vaultWrite`.
+
+**AI cells run no code.** An `ore:ai` cell is one request to your provider, made by the plugin
+or the CLI, with no tools; its answer is text, written into a fenced block of its output note.
+A later TS cell gets it as data (`cell(id)`) and acts on it with its own note's permissions.
 
 **Containers are hardened** on every engine: read-only root filesystem, a `noexec` `/tmp`, no
 Linux capabilities, a non-root user, no network unless granted, and memory and CPU limits.

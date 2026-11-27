@@ -20,6 +20,7 @@ vi.mock("../runtime", () => ({
 
 import { execContainer } from "../runtime";
 import { memoryRunLocks } from "../testing/run-locks";
+import { mirrorToDisk } from "../testing/disk-mirror";
 import { answersStore } from "../settings/answers";
 
 const SECRET = "the contents of a private note";
@@ -46,8 +47,9 @@ function vault(
 	links: Record<string, Error> = {},
 	redirects: Record<string, string> = {},
 	configDir = ".obsidian",
-	root = "/vault"
+	root = realVault
 ) {
+	mirrorToDisk(root, files);
 	const settings = new Map<string, unknown>();
 	const reads: string[] = [];
 	// The answers file of the account on this computer (#299), in the test's
@@ -67,6 +69,7 @@ function vault(
 		},
 		writeFile: async (path: string, content: string) => {
 			files[path] = content;
+			mirrorToDisk(root, { [path]: content });
 		},
 		exists: async (path: string) =>
 			path in files || Object.keys(files).some((file) => file.startsWith(`${path}/`)),
@@ -252,7 +255,7 @@ describe("{{note:}} in AI cells (#67)", () => {
 describe("container mounts follow vaultRead (#68)", () => {
 	type Mount = { source: string; target: string; readonly?: boolean };
 
-	async function mountsFor(type: "ts" | "shell", read: string, write: string) {
+	async function mountsFor(type: "ts" | "shell", read: string, write: string, files: Record<string, string> = {}) {
 		vi.mocked(execContainer).mockResolvedValue({
 			exitCode: 0,
 			stdout: "1",
@@ -262,7 +265,8 @@ describe("container mounts follow vaultRead (#68)", () => {
 			note(
 				`  network: deny\n  vaultRead: ${read}\n  vaultWrite: ${write}`,
 				`\`\`\`ore:${type} id=c\n1\n\`\`\``
-			)
+			),
+			files
 		);
 		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
 		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as {
@@ -274,14 +278,16 @@ describe("container mounts follow vaultRead (#68)", () => {
 	for (const type of ["ts", "shell"] as const) {
 		it(`${type}: mounts the vault read-only under vaultRead: allow`, async () => {
 			expect(await mountsFor(type, "allow", "deny")).toEqual([
-				{ source: "/vault", target: "/workspace", readonly: true },
+				{ source: realVault, target: "/workspace", readonly: true },
 			]);
 		});
 
-		it(`${type}: mounts the vault read-write under vaultRead and vaultWrite: allow`, async () => {
-			expect(await mountsFor(type, "allow", "allow")).toEqual([
-				{ source: "/vault", target: "/workspace", readonly: false },
-			]);
+		it(`${type}: mounts the vault read-only and each folder read-write over it under vaultWrite: allow (#336)`, async () => {
+			const mounts = await mountsFor(type, "allow", "allow");
+			expect(mounts[0]).toEqual({ source: realVault, target: "/workspace", readonly: true });
+			expect(mounts).toContainEqual({ source: `${realVault}/Private`, target: "/workspace/Private", readonly: false });
+			// A top-level file is not a mount of its own: the count stays small.
+			expect(mounts.map((m) => m.target)).not.toContain("/workspace/wf.md");
 		});
 
 		it(`${type}: mounts nothing under vaultRead and vaultWrite: deny`, async () => {
@@ -293,8 +299,8 @@ describe("container mounts follow vaultRead (#68)", () => {
 			expect(mounts).toHaveLength(1);
 			const [mount] = mounts as [Mount];
 			expect(mount.readonly).toBe(false);
-			expect(mount.source).toMatch(/^\/vault\/_vaultore\/runs\/wf\/[^/]+$/);
-			expect(mount.target).toBe(mount.source.replace(/^\/vault/, "/workspace"));
+			expect(mount.source.startsWith(`${realVault}/_vaultore/runs/wf/`)).toBe(true);
+			expect(mount.target).toBe(mount.source.replace(realVault, "/workspace"));
 		});
 	}
 });
@@ -603,15 +609,18 @@ ${runtime}permissions:
 	}
 });
 
-describe(".obsidian and .vaultore are hidden from cells (#28, #94)", () => {
-	const PLUGIN = { ".obsidian/plugins/vaultore/data.json": "{}" };
+describe(".obsidian and .vaultore are hidden from cells (#28, #94, #336)", () => {
+	const FILES = {
+		".obsidian/plugins/vaultore/data.json": "{}",
+		".vaultore/config.json": "{}",
+		".git/config": "[core]",
+		".claude/settings.json": "{}",
+		".vscode/tasks.json": "{}",
+		".envrc": "",
+		"Notes/.git/config": "[core]",
+	};
 
-	async function maskedFor(
-		type: "ts" | "shell",
-		read: string,
-		write: string,
-		files: Record<string, string>
-	) {
+	async function containerFor(type: "ts" | "shell", read: string, write: string, files: Record<string, string> = FILES) {
 		vi.mocked(execContainer).mockResolvedValue({
 			exitCode: 0,
 			stdout: "1",
@@ -625,35 +634,63 @@ describe(".obsidian and .vaultore are hidden from cells (#28, #94)", () => {
 			files
 		);
 		expect(workflow.outputs.get("c")?.meta.status).toBe("success");
-		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as { maskedPaths?: string[] };
-		return opts.maskedPaths ?? [];
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as {
+			mounts?: { target: string; readonly?: boolean }[];
+			maskedPaths?: string[];
+		};
+		const writable = (opts.mounts ?? []).filter((m) => m.readonly === false).map((m) => m.target);
+		return { writable, masked: opts.maskedPaths ?? [] };
 	}
 
 	for (const type of ["ts", "shell"] as const) {
 		for (const write of ["deny", "allow"]) {
-			it(`${type}: masks /workspace/.obsidian under the full vault mount (vaultWrite: ${write})`, async () => {
-				expect(await maskedFor(type, "allow", write, PLUGIN)).toEqual([
-					"/workspace/.obsidian",
-					"/workspace/.vaultore",
-				]);
+			it(`${type}: covers .obsidian and .vaultore under the full vault mount (vaultWrite: ${write})`, async () => {
+				const { masked } = await containerFor(type, "allow", write);
+				expect(masked).toEqual(["/workspace/.obsidian", "/workspace/.vaultore"]);
 			});
 		}
 
-		it(`${type}: masks nothing when the vault is not mounted`, async () => {
-			expect(await maskedFor(type, "deny", "deny", PLUGIN)).toEqual([]);
+		it(`${type}: covers nothing when the vault is not mounted`, async () => {
+			expect((await containerFor(type, "deny", "deny")).masked).toEqual([]);
 		});
 
-		it(`${type}: masks nothing when only the run directory is mounted`, async () => {
-			expect(await maskedFor(type, "deny", "allow", PLUGIN)).toEqual([]);
+		it(`${type}: covers nothing when only the run directory is mounted`, async () => {
+			expect((await containerFor(type, "deny", "allow")).masked).toEqual([]);
 		});
 
-		it(`${type}: masks .vaultore even in a vault that has none yet`, async () => {
-			// A cell must not be able to create the CLI's config with forged
-			// decisions; .obsidian stays unmasked when missing, since masking would
-			// make the engine create it in the vault.
-			expect(await maskedFor(type, "allow", "allow", {})).toEqual(["/workspace/.vaultore"]);
+		it(`${type}: covers only what exists, creating nothing (#336)`, async () => {
+			expect((await containerFor(type, "allow", "allow", {})).masked).toEqual([]);
+		});
+
+		it(`${type}: mounts no hidden or host tool folder read-write, and other folders whole`, async () => {
+			const { writable } = await containerFor(type, "allow", "allow");
+			expect(writable.filter((t) => /\/\.(obsidian|vaultore|git|claude|vscode)$/i.test(t))).toEqual([]);
+			expect(writable).toContain("/workspace/Notes");
+			expect(writable).not.toContain("/workspace/.envrc");
 		});
 	}
+
+	it("mounts no hidden folder read-write whatever its spelling on disk", async () => {
+		const { writable } = await containerFor("shell", "allow", "allow", {
+			".Obsidian/plugins/vaultore/data.json": "{}",
+			".VaultOre/config.json": "{}",
+			".GIT/config": "",
+			"Notes/a.md": "",
+		});
+		expect(writable.filter((t) => /\/\.(obsidian|vaultore|git)$/i.test(t))).toEqual([]);
+		expect(writable).toContain("/workspace/Notes");
+	});
+
+	it("mounts neither a symbolic link nor a name the engine cannot take", async () => {
+		mirrorToDisk(realVault, { "Outside/secret.md": SECRET, "a:b/x.md": "", "Meetings, 2026/x.md": "" });
+		symlinkSync(join(realVault, "Outside"), join(realVault, "link"));
+		const { writable } = await containerFor("shell", "allow", "allow");
+		expect(writable).not.toContain("/workspace/link");
+		expect(writable).not.toContain("/workspace/a:b");
+		expect(writable).toContain("/workspace/Outside");
+		// `-v` takes a comma in a name (checked on Docker).
+		expect(writable).toContain("/workspace/Meetings, 2026");
+	});
 });
 
 describe("a custom config folder is hidden from cells too (Vault#configDir)", () => {
@@ -670,26 +707,33 @@ describe("a custom config folder is hidden from cells too (Vault#configDir)", ()
 			{},
 			configDir
 		);
-		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as { maskedPaths?: string[] } | undefined;
-		return { output: workflow.outputs.get("c"), masked: opts?.maskedPaths ?? [] };
+		const opts = vi.mocked(execContainer).mock.calls[0]?.[2] as
+			| { mounts?: { target: string; readonly?: boolean }[]; maskedPaths?: string[] }
+			| undefined;
+		return {
+			output: workflow.outputs.get("c"),
+			writable: (opts?.mounts ?? []).filter((m) => m.readonly === false).map((m) => m.target),
+			masked: opts?.maskedPaths ?? [],
+		};
 	}
 
-	it("masks the configured folder and the default one when both exist", async () => {
-		const { output, masked } = await shellRun(".config-desk", {
+	it("covers the configured folder and the default one when both exist, and mounts neither read-write", async () => {
+		const { output, masked, writable } = await shellRun(".config-desk", {
 			".config-desk/plugins/vaultore/data.json": "{}",
 			".obsidian/plugins/other/main.js": "",
 		});
 		expect(output?.meta.status).toBe("success");
-		expect(masked).toEqual(["/workspace/.config-desk", "/workspace/.obsidian", "/workspace/.vaultore"]);
+		expect(masked).toEqual(["/workspace/.config-desk", "/workspace/.obsidian"]);
+		expect(writable.filter((t) => /config-desk|obsidian/.test(t))).toEqual([]);
 	});
 
-	it("masks the configured folder when there is no default one", async () => {
+	it("covers the configured folder when there is no default one", async () => {
 		const { masked } = await shellRun("./.config-desk/", { ".config-desk/plugins/vaultore/data.json": "{}" });
-		expect(masked).toEqual(["/workspace/.config-desk", "/workspace/.vaultore"]);
+		expect(masked).toEqual(["/workspace/.config-desk"]);
 	});
 
 	for (const configDir of ["", ".", "..", "a/b"]) {
-		it(`fails the cell, rather than mask nothing, for configDir ${JSON.stringify(configDir)}`, async () => {
+		it(`fails the cell, rather than hide nothing, for configDir ${JSON.stringify(configDir)}`, async () => {
 			const { output } = await shellRun(configDir, {});
 			expect(output?.meta.status).toBe("error");
 			expect(String(output?.value)).toMatch(/config folder must be one vault-relative folder/);

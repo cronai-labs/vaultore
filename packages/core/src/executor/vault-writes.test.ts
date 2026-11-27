@@ -21,6 +21,7 @@ vi.mock("../runtime", () => ({
 
 import { execContainer } from "../runtime";
 import { memoryRunLocks } from "../testing/run-locks";
+import { mirrorToDisk } from "../testing/disk-mirror";
 
 const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
@@ -85,6 +86,7 @@ function vault(
 	links: Record<string, string | Error> = {},
 	configDir = ".obsidian"
 ) {
+	mirrorToDisk(vaultRoot, files);
 	const written: string[] = [];
 	const reads: string[] = [];
 	const platform = {
@@ -98,12 +100,13 @@ function vault(
 		writeFile: async (path: string, content: string) => {
 			if (!path.startsWith("_vaultore/") && path !== "wf.md") written.push(path);
 			files[path] = content;
+			mirrorToDisk(vaultRoot, { [path]: content });
 		},
 		exists: async (path: string) =>
 			path in files || Object.keys(files).some((file) => file.startsWith(`${path}/`)),
 		mkdirp: async () => undefined,
 		listFiles: async () => [],
-		getVaultRoot: async () => "/vault",
+		getVaultRoot: async () => vaultRoot,
 		acquireRunLock: memoryRunLocks().acquireRunLock,
 		resolveInVault: async (path: string) => {
 			const link = links[path];
@@ -138,8 +141,13 @@ async function run(
 	return { ...v, status: output?.meta.status, value: output?.value };
 }
 
+// A vault folder that exists: the executor lists it for the cell's mounts (#336).
+let vaultRoot: string;
+
 beforeEach(() => {
 	vi.mocked(execContainer).mockReset();
+	vaultRoot = mkdtempSync(join(tmpdir(), "vaultore-writes-vault-"));
+	return () => rmSync(vaultRoot, { recursive: true, force: true });
 });
 
 describe("compare-and-swap", () => {
@@ -426,6 +434,34 @@ describe("the host enforces what vault.write may touch", () => {
 		});
 	}
 
+	// What tools on the host act on (#336): a git hook, an agent's hooks, an
+	// editor's tasks and a directory's environment run outside the container.
+	for (const path of [".git/hooks/post-commit", ".GIT/config", ".claude/settings.json", ".vscode/tasks.json", ".envrc", ".Envrc"]) {
+		it(`refuses ${path}, which a tool on the host acts on, and applies none of the cell's writes`, async () => {
+			container(() =>
+				stdout([
+					{ path: "fine.md", content: "x", base: null },
+					{ path, content: "x", base: null },
+				])
+			);
+
+			const r = await run({}, "allow", "allow");
+
+			expect(r.status).toBe("error");
+			expect(String(r.value)).toMatch(/which tools on the host act on/);
+			expect(r.written).toEqual([]);
+		});
+	}
+
+	it("applies a write to a folder deeper down named like one of them", async () => {
+		container(() => stdout([{ path: "Notes/.git-notes.md", content: "x", base: null }]));
+
+		const r = await run({}, "allow", "allow");
+
+		expect(r.status).toBe("success");
+		expect(r.written).toEqual(["Notes/.git-notes.md"]);
+	});
+
 	it("refuses every write under vaultWrite: deny, even one the cell handed over itself", async () => {
 		container(() => stdout([{ path: "note.md", content: "x", base: null }]));
 
@@ -501,7 +537,14 @@ describe("VaultOre's own folder, where the vault holds it, is closed to cells (#
 		const workflow = await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content });
 		const output = workflow.outputs.get("c");
 		const opts = vi.mocked(execContainer).mock.calls[0]?.[2];
-		return { ...v, made, status: output?.meta.status, value: output?.value, masked: opts?.maskedPaths ?? [] };
+		return {
+			...v,
+			made,
+			status: output?.meta.status,
+			value: output?.value,
+			writable: (opts?.mounts ?? []).filter((m) => m.readonly === false).map((m) => m.target),
+			masked: opts?.maskedPaths ?? [],
+		};
 	}
 
 	for (const path of [
@@ -536,22 +579,26 @@ describe("VaultOre's own folder, where the vault holds it, is closed to cells (#
 		expect(r.written).toEqual([".config/other/x.json"]);
 	});
 
-	it("masks it under the full vault mount, creating it first so a cell cannot", async () => {
+	it("covers it, and mounts the folders beside it read-write, not it (#336)", async () => {
+		mirrorToDisk(home, { ".config/vaultore/schedules.json": "{}", ".config/other/x.json": "{}", "Notes/a.md": "" });
 		container(() => stdout([]));
 
 		const r = await runAtHome((home) => join(home, ".config", "vaultore"));
 
 		expect(r.status).toBe("success");
-		expect(r.masked).toEqual(["/workspace/.vaultore", "/workspace/.config/vaultore"]);
-		expect(r.made).toContain(".config/vaultore");
+		expect(r.writable).toEqual(["/workspace/.config/other", "/workspace/Notes"]);
+		expect(r.masked).toContain("/workspace/.config/vaultore");
+		expect(r.made).not.toContain(".config/vaultore");
 	});
 
-	it("masks nothing more for a vault that does not hold it", async () => {
+	it("covers nothing more, and splits nothing, for a vault that does not hold it", async () => {
+		mirrorToDisk(home, { ".config/other/x.json": "{}" });
 		container(() => stdout([]));
 
 		const r = await runAtHome(() => join(tmpdir(), "elsewhere", "vaultore"));
 
-		expect(r.masked).toEqual(["/workspace/.vaultore"]);
+		expect(r.writable).toEqual(["/workspace/.config"]);
+		expect(r.masked).toEqual([]);
 	});
 
 	it("refuses to run a cell in a vault that lies inside it", async () => {
