@@ -32,7 +32,7 @@ Everything in this section is in the code on `main`. The specs describe each par
   `.vaultore/` and VaultOre's own folder are hidden from cells.
 - An answer to `ask`, for a run started by hand, is bound to the note's frontmatter and cells,
   asked again when either changes, and kept for the account on the computer, outside the vault,
-  shared by the plugin and the CLI. Scheduled runs and catch-ups never ask: they run with the
+  shared by the plugin and the CLI, until forgotten. Scheduled runs and catch-ups never ask: they run with the
   permissions given when the note was approved.
 
 **AI**
@@ -97,8 +97,7 @@ more computers, then more power in a workflow.
    a one-command install into a vault and a demo vault
    ([#47](https://github.com/cronai-labs/vaultore/issues/47)), and the listing's screenshots
    ([#157](https://github.com/cronai-labs/vaultore/issues/157)).
-2. **Seeing and changing what VaultOre keeps:** forgetting a kept answer
-   ([#322](https://github.com/cronai-labs/vaultore/issues/322)), showing and removing its state
+2. **Seeing and changing what VaultOre keeps:** showing and removing its state
    ([#275](https://github.com/cronai-labs/vaultore/issues/275)), `doctor` and `status`
    ([#282](https://github.com/cronai-labs/vaultore/issues/282)).
 3. **Several computers:** a warning when two computers schedule one note
@@ -140,8 +139,7 @@ in principle; the order is not fixed. Grouped:
 
 - Write permission per path ([#108](https://github.com/cronai-labs/vaultore/issues/108)),
   choosing what a grant is bound to ([#70](https://github.com/cronai-labs/vaultore/issues/70)),
-  forgetting a kept answer ([#322](https://github.com/cronai-labs/vaultore/issues/322)), and
-  syncing answers and approvals between computers, signed and enrolled
+  and syncing answers and approvals between computers, signed and enrolled
   ([#305](https://github.com/cronai-labs/vaultore/issues/305)).
 - Sandbox options beyond containers: an OS process sandbox, embeddable microVMs, the WASM tier
   ([#103](https://github.com/cronai-labs/vaultore/issues/103);

@@ -86,3 +86,34 @@ export function answersStore(options: AnswersStoreOptions = {}): VaultStateStore
 		ops
 	);
 }
+
+/** The permissions an answer can be kept for, in the order they are shown. */
+export const ANSWER_PERMISSION_KEYS = ANSWER_KEYS;
+export type AnswerPermissionKey = (typeof ANSWER_KEYS)[number];
+
+/**
+ * Forgets the answers kept for a note in a vault, whatever content they were
+ * given for: all of them, or only `keys`. The next run started by hand asks
+ * again (#322). Under the file's lock. Resolves to the permissions whose
+ * answers were removed, empty when none was kept.
+ */
+export async function forgetAnswers(
+	store: VaultStateStore<VaultAnswers>,
+	vaultKey: string,
+	notePath: string,
+	keys: readonly AnswerPermissionKey[] = ANSWER_KEYS
+): Promise<AnswerPermissionKey[]> {
+	const removed: AnswerPermissionKey[] = [];
+	await store.update(vaultKey, (entry) => {
+		if (!Object.prototype.hasOwnProperty.call(entry.notes, notePath)) return;
+		const kept = { ...entry.notes[notePath]! };
+		for (const key of keys) {
+			if (kept[key] === undefined) continue;
+			delete kept[key];
+			removed.push(key);
+		}
+		if (ANSWER_KEYS.some((key) => kept[key] !== undefined)) entry.notes[notePath] = kept;
+		else delete entry.notes[notePath];
+	});
+	return removed;
+}

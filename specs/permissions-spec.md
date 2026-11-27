@@ -285,9 +285,10 @@ setting ([#70](https://github.com/cronai-labs/vaultore/issues/70)).
 - it was given on another computer or for another account, or kept by an earlier version (in `data.json` or `config.json`).
 
 A stored `deny` is reused like an `allow`; only an answer a person gave (a modal, or `--yes`) is
-stored. There is no command or setting to forget an answer yet
-([#322](https://github.com/cronai-labs/vaultore/issues/322)); remove the note's entry from
-`answers.json`.
+stored. To ask again, forget the note's answers: `vaultore permissions forget <note.md>
+[<permission>...]`, or the command **Forget permission answers for this note** in Obsidian
+([#322](https://github.com/cronai-labs/vaultore/issues/322)). Either removes them from
+`answers.json` under its lock, whatever content they were given for, and says what it removed.
 
 ---
 

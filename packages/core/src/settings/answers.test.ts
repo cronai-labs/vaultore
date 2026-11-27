@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { answersPath, answersStore } from "./answers";
+import { answersPath, answersStore, forgetAnswers } from "./answers";
 
 /** The answers for runs started by hand, one file per account on a computer (#299). */
 
@@ -46,5 +46,45 @@ describe("the permission answers file", () => {
 	])("is refused, naming it, with %s", async (_what, notes, why) => {
 		write({ "/v": { notes } });
 		await expect(answersStore({ path }).forVault("/v")).rejects.toThrow(`the answers for a.md in vault /v ${why}`);
+	});
+});
+
+describe("forgetting answers (#322)", () => {
+	const kept = { workflowHash: "h", grantedAt: "2026-11-26T00:00:00.000Z", network: "deny" as const, vaultWrite: "allow" as const };
+
+	it("forgets all of a note's answers, whatever content they were given for, and nothing else", async () => {
+		const store = answersStore({ path });
+		await store.update("/v", (entry) => {
+			entry.notes["a.md"] = kept;
+			entry.notes["b.md"] = kept;
+		});
+
+		expect(await forgetAnswers(store, "/v", "a.md")).toEqual(["network", "vaultWrite"]);
+
+		expect(Object.keys((await store.forVault("/v")).notes)).toEqual(["b.md"]);
+	});
+
+	it("forgets only the permissions named, and keeps the note's others", async () => {
+		const store = answersStore({ path });
+		await store.update("/v", (entry) => {
+			entry.notes["a.md"] = kept;
+		});
+
+		expect(await forgetAnswers(store, "/v", "a.md", ["network", "vaultRead"])).toEqual(["network"]);
+
+		expect((await store.forVault("/v")).notes["a.md"]).toEqual({ workflowHash: "h", grantedAt: kept.grantedAt, vaultWrite: "allow" });
+	});
+
+	it("forgets nothing, and writes nothing, for a note with no answers", async () => {
+		const store = answersStore({ path });
+
+		expect(await forgetAnswers(store, "/v", "a.md")).toEqual([]);
+		expect(await store.forVault("/v")).toEqual({ notes: {} });
+	});
+
+	it("refuses a file it cannot use, naming it, and leaves it as it is", async () => {
+		write({ "/v": { notes: { "a.md": { workflowHash: "h" } } } });
+
+		await expect(forgetAnswers(answersStore({ path }), "/v", "a.md")).rejects.toThrow(path);
 	});
 });

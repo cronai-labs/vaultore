@@ -28,6 +28,7 @@ import {
   isLateSlot,
   lateAfterMs,
   answersStore,
+  forgetAnswers,
   readMachineSettings,
   writeMachineSettings,
   openSchedules,
@@ -704,6 +705,19 @@ export default class VaultOrePlugin extends Plugin {
         if (!checking) {
           void this.runWorkflow(file);
         }
+        return true;
+      },
+    });
+
+    // A kept answer, a Deny included, is used without asking until the note
+    // changes; this asks again (#322).
+    this.addCommand({
+      id: "forget-permission-answers",
+      name: "Forget permission answers for this note",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!this.isWorkflowNote(file)) return false;
+        if (!checking) void this.forgetPermissionAnswers(file.path);
         return true;
       },
     });
@@ -1506,6 +1520,27 @@ export default class VaultOrePlugin extends Plugin {
   }
 
   /** Closes a gap of missed runs without running the note. */
+  /**
+   * Forgets the answers kept for the note on this computer, so that its next
+   * run started by hand asks again (#322). Says what it forgot.
+   */
+  async forgetPermissionAnswers(path: string): Promise<void> {
+    try {
+      const removed = await forgetAnswers(
+        this.adapter.permissionAnswers(),
+        await vaultKeyFor(await this.adapter.getVaultRoot()),
+        path
+      );
+      new Notice(
+        removed.length === 0
+          ? `VaultOre: no permission answers kept for ${path} on this computer`
+          : `VaultOre: forgot the answers to ${removed.join(", ")} for ${path}; its next run asks again`
+      );
+    } catch (err) {
+      new Notice(`VaultOre error: ${errorMessage(err)}`);
+    }
+  }
+
   async dismissMissedRun(gap: SlotEntry): Promise<void> {
     try {
       await dismissMissedSlots({
