@@ -537,7 +537,14 @@ describe("VaultOre's own folder, where the vault holds it, is closed to cells (#
 		const workflow = await new WorkflowExecutor().runWorkflow({ platform: v.platform, workflowPath: "wf.md", content });
 		const output = workflow.outputs.get("c");
 		const opts = vi.mocked(execContainer).mock.calls[0]?.[2];
-		return { ...v, made, status: output?.meta.status, value: output?.value, mounted: (opts?.mounts ?? []).map((m) => m.target) };
+		return {
+			...v,
+			made,
+			status: output?.meta.status,
+			value: output?.value,
+			writable: (opts?.mounts ?? []).filter((m) => m.readonly === false).map((m) => m.target),
+			masked: opts?.maskedPaths ?? [],
+		};
 	}
 
 	for (const path of [
@@ -572,23 +579,26 @@ describe("VaultOre's own folder, where the vault holds it, is closed to cells (#
 		expect(r.written).toEqual([".config/other/x.json"]);
 	});
 
-	it("splits the folder that holds it, and leaves it out of the mounts (#336)", async () => {
+	it("covers it, and mounts the folders beside it read-write, not it (#336)", async () => {
 		mirrorToDisk(home, { ".config/vaultore/schedules.json": "{}", ".config/other/x.json": "{}", "Notes/a.md": "" });
 		container(() => stdout([]));
 
 		const r = await runAtHome((home) => join(home, ".config", "vaultore"));
 
 		expect(r.status).toBe("success");
-		expect(r.mounted).toEqual(["/workspace/.config/other", "/workspace/Notes"]);
+		expect(r.writable).toEqual(["/workspace/.config/other", "/workspace/Notes"]);
+		expect(r.masked).toContain("/workspace/.config/vaultore");
+		expect(r.made).not.toContain(".config/vaultore");
 	});
 
-	it("mounts a vault that does not hold it entry by entry, splitting nothing", async () => {
+	it("covers nothing more, and splits nothing, for a vault that does not hold it", async () => {
 		mirrorToDisk(home, { ".config/other/x.json": "{}" });
 		container(() => stdout([]));
 
 		const r = await runAtHome(() => join(tmpdir(), "elsewhere", "vaultore"));
 
-		expect(r.mounted).toEqual(["/workspace/.config"]);
+		expect(r.writable).toEqual(["/workspace/.config"]);
+		expect(r.masked).toEqual([]);
 	});
 
 	it("refuses to run a cell in a vault that lies inside it", async () => {

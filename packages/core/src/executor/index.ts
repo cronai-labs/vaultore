@@ -1408,13 +1408,13 @@ async function ensureArtifactIndex(
  * (`readRaw`, `Bun.file`), and a read-only mount stops writes, not reads
  * (#68).
  *
- * Under vaultRead, `/workspace` is a folder on the container's read-only root
- * and each entry of the vault is mounted into it on its own (#336). A folder
- * hidden from cells is then not mounted at all, rather than covered: a cover
- * sits on one spelling of a name, and on a host whose file system ignores
- * letter case every other spelling reaches the folder. A folder that holds
- * a hidden one (`.config` for `.config/vaultore`) is split the same way. The
- * cost: a cell creates nothing at the top level, or in a split folder.
+ * Under vaultRead the vault is mounted read-only as a whole. Under vaultWrite
+ * too, each top-level folder is mounted read-write over it (#336): a folder
+ * left out, or a top-level file, stays read-only in every spelling of its
+ * name. A cover over one spelling, as for reading (`maskedVaultPaths`), would
+ * leave the others writable on a host whose file system ignores letter case.
+ * Only folders get their own mount, so the count stays small whatever the
+ * number of notes, and the engine's command line within the system's limit.
  *
  * Without vaultRead, a cell that may write gets only this run's directory, at
  * the same path it has under a full mount, so it can record output without
@@ -1428,7 +1428,9 @@ async function vaultMounts(
 ): Promise<ContainerMount[]> {
   const root = stripTrailing(vaultRoot, "/");
   if (permissions.vaultRead) {
-    return entryMounts(platform, root, "", await hiddenDirsOf(platform), !permissions.vaultWrite);
+    const whole: ContainerMount = { source: root, target: "/workspace", readonly: true };
+    if (!permissions.vaultWrite) return [whole];
+    return [whole, ...(await writableFolderMounts(platform, root, "", await hiddenDirsOf(platform)))];
   }
   if (!permissions.vaultWrite) return [];
 
@@ -1445,50 +1447,49 @@ async function vaultMounts(
  * Entries that tools on the host act on, read-only also under vaultWrite: a
  * git hook or `core.fsmonitor`, an agent's hooks, an editor's tasks and a
  * directory's environment all run on the host, outside the container (#336).
- * Only at the top level: a cover deeper down would have the same letter-case
- * gap as a hidden folder's, and splitting every folder above it would keep
- * cells from creating files there.
+ * Only at the top level: deeper down, a folder is writable as a whole.
  */
 const HOST_TOOL_ENTRIES = [".git", ".claude", ".vscode", ".envrc"];
 
 /**
- * One mount per entry of the vault folder `dir` (vault-relative, "" for the
- * vault), leaving out the hidden folders and splitting the folders that hold
- * one. Names are compared without regard to letter case. A symbolic link is
- * not mounted: the engine would follow it on the host, out of the vault.
+ * A read-write mount per folder in the vault folder `dir` (vault-relative, ""
+ * for the vault), except the hidden folders and, at the top level, the host
+ * tools' ones. A folder that holds a hidden one is split into its folders the
+ * same way; its files stay read-only. Names are compared without regard to
+ * letter case. A symbolic link is not mounted: the engine would follow it on
+ * the host, out of the vault.
  */
-async function entryMounts(
+async function writableFolderMounts(
   platform: PlatformAdapter,
   root: string,
   dir: string,
-  hiddenDirs: readonly string[],
-  readonly: boolean
+  hiddenDirs: readonly string[]
 ): Promise<ContainerMount[]> {
   const mounts: ContainerMount[] = [];
   const entries = await fs.readdir(dir === "" ? root : `${root}/${dir}`, { withFileTypes: true });
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!entry.isDirectory()) continue;
     const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
     const lower = path.toLowerCase();
-    if (entry.isSymbolicLink()) continue;
     if (hiddenDirs.some((hidden) => hidden.toLowerCase() === lower)) continue;
+    if (dir === "" && HOST_TOOL_ENTRIES.includes(lower)) continue;
     if (path.includes(":") || path.includes(",")) {
-      platform.log("warn", `Not given to cells: ${path} (a name with ":" or "," cannot be mounted)`);
+      platform.log("warn", `Read-only to cells: ${path} (a name with ":" or "," cannot be mounted)`);
       continue;
     }
-    if (entry.isDirectory() && hiddenDirs.some((hidden) => hidden.toLowerCase().startsWith(`${lower}/`))) {
-      mounts.push(...(await entryMounts(platform, root, path, hiddenDirs, readonly)));
+    if (hiddenDirs.some((hidden) => hidden.toLowerCase().startsWith(`${lower}/`))) {
+      mounts.push(...(await writableFolderMounts(platform, root, path, hiddenDirs)));
       continue;
     }
-    const hostTool = dir === "" && HOST_TOOL_ENTRIES.includes(lower);
-    mounts.push({ source: `${root}/${path}`, target: `/workspace/${path}`, readonly: readonly || hostTool });
+    mounts.push({ source: `${root}/${path}`, target: `/workspace/${path}`, readonly: false });
   }
   return mounts;
 }
 
 /**
- * Vault directories no cell may see, even under a full vault mount: they are
- * left out of the container's mounts (`entryMounts`), and refused for
- * `vault.write` and `{{note:}}`.
+ * Vault directories no cell may see or write, even under a full vault mount:
+ * covered for reading (`maskedVaultPaths`), never mounted read-write
+ * (`vaultMounts`), and refused for `vault.write` and `{{note:}}`.
  *
  * The vault's config folder holds this plugin's code and settings: a cell
  * granted vaultWrite could otherwise rewrite the plugin that runs it (#28).
@@ -1498,8 +1499,8 @@ async function entryMounts(
  * folder.
  *
  * `.vaultore` holds the CLI's settings: a cell could otherwise change how the
- * CLI runs notes (#94). A cell cannot create it either, since `/workspace`
- * itself is read-only.
+ * CLI runs notes (#94). A cell cannot create it either: the vault's top level
+ * is read-only.
  */
 export const DEFAULT_CONFIG_DIR = ".obsidian";
 const VAULTORE_STATE_DIR = ".vaultore";
@@ -1578,6 +1579,30 @@ function hiddenDirOf(path: string, hiddenDirs: readonly string[]): string | unde
     const prefix = segments(dir);
     return prefix.length > 0 && prefix.every((segment, i) => of[i] === segment);
   });
+}
+
+/**
+ * Container paths to cover with an empty read-only tmpfs: the hidden folders
+ * that exist, under the full vault mount, the only one that reaches them. A
+ * cover hides one spelling of a name. On a host whose file system ignores
+ * letter case, another spelling still reads the folder; writing it is stopped
+ * by the read-only mount (`vaultMounts`). A missing folder is not covered,
+ * since the engine would have to create it.
+ */
+async function maskedVaultPaths(
+  platform: PlatformAdapter,
+  vaultRoot: string,
+  permissions: Pick<ResolvedPermissions, "vaultRead">
+): Promise<string[]> {
+  if (!permissions.vaultRead) return [];
+  const root = stripTrailing(vaultRoot, "/");
+  const masked: string[] = [];
+  for (const dir of await hiddenDirsOf(platform)) {
+    // The host's folder, as the engine sees it (#336), like the mounts.
+    const isDir = await fs.stat(`${root}/${dir}`).then((stat) => stat.isDirectory(), () => false);
+    if (isDir) masked.push(`/workspace/${dir}`);
+  }
+  return masked;
 }
 
 // =============================================================================
@@ -1902,6 +1927,7 @@ async function executeTypeScriptCell(
     cpuLimit: runtime.cpuLimit,
     networkEnabled: permissions.network,
     mounts: await vaultMounts(platform, vaultRoot, permissions, runContext),
+    maskedPaths: await maskedVaultPaths(platform, vaultRoot, permissions),
   };
 
   const result = await execContainer(platform.timers, runtime.engine, containerOpts);
@@ -1945,6 +1971,7 @@ async function executeShellCell(
     cpuLimit: runtime.cpuLimit,
     networkEnabled: permissions.network,
     mounts: await vaultMounts(platform, vaultRoot, permissions, runContext),
+    maskedPaths: await maskedVaultPaths(platform, vaultRoot, permissions),
   };
 
   const result = await execContainer(platform.timers, runtime.engine, containerOpts);

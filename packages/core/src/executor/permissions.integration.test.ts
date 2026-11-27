@@ -253,6 +253,7 @@ describe("VaultOre's own folder is hidden from cells where the vault holds it (#
 			mkdirSync(join(home, ".config/vaultore"), { recursive: true });
 			writeFileSync(join(home, ".config/vaultore/schedules.json"), APPROVALS);
 			writeFileSync(join(home, ".config/other.json"), "[]");
+			mkdirSync(join(home, ".config/other"));
 			const content = `---
 ore: true
 name: it
@@ -267,8 +268,9 @@ ${ts(`const attempt = async (f) => { try { await f(); return "ok"; } catch { ret
 	read: await attempt(() => Bun.file("/workspace/.config/vaultore/schedules.json").text()),
 	write: await attempt(() => Bun.write("/workspace/.config/vaultore/schedules.json", "{}")),
 	beside: await attempt(() => Bun.write("/workspace/.config/other.json", "{}")),
-	// .config is split around VaultOre's folder (#336): its entries are
-	// mounted, and nothing new can be created beside them.
+	// .config is split around VaultOre's folder (#336): its folders are
+	// writable, its files read-only, and nothing new can be created in it.
+	besideInFolder: await attempt(() => Bun.write("/workspace/.config/other/x.json", "{}")),
 	besideNew: await attempt(() => Bun.write("/workspace/.config/new.json", "{}")),
 	otherCase: await attempt(() => Bun.write("/workspace/.config/VaultOre/schedules.json", "{}")),
 })`)}
@@ -280,7 +282,7 @@ ${ts(`const attempt = async (f) => { try { await f(); return "ok"; } catch { ret
 
 			const output = workflow.outputs.get("c");
 			expect(output?.meta.status).toBe("success");
-			expect(output?.value).toEqual({ read: "denied", write: "denied", beside: "ok", besideNew: "denied", otherCase: "denied" });
+			expect(output?.value).toEqual({ read: "denied", write: "denied", beside: "denied", besideInFolder: "ok", besideNew: "denied", otherCase: "denied" });
 			expect(readFileSync(join(home, ".config/vaultore/schedules.json"), "utf8")).toBe(APPROVALS);
 		} finally {
 			rmSync(home, { recursive: true, force: true });
@@ -288,13 +290,15 @@ ${ts(`const attempt = async (f) => { try { await f(); return "ok"; } catch { ret
 	});
 });
 
-describe("each entry of the vault is a mount of its own (#336)", { timeout: 120_000 }, () => {
+describe("only folders are writable, and not VaultOre's or the host tools' ones (#336)", { timeout: 120_000 }, () => {
 	const probe = ts(`const fs = require("node:fs");
 const attempt = (f) => { try { f(); return "ok"; } catch { return "denied"; } };
 const w = "/workspace";
 ({
-	// Another spelling of a left-out folder reaches nothing on any host.
-	readConfigOtherCase: attempt(() => fs.readFileSync(w + "/.Obsidian/plugins/vaultore/data.json")),
+	readConfig: attempt(() => fs.readFileSync(w + "/.obsidian/plugins/vaultore/data.json")),
+	// Another spelling of a hidden folder is read-only on any host. (Reading it
+	// works on a host whose file system ignores letter case: permissions-spec §4.1.)
+	writeConfigOtherCase: attempt(() => fs.writeFileSync(w + "/.Obsidian/plugins/vaultore/data.json", "{}")),
 	writeStateOtherCase: attempt(() => { fs.mkdirSync(w + "/.VAULTORE", { recursive: true }); fs.writeFileSync(w + "/.VAULTORE/x", "y"); }),
 	// What tools on the host act on can be read, not changed.
 	readGitConfig: attempt(() => fs.readFileSync(w + "/.git/config")),
@@ -302,16 +306,20 @@ const w = "/workspace";
 	writeGitConfig: attempt(() => fs.appendFileSync(w + "/.git/config", "\\n")),
 	writeClaude: attempt(() => fs.writeFileSync(w + "/.claude/settings.json", "{}")),
 	writeEnvrc: attempt(() => fs.appendFileSync(w + "/.envrc", "\\n")),
-	// Nothing new at the top level; everything else as before.
+	// The top level is read-only; folders are writable.
 	createTopLevel: attempt(() => fs.writeFileSync(w + "/new.md", "n")),
 	writeTopLevelNote: attempt(() => fs.writeFileSync(w + "/top.md", "changed")),
 	writeInFolder: attempt(() => fs.writeFileSync(w + "/Notes/a.md", "changed")),
 	createInFolder: attempt(() => fs.writeFileSync(w + "/Notes/new.md", "n")),
+	renameInFolder: attempt(() => fs.renameSync(w + "/Notes/new.md", w + "/Notes/renamed.md")),
+	// Two folders are two mounts: a rename between them fails with EXDEV.
+	renameAcrossFolders: attempt(() => fs.renameSync(w + "/Notes/renamed.md", w + "/Archive/renamed.md")),
+	writeFolderOtherCase: attempt(() => fs.writeFileSync(w + "/NOTES/other.md", "n")),
 	readNestedNote: attempt(() => fs.readFileSync(w + "/Notes/repo/readme.md")),
 	readThroughLink: attempt(() => fs.readFileSync(w + "/outside/secret.md")),
 })`);
 
-	it("leaves out VaultOre's folders in every spelling and keeps the tools' folders read-only", async () => {
+	it("keeps the top level, VaultOre's folders and the tools' folders read-only, and folders writable", async () => {
 		const vault = makeIntegrationVaultRoot();
 		const outside = makeIntegrationVaultRoot();
 		try {
@@ -324,6 +332,7 @@ const w = "/workspace";
 				"top.md": "top",
 				"Notes/a.md": "a",
 				"Notes/repo/readme.md": "nested",
+				"Archive/.keep": "",
 			};
 			for (const [path, text] of Object.entries(files)) {
 				mkdirSync(join(vault, path, ".."), { recursive: true });
@@ -336,7 +345,8 @@ const w = "/workspace";
 
 			expect(r.status).toBe("success");
 			expect(r.value).toEqual({
-				readConfigOtherCase: "denied",
+				readConfig: "denied",
+				writeConfigOtherCase: "denied",
 				writeStateOtherCase: "denied",
 				readGitConfig: "ok",
 				writeGitHook: "denied",
@@ -344,17 +354,22 @@ const w = "/workspace";
 				writeClaude: "denied",
 				writeEnvrc: "denied",
 				createTopLevel: "denied",
-				writeTopLevelNote: "ok",
+				writeTopLevelNote: "denied",
 				writeInFolder: "ok",
 				createInFolder: "ok",
+				renameInFolder: "ok",
+				renameAcrossFolders: "denied",
+				writeFolderOtherCase: "denied",
 				readNestedNote: "ok",
 				readThroughLink: "denied",
 			});
 			expect(existsSync(join(vault, ".git/hooks/post-commit"))).toBe(false);
 			expect(readFileSync(join(vault, ".git/config"), "utf8")).toBe("[core]\n");
 			expect(readFileSync(join(vault, ".envrc"), "utf8")).toBe("export A=1\n");
+			expect(readFileSync(join(vault, ".obsidian/plugins/vaultore/data.json"), "utf8")).toBe(PLUGIN_SETTINGS);
 			expect(existsSync(join(vault, ".vaultore/x"))).toBe(false);
-			expect(readFileSync(join(vault, "top.md"), "utf8")).toBe("changed");
+			expect(readFileSync(join(vault, "top.md"), "utf8")).toBe("top");
+			expect(readFileSync(join(vault, "Notes/a.md"), "utf8")).toBe("changed");
 		} finally {
 			rmSync(vault, { recursive: true, force: true });
 			rmSync(outside, { recursive: true, force: true });

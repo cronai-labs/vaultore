@@ -111,6 +111,19 @@ found`);
 		expect(read("created.md")).toBe("the user's note");
 	});
 
+	// The top level is read-only through the mount (#336): vault.mkdirp does
+	// nothing there, and vault.write, applied by the host, creates the folder.
+	it("creates a new top-level folder and note through vault.write", async () => {
+		const r = await runCell(`await vault.mkdirp("Summaries");
+await vault.write("Summaries/today.md", "summary");
+await vault.write("top-level.md", "via the host");
+"done"`);
+
+		expect(r.status).toBe("success");
+		expect(read("Summaries/today.md")).toBe("summary");
+		expect(read("top-level.md")).toBe("via the host");
+	});
+
 	it("a cell reads its own pending writes", async () => {
 		const r = await runCell(`await vault.write("ryw.md", "first");
 const seen = await vault.read("ryw.md");

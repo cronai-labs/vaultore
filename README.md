@@ -234,15 +234,17 @@ The defaults ([permissions spec](specs/permissions-spec.md), the single source):
 | `vaultWrite` | `deny` | Whether that mount is writable |
 | `buildNetwork` | `deny` | Nothing yet (reserved for planned Python and Go cells) |
 
-**The mount enforces them.** A container cell sees the vault read-only, the vault read-write,
-only its own run directory, or nothing, depending on `vaultRead` and `vaultWrite`. Each entry
-of the vault is mounted on its own, so some folders can be left out. Obsidian's config folder
-(`.obsidian/`, or the folder Obsidian is set to use instead), which holds the plugin and its
-settings, and `.vaultore/`, which holds the CLI's settings, are left out for every cell; so is
-VaultOre's own folder (`~/.config/vaultore`) in a vault that holds it, such as a vault at your
-home folder. What tools on your computer act on, `.git`, `.claude`, `.vscode` and `.envrc` at
-the vault's top level, is read-only to cells even with `vaultWrite`. A cell cannot create new
-files or folders at the vault's top level, except through `vault.write`.
+**The mount enforces them.** A container cell sees the vault read-only, the vault with its
+folders read-write, only its own run directory, or nothing, depending on `vaultRead` and
+`vaultWrite`. The vault's top level stays read-only: a cell writes a top-level note only
+through `vault.write`. Obsidian's config folder (`.obsidian/`, or the folder Obsidian is set to
+use instead), which holds the plugin and its settings, and `.vaultore/`, which holds the CLI's
+settings, are hidden from every cell and never writable; so is VaultOre's own folder
+(`~/.config/vaultore`) in a vault that holds it, such as a vault at your home folder. On macOS
+and Windows a cell can still read them under another spelling of their names (`.Obsidian`),
+since those file systems ignore letter case. What tools on your computer act on, `.git`,
+`.claude`, `.vscode` and `.envrc` at the vault's top level, is read-only to cells even with
+`vaultWrite`.
 
 **AI cells run no code.** An `ore:ai` cell is one request to your provider, made by the plugin
 or the CLI, with no tools; its answer is text, written into a fenced block of its output note.

@@ -85,7 +85,7 @@ The mount is the enforcement (`vaultMounts`, `packages/core/src/executor/index.t
 | `vaultRead` | `vaultWrite` | What a container cell sees at `/workspace` |
 |-------------|--------------|--------------------------------------------|
 | `allow` | `deny` | The whole vault, read-only, with `.obsidian/` hidden (§4.1) |
-| `allow` | `allow` | The whole vault, read-write, with `.obsidian/` hidden |
+| `allow` | `allow` | The whole vault, its top-level folders read-write and the rest read-only, with `.obsidian/` hidden (§4.1) |
 | `deny` | `allow` | Only this run's directory, `<outputRoot>/runs/<workflow>/<runId>/`, read-write, at the same path it has under a full mount |
 | `deny` | `deny` | Nothing |
 
@@ -110,9 +110,9 @@ under a full mount, and writable with `vaultWrite`.
 **`deny` (default):** the vault is mounted read-only, or not at all. `vault.write()` and
 `vault.mkdirp()` throw.
 
-**`allow`:** cells can create, modify and delete files in the vault, except under `.obsidian/`
-and `.vaultore/`, and except `.git`, `.claude`, `.vscode` and `.envrc` at the vault's top level
-(§4.1). Through the mount, a cell creates nothing new at the top level; `vault.write` can.
+**`allow`:** cells can create, modify and delete files in the vault's folders, except
+`.obsidian/`, `.vaultore/`, `.git`, `.claude` and `.vscode` (§4.1). The top level, `.envrc`
+included, is read-only through the mount; `vault.write` can write a top-level note.
 
 `vault.write()` does not write through the mount. The host applies it after the cell has
 exited successfully, through the platform (Obsidian's vault API in the plugin, the file system
@@ -160,7 +160,8 @@ docker run --rm \
   -e HOME=/tmp \
   --memory 512m --cpus 1 \
   --workdir /workspace \
-  -v <vault>/<entry>:/workspace/<entry>:ro \   # one per entry of the vault (§4.1)
+  -v <vault>:/workspace:ro \
+  # under vaultWrite also: -v <vault>/<folder>:/workspace/<folder>:rw per top-level folder (§4.1)
   $IMAGE $COMMAND
 ```
 
@@ -175,29 +176,36 @@ docker run --rm \
 | Process limit | `--pids-limit=256` (`DEFAULT_PIDS_LIMIT`) | **not supported** by the CLI | Stops a fork bomb |
 | User | `--user=<uid>:<gid>` (§4.2) | `--user <uid>:<gid>` | Never root |
 | Memory / CPU | `--memory` / `--cpus` from `runtime.memoryLimit` / `runtime.cpuLimit` | same | §4.3 |
-| Vault | §3.3, §3.4: no mount, the run directory only, or each entry of the vault read-only or read-write (below) | same | |
-| `.obsidian/` | not mounted | same | The plugin's own code and settings: a cell can neither read nor rewrite them. The config folder the platform reports is left out as well, when it is another one (Obsidian's per-device "Override config folder", the CLI's `--config-dir`; #147) |
-| `.vaultore/` | not mounted | same | The CLI's settings, so a cell cannot change how the CLI runs notes (#94). A cell cannot create it either: `/workspace` itself is read-only |
-| VaultOre's own folder | not mounted | same | `~/.config/vaultore` (`%APPDATA%\vaultore`) holds the schedule approvals, the answers, the locks and the schedule record. In a vault that holds it, such as a vault at the home folder, the folders above it are split into their entries, and it is left out; `vault.write` and `{{note:}}` refuse it as they refuse the config folders. A vault inside that folder is refused (#306) |
-| `.git`, `.claude`, `.vscode`, `.envrc` | `:ro` also under `vaultWrite` | same | Tools on the host act on them: a git hook or `core.fsmonitor`, an agent's hooks, an editor's tasks and a directory's environment run outside the container. Only at the vault's top level; `vault.write` refuses them too (#336) |
+| Vault | §3.3, §3.4: no mount, the run directory only, the vault read-only, or the vault read-only with its folders read-write (below) | same | |
+| `.obsidian/` | `--tmpfs /workspace/.obsidian:ro,noexec,nosuid,nodev`; never mounted read-write | same | The plugin's own code and settings: a cell can neither read nor rewrite them (reading another spelling: below). Covered only when it exists, since the engine would have to create it. The config folder the platform reports is covered as well, when it is another one (Obsidian's per-device "Override config folder", the CLI's `--config-dir`; #147) |
+| `.vaultore/` | same as `.obsidian/` | same | The CLI's settings, so a cell cannot change how the CLI runs notes (#94). A cell cannot create it either: the top level is read-only |
+| VaultOre's own folder | same as `.obsidian/` | same | `~/.config/vaultore` (`%APPDATA%\vaultore`) holds the schedule approvals, the answers, the locks and the schedule record. In a vault that holds it, such as a vault at the home folder, the folders above it are split, and it is not mounted read-write; `vault.write` and `{{note:}}` refuse it as they refuse the config folders. A vault inside that folder is refused (#306) |
+| `.git`, `.claude`, `.vscode`, `.envrc` | never mounted read-write | same | Tools on the host act on them: a git hook or `core.fsmonitor`, an agent's hooks, an editor's tasks and a directory's environment run outside the container. Only at the vault's top level; `vault.write` refuses them too (#336) |
 
-**One mount per entry (#336).** Under `vaultRead`, `/workspace` is a folder on the read-only
-root, and each entry of the vault is mounted into it on its own; a folder that holds a hidden
-one is split into its entries the same way. A folder hidden from cells is not mounted at all.
-Covering it with an empty tmpfs, as earlier versions did, hid one spelling of its name: on a
-host whose file system ignores letter case (macOS, Windows) every other spelling reached it.
-Names are compared without regard to letter case. What this costs and leaves open:
+**Folders are the writable unit (#336).** Under `vaultRead` the vault is mounted read-only at
+`/workspace`. Under `vaultWrite` too, each top-level folder is mounted read-write over it, except
+the hidden folders and the host tools' folders above. A folder that holds a hidden one (`.config`
+for `.config/vaultore`) is split into its folders the same way. Names are compared without regard
+to letter case. Earlier versions mounted the vault read-write and covered the hidden folders with
+an empty tmpfs: a cover sits on one spelling of a name, and on a host whose file system ignores
+letter case (macOS, Windows) every other spelling reached the folder, for writing too. Only
+folders get a mount of their own, so the engine's command line stays short however many notes
+the vault holds. What this costs and leaves open:
 
-- A cell creates nothing new at the vault's top level, or in a split folder, through the
-  mount (`EROFS`). `vault.write` can, since the host applies it.
-- An entry that is a symbolic link is not mounted: the engine would follow it on the host, out
-  of the vault. An entry whose name holds `:` or `,` is not mounted either, which the run log
-  says.
-- An entry created on the host while a cell runs is not in its container.
-- A git repository in a subfolder of the vault stays writable under `vaultWrite`, and a cell can
-  create one there. A read-only cover deeper down would have the same letter-case gap, and
-  splitting every folder above it would keep cells from creating files there. Git runs its
-  hooks only for commands run inside that folder.
+- **The top level is read-only to cells**, and so are the files of a split folder: through the
+  mount, a cell cannot create, change, delete or rename a top-level note (`EROFS`). `vault.write`
+  can, since the host applies it. A shell `mv` of a top-level note into a folder copies it and
+  then fails to remove the original, leaving both.
+  `vault.mkdirp()` of a new top-level folder does nothing; `vault.write` into it creates it.
+- **Two folders are two mounts:** `rename()` between them fails with `EXDEV`. Shell `mv` copies
+  and deletes instead, and works.
+- **Reading another spelling** of a hidden folder works on a host whose file system ignores
+  letter case: the tmpfs covers the folder's own spelling only. Writing it is refused, by the
+  read-only mount. On Linux hosts, which tell letter case apart, the folder is hidden.
+- **A symbolic link** at the top level is not mounted read-write: the engine would follow it on
+  the host. A folder whose name holds `:` or `,` is not mounted either, which the run log says.
+- **A git repository in a subfolder** stays writable under `vaultWrite`, and a cell can create one
+  there. Git runs its hooks only for commands run inside that folder.
 
 On Apple `container` each container is its own micro-VM, which is the isolation boundary for
 what the CLI cannot express (no `no-new-privileges`, no pids limit; checked against
@@ -436,11 +444,11 @@ workflow is granted `network`.
 
 | Threat | Mitigation |
 |--------|------------|
-| Code execution on the host | Cells run only in containers (§4); what tools on the host run (`.git`, `.claude`, `.vscode`, `.envrc` at the vault's top level) is read-only to them (§4.1) |
+| Code execution on the host | Cells run only in containers (§4); what tools on the host act on (`.git`, `.claude`, `.vscode`, `.envrc` at the vault's top level) is read-only to them (§4.1) |
 | Data leaving the machine | `network: deny` by default; AI cells need `network` |
 | Vault corruption | `vaultWrite: deny` by default; read-only or no mount |
-| Rewriting the plugin or its settings | `.obsidian/` not mounted for any cell, in any spelling (§4.1) |
-| Changing the CLI's settings from a cell | `.vaultore/` not mounted, and `/workspace` read-only so a cell cannot create it (§4.1) |
+| Rewriting the plugin or its settings | `.obsidian/` read-only to every cell in every spelling, and hidden in its own (§4.1) |
+| Changing the CLI's settings from a cell | `.vaultore/` the same, and the top level read-only so a cell cannot create it (§4.1) |
 | A cell approving notes or planting answers | VaultOre's own folder is outside the vault, and hidden from cells and refused for writes where a vault holds it (§4.1) |
 | Resource exhaustion | Memory, CPU and timeout limits; a process limit on Docker, Podman and Colima |
 | Privilege escalation in the container | Non-root user, no capabilities, `no-new-privileges` (not on Apple) |
@@ -461,7 +469,8 @@ workflow is granted `network`.
 | Two machines syncing one vault running a note at once | The run lock is per machine (ore-implementation, "One run per note") |
 | Container escape, kernel side channels | Containers share a kernel or VM; VaultOre relies on the engine |
 | Prompt injection, malicious AI responses | An AI cell runs no code and calls no tools: one request, text back, written into a fenced block. A later cell that acts on that text does so with its own note's permissions |
-| A cell changing files the host acts on, beyond §4.1's list | A cell with `vaultWrite` can change any other file in the vault, including a git repository in a subfolder and files other tools read |
+| A cell changing files the host acts on, beyond §4.1's list | A cell with `vaultWrite` can change any other file in the vault's folders, including a git repository in a subfolder and files other tools read |
+| Reading `.obsidian/` or VaultOre's folder under another spelling | On macOS and Windows, whose file systems ignore letter case; other plugins' settings in `.obsidian/` can hold tokens (§4.1) |
 | Approving without reading | A prompt cannot judge the code it grants |
 
 ---
