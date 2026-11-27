@@ -5,6 +5,54 @@ All notable changes to VaultOre will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-27
+
+### Breaking changes
+
+- **obsidian:** The Obsidian plugin's "Run scheduled workflows" switch and its schedule approvals now belong to your account on each computer and no longer travel with the vault. After upgrading, scheduling is off on every computer, and the plugin says so once on each computer where it was on. Turn it on and approve your notes again under Settings, VaultOre, Scheduled workflows, on the computer that should run them.
+- An answer to a note's ask permission now applies only for the account and computer that gave it, and answers stored before are asked again once per note on each computer. In Obsidian the next run asks. With the CLI, run vaultore run with --yes once per note on each computer that runs it; until then a run without --yes denies the permission for that run.
+- vaultore agent and vaultore schedules no longer take --state-dir; the schedule approvals are in ~/.config/vaultore/schedules.json, which Obsidian reads too, and are copied there once from approvals.json of earlier versions. Approvals kept with --state-dir in another folder are not carried over: approve those notes again with vaultore schedules approve. A second vaultore agent on the same vault is refused.
+- Scheduled runs and catch-ups no longer ask for or reuse permission answers; they run with the permissions held by the note's schedule approval. vaultore agent --yes and vaultore schedules catch-up --yes are refused; answer a note's ask permissions with vaultore schedules approve <note> --allow <names> or --deny <names>, or in Obsidian's approval dialog. A note approved for Obsidian now stops running when its content changes, unless What an approval covers is set to Narrow. Answers for runs started by hand are kept in ~/.config/vaultore/answers.json for the account on each computer, shared by Obsidian and the CLI; answers kept in data.json or .vaultore/config.json are no longer read, so each note asks once on each computer.
+- **core:** Cells now write only in the vault's folders. The vault's top level is read-only to them, and so are `.git`, `.claude`, `.vscode` and `.envrc`, also with `vaultWrite`. A shell cell that writes, deletes or renames a top-level note now fails: write it with `vault.write`, or keep it in a folder. Renaming a file from one top-level folder to another fails in a TS cell; copy and delete it instead.
+
+### Upgrading
+
+- **scheduler:** A note scheduled in both Obsidian and `vaultore agent` now runs once per occurrence of its schedule, in whichever runner claims it first; the other reports it as skipped. To do this, VaultOre keeps a small record of each scheduled run outside the vault, in `~/.config/vaultore/slots` (`%APPDATA%\vaultore\slots` on Windows), for 30 days at most. Shorten it with `vaultore agent --keep-days <n>` or the plugin's "Scheduled-run history" setting, and read it with `vaultore schedules log`.
+- **scheduler:** A machine that wakes from sleep no longer runs the one scheduled occurrence it held, late. Occurrences that no runner fired are now recorded as missed runs and announced once, in Obsidian as a notice and by `vaultore agent` on stderr. Run a note once for them with `vaultore schedules catch-up <note.md>`, or with "Catch up" under "Missed runs" in VaultOre's settings, or close them with `vaultore schedules dismiss <note.md>` or "Dismiss". An occurrence is missed once it is more than two minutes late; `vaultore schedules late-after <minutes>` or "Late after" in VaultOre's settings changes that for the computer, for both runners.
+- Notes approved for vaultore agent before this version that have an ask permission do not run until approved again with an answer: vaultore schedules approve <note> --allow <permission> (or --deny), or Review under Settings, VaultOre, Scheduled workflows. Obsidian names them once after the upgrade, and the agent on stderr.
+
+### Features
+
+- **scheduler:** Each scheduled occurrence runs once, in the plugin or the agent ([#272](https://github.com/cronai-labs/vaultore/issues/272))
+- **scheduler:** Record missed scheduled runs, and catch them up or dismiss them ([#273](https://github.com/cronai-labs/vaultore/issues/273))
+- One schedule approval per note on a computer, owned by the plugin or the agent ([#302](https://github.com/cronai-labs/vaultore/issues/302))
+- Unattended runs use the permissions given at approval, which asks only what changed ([#300](https://github.com/cronai-labs/vaultore/issues/300))
+- Forget a kept permission answer, in the CLI and in Obsidian ([#330](https://github.com/cronai-labs/vaultore/issues/330))
+- Choose whether Obsidian and the CLI share permission answers ([#332](https://github.com/cronai-labs/vaultore/issues/332))
+
+### Bug Fixes
+
+- **core:** A cell VaultOre does not run says what runs instead and what to do ([#283](https://github.com/cronai-labs/vaultore/issues/283))
+- **obsidian:** Scheduling consent stays on this computer, outside the vault, so sync arms nothing ([#285](https://github.com/cronai-labs/vaultore/issues/285))
+- **release:** A breaking change's text is one line in the release notes ([#289](https://github.com/cronai-labs/vaultore/issues/289))
+- A run says which cells failed, and which did not run because of them ([#294](https://github.com/cronai-labs/vaultore/issues/294))
+- **cli:** The agent's approvals live beside the rest of VaultOre's state ([#296](https://github.com/cronai-labs/vaultore/issues/296))
+- A permission answer applies only on the device that gave it ([#297](https://github.com/cronai-labs/vaultore/issues/297))
+- Shared files keep every writer's change, and wait a moment for each other ([#303](https://github.com/cronai-labs/vaultore/issues/303))
+- **core:** The user state folder is hidden from cells in a vault that holds it ([#314](https://github.com/cronai-labs/vaultore/issues/314))
+- Nothing runs unattended for Obsidian while its scheduling is off or unreadable ([#315](https://github.com/cronai-labs/vaultore/issues/315))
+- **scheduler:** Missed runs are kept while open, and none are lost or counted while off ([#317](https://github.com/cronai-labs/vaultore/issues/317))
+- Removing schedules.json does not bring back the agent's approvals of 0.4.x ([#318](https://github.com/cronai-labs/vaultore/issues/318))
+- **cli:** A failing rescan keeps vaultore agent running ([#319](https://github.com/cronai-labs/vaultore/issues/319))
+- The upgrade's messages say what happens to each note ([#321](https://github.com/cronai-labs/vaultore/issues/321))
+- An upgrade reports no false missed runs, and a broken old approvals file is not marked ([#329](https://github.com/cronai-labs/vaultore/issues/329))
+- **release:** A command name keeps its lowercase in the release notes ([#335](https://github.com/cronai-labs/vaultore/issues/335))
+- **core:** Cells write only in the vault's folders, never VaultOre's or the host tools' ones ([#337](https://github.com/cronai-labs/vaultore/issues/337))
+
+### Dependencies
+
+- **deps-dev:** Bump the dev-dependencies group across 1 directory with 5 updates ([#250](https://github.com/cronai-labs/vaultore/issues/250))
+
 ## [0.4.0] - 2026-11-23
 
 ### Upgrading
