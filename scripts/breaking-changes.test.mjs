@@ -118,3 +118,19 @@ test("the changelog has an Upgrading section from Upgrade-Note footers, after th
 	assert.doesNotMatch(release, /Upgrade-Note/);
 	assert.doesNotMatch(earlier, /Upgrading/);
 });
+
+// A line that starts with a command keeps it as typed: "vaultore agent …",
+// not "Vaultore agent …" (#334). Other lines are capitalised as before.
+test("a line that starts with a command name keeps its lowercase", (t) => {
+	const { release } = changelogFor(t, [
+		"fix(cli)!: the agent's approvals move (#296)\n\nBREAKING CHANGE: vaultore agent and vaultore schedules no longer take --state-dir.",
+		"fix: the upgrade's messages (#321)\n\nUpgrade-Note: vaultore schedules approve answers the asks of a note approved before.",
+		"feat(cli): vaultore permissions forget (#330)",
+		"fix: a plain fix (#192)",
+	]);
+
+	assert.match(release, /- \*\*cli:\*\* vaultore agent and vaultore schedules no longer take --state-dir\./);
+	assert.match(release, /### Upgrading\n\n- vaultore schedules approve answers/);
+	assert.match(release, /- \*\*cli:\*\* vaultore permissions forget \(\[#330\]/);
+	assert.match(release, /- A plain fix \(\[#192\]/);
+});

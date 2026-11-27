@@ -36,7 +36,8 @@ body = """
 {%- if breaking | length > 0 %}
 ### Breaking changes
 {% for commit in breaking %}
-- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.breaking_description | replace_regex(from="\\s+", to=" ") | upper_first }}\
+{%- set text = commit.breaking_description | replace_regex(from="\\s+", to=" ") %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{% if text is starting_with("vaultore ") %}{{ text }}{% else %}{{ text | upper_first }}{% endif %}\
 {% endfor %}
 {% endif %}
 {%- set upgrading = false %}
@@ -49,14 +50,15 @@ body = """
 ### Upgrading
 {% for commit in commits %}
 {%- for footer in commit.footers | filter(attribute="token", value="Upgrade-Note") %}
-- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ footer.value | replace_regex(from="\\s+", to=" ") | upper_first }}\
+{%- set text = footer.value | replace_regex(from="\\s+", to=" ") %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{% if text is starting_with("vaultore ") %}{{ text }}{% else %}{{ text | upper_first }}{% endif %}\
 {% endfor %}
 {%- endfor %}
 {% endif %}
 {%- for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
 {% for commit in commits %}
-- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}\
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{% if commit.message is starting_with("vaultore ") %}{{ commit.message }}{% else %}{{ commit.message | upper_first }}{% endif %}\
 {% endfor %}
 {% endfor %}\n
 """
