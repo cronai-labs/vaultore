@@ -682,12 +682,14 @@ describe(".obsidian and .vaultore are hidden from cells (#28, #94, #336)", () =>
 	});
 
 	it("mounts neither a symbolic link nor a name the engine cannot take", async () => {
-		mirrorToDisk(realVault, { "Outside/secret.md": SECRET, "a,b/x.md": "" });
+		mirrorToDisk(realVault, { "Outside/secret.md": SECRET, "a:b/x.md": "", "Meetings, 2026/x.md": "" });
 		symlinkSync(join(realVault, "Outside"), join(realVault, "link"));
 		const { writable } = await containerFor("shell", "allow", "allow");
 		expect(writable).not.toContain("/workspace/link");
-		expect(writable).not.toContain("/workspace/a,b");
+		expect(writable).not.toContain("/workspace/a:b");
 		expect(writable).toContain("/workspace/Outside");
+		// `-v` takes a comma in a name (checked on Docker).
+		expect(writable).toContain("/workspace/Meetings, 2026");
 	});
 });
 

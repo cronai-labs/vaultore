@@ -231,7 +231,7 @@ The defaults ([permissions spec](specs/permissions-spec.md), the single source):
 |------------|---------|----------|
 | `network` | `deny` | Network for container cells; required by AI cells |
 | `vaultRead` | `allow` | Whether the vault is mounted into containers; `{{note:}}` |
-| `vaultWrite` | `deny` | Whether that mount is writable |
+| `vaultWrite` | `deny` | Whether the vault's folders are writable; the top level only through `vault.write` |
 | `buildNetwork` | `deny` | Nothing yet (reserved for planned Python and Go cells) |
 
 **The mount enforces them.** A container cell sees the vault read-only, the vault with its

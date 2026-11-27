@@ -1473,8 +1473,9 @@ async function writableFolderMounts(
     const lower = path.toLowerCase();
     if (hiddenDirs.some((hidden) => hidden.toLowerCase() === lower)) continue;
     if (dir === "" && HOST_TOOL_ENTRIES.includes(lower)) continue;
-    if (path.includes(":") || path.includes(",")) {
-      platform.log("warn", `Read-only to cells: ${path} (a name with ":" or "," cannot be mounted)`);
+    if (path.includes(":")) {
+      // `-v` separates source, target and mode with ":".
+      platform.log("warn", `Read-only to cells: ${path} (a name with ":" cannot be mounted)`);
       continue;
     }
     if (hiddenDirs.some((hidden) => hidden.toLowerCase().startsWith(`${lower}/`))) {

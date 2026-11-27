@@ -316,6 +316,8 @@ const w = "/workspace";
 	renameAcrossFolders: attempt(() => fs.renameSync(w + "/Notes/renamed.md", w + "/Archive/renamed.md")),
 	writeFolderOtherCase: attempt(() => fs.writeFileSync(w + "/NOTES/other.md", "n")),
 	readNestedNote: attempt(() => fs.readFileSync(w + "/Notes/repo/readme.md")),
+	// A folder's name as people write it: a comma, spaces, an umlaut.
+	writeInNamedFolders: attempt(() => ["Meetings, 2026", "Two words", "Übersicht"].forEach((dir) => fs.writeFileSync(w + "/" + dir + "/n.md", "n"))),
 	readThroughLink: attempt(() => fs.readFileSync(w + "/outside/secret.md")),
 })`);
 
@@ -333,6 +335,9 @@ const w = "/workspace";
 				"Notes/a.md": "a",
 				"Notes/repo/readme.md": "nested",
 				"Archive/.keep": "",
+				"Meetings, 2026/.keep": "",
+				"Two words/.keep": "",
+				"Übersicht/.keep": "",
 			};
 			for (const [path, text] of Object.entries(files)) {
 				mkdirSync(join(vault, path, ".."), { recursive: true });
@@ -361,6 +366,7 @@ const w = "/workspace";
 				renameAcrossFolders: "denied",
 				writeFolderOtherCase: "denied",
 				readNestedNote: "ok",
+				writeInNamedFolders: "ok",
 				readThroughLink: "denied",
 			});
 			expect(existsSync(join(vault, ".git/hooks/post-commit"))).toBe(false);

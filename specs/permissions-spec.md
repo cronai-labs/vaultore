@@ -203,7 +203,8 @@ the vault holds. What this costs and leaves open:
   letter case: the tmpfs covers the folder's own spelling only. Writing it is refused, by the
   read-only mount. On Linux hosts, which tell letter case apart, the folder is hidden.
 - **A symbolic link** at the top level is not mounted read-write: the engine would follow it on
-  the host. A folder whose name holds `:` or `,` is not mounted either, which the run log says.
+  the host. A folder whose name holds `:` is not mounted read-write either (`-v` separates its parts with
+  `:`), which the run log says.
 - **A git repository in a subfolder** stays writable under `vaultWrite`, and a cell can create one
   there. Git runs its hooks only for commands run inside that folder.
 
