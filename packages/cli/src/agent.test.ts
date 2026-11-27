@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { VaultStateStoreError } from "@vaultore/core";
 import {
 	createApprovedRunner,
+	createGuardedRescan,
 	createSingleFlightRunner,
 	createSkipReporter,
 	planRegistrations,
@@ -350,5 +351,24 @@ describe("createSkipReporter", () => {
 		report({ registered: 1, skipped: [] });
 
 		expect(lines).toEqual([]);
+	});
+});
+
+describe("createGuardedRescan (#313)", () => {
+	it("keeps going when a rescan fails, says why once, and says when it works again", async () => {
+		const lines: string[] = [];
+		const results: Array<Error | undefined> = [new Error("EIO: i/o error, scandir '/vault'"), new Error("EIO: i/o error, scandir '/vault'"), new Error("EACCES"), undefined, undefined];
+		const rescan = createGuardedRescan(async () => {
+			const result = results.shift();
+			if (result) throw result;
+		}, (line) => lines.push(line));
+
+		for (let i = 0; i < 5; i += 1) await expect(rescan()).resolves.toBeUndefined();
+
+		expect(lines).toEqual([
+			"could not rescan the vault: EIO: i/o error, scandir '/vault'; the notes stay armed as they were, and it is tried again at the next rescan",
+			"could not rescan the vault: EACCES; the notes stay armed as they were, and it is tried again at the next rescan",
+			"rescanning works again",
+		]);
 	});
 });

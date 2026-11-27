@@ -57,6 +57,7 @@ import { NodeAdapter } from "./adapter";
 import {
 	changedReason,
 	createApprovedRunner,
+	createGuardedRescan,
 	createSingleFlightRunner,
 	createSkipReporter,
 	planRegistrations,
@@ -503,8 +504,10 @@ async function cmdAgent(args: ParsedArgs): Promise<number> {
 
 	await rescan();
 	scheduler.start();
+	// A rescan that fails later keeps the agent running (#313).
+	const rescanGuarded = createGuardedRescan(rescan, warn);
 	const rescanTimer = setInterval(() => {
-		void rescan();
+		void rescanGuarded();
 	}, rescanSeconds * 1000);
 	// Obsidian's "Late after" writes the same file: follow it within a minute.
 	// A file that turned unusable is reported, and the last good value kept.
