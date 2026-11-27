@@ -184,6 +184,7 @@ export {
   noteScheduleState,
   approveNote,
   approvalOf,
+  catchUpRefusal,
   approvalCovers,
   approvedPermissions,
   bindingOf,

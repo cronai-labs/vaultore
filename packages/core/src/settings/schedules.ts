@@ -396,6 +396,19 @@ export function noteScheduleState(runner: ScheduleOwner, schedules: VaultSchedul
 	return { state: "approved", approval };
 }
 
+/**
+ * Why a catch-up of a note with `approval` may not run, or undefined. A note
+ * Obsidian runs is not scheduled while "Run scheduled workflows" is off, so
+ * none of its runs is missed for it to catch up (#307). A note the agent runs
+ * stays scheduled while the agent is stopped.
+ */
+export function catchUpRefusal(schedules: VaultSchedules, approval: NoteApproval): string | undefined {
+	if (approval.owner === "obsidian" && !schedules.obsidianScheduling) {
+		return "Obsidian runs it on schedule, and Run scheduled workflows is off on this computer; turn it on first, or dismiss its missed runs";
+	}
+	return undefined;
+}
+
 /** The note's approval, if it has one. */
 export function approvalOf(schedules: VaultSchedules, path: string): NoteApproval | undefined {
 	return Object.prototype.hasOwnProperty.call(schedules.notes, path) ? schedules.notes[path] : undefined;
