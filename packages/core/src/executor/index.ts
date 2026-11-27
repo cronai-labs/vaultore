@@ -40,12 +40,14 @@ import {
 import { renderArtifactIndex, renderOutputMarkdown } from "./output-note";
 import { cellOutputsSource } from "../vault";
 import { describeHolder } from "../lock";
-import { RunLockHeldError } from "../lock/run-lock";
+import { RunLockHeldError, userStateRoot } from "../lock/run-lock";
 import type { LeftBehind } from "../lock/run-lock";
 import type { SlotClaim, SlotOutcome } from "../scheduler/slot-record";
 import { APPROVAL_PERMISSION_KEYS, approvalCovers, coveredPermissions } from "../settings/schedules";
 import type { ApprovalBinding, NoteApproval, NotePermissions, ScheduledNoteNow } from "../settings/schedules";
 import { parse } from "@babel/parser";
+import { promises as fs } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 // =============================================================================
 // EXECUTOR
@@ -1437,10 +1439,10 @@ function vaultMounts(
  * missing directory makes the engine create it, and an empty one turns any
  * folder into an Obsidian vault.
  *
- * `.vaultore` holds the CLI's settings and stored permission decisions: a cell
- * could otherwise forge a grant for another workflow (#94). VaultOre owns this
- * directory, so it is created before the run and always masked; otherwise a
- * cell could create the config itself in a vault that has none yet.
+ * `.vaultore` holds the CLI's settings: a cell could otherwise change how the
+ * CLI runs notes (#94). VaultOre owns this directory, so it is created before
+ * the run and always masked; otherwise a cell could create the config itself
+ * in a vault that has none yet.
  */
 export const DEFAULT_CONFIG_DIR = ".obsidian";
 const VAULTORE_STATE_DIR = ".vaultore";
@@ -1461,13 +1463,64 @@ function configDirsOf(platform: PlatformAdapter): string[] {
 }
 
 /**
- * The directory hidden from cells that a vault-relative path lies in, if any.
+ * A path's real spelling. Where it does not exist yet, its nearest existing
+ * ancestor's, with the rest appended: a folder a cell could still create is
+ * placed where it would be.
+ */
+async function realPathOf(path: string): Promise<string> {
+  try {
+    return await fs.realpath(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    const parent = dirname(path);
+    if (parent === path) throw err;
+    return join(await realPathOf(parent), basename(path));
+  }
+}
+
+/** Whether `path` is `base` or lies inside it; both real, absolute paths. */
+function isWithin(base: string, path: string): boolean {
+  const rel = relative(base, path);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/**
+ * VaultOre's own folder for this account, vault-relative, when the vault
+ * holds it: a vault at the home folder holds `.config/vaultore`. Its files
+ * decide what runs unattended and with which permissions, so a cell must
+ * neither see nor write them (#306). A vault inside that folder is refused.
+ */
+async function stateDirInVault(platform: PlatformAdapter): Promise<string | undefined> {
+  const state = await realPathOf(platform.stateDirectory ?? userStateRoot());
+  const vault = await realPathOf(await platform.getVaultRoot());
+  if (isWithin(state, vault)) {
+    throw new Error(`The vault ${vault} lies inside VaultOre's own folder ${state}, which cells must not reach. Move the vault`);
+  }
+  return isWithin(vault, state) ? relative(vault, state).split(sep).join("/") : undefined;
+}
+
+/**
+ * Every vault-relative folder hidden from cells: the config folders,
+ * `.vaultore`, and VaultOre's own folder where the vault holds it.
+ */
+async function hiddenDirsOf(platform: PlatformAdapter): Promise<string[]> {
+  const state = await stateDirInVault(platform);
+  return [...configDirsOf(platform), VAULTORE_STATE_DIR, ...(state === undefined ? [] : [state])];
+}
+
+/**
+ * The folder hidden from cells that a vault-relative path lies in, if any.
  * Case-insensitive: on a case-insensitive file system `.Obsidian` is
  * `.obsidian`.
  */
-function hiddenDirOf(path: string, configDirs: readonly string[]): string | undefined {
-  const top = (path.split(/[\\/]/).find((segment) => segment !== "" && segment !== ".") ?? "").toLowerCase();
-  return [...configDirs, VAULTORE_STATE_DIR].find((dir) => dir.toLowerCase() === top);
+function hiddenDirOf(path: string, hiddenDirs: readonly string[]): string | undefined {
+  const segments = (path: string) =>
+    path.split(/[\\/]/).filter((segment) => segment !== "" && segment !== ".").map((segment) => segment.toLowerCase());
+  const of = segments(path);
+  return hiddenDirs.find((dir) => {
+    const prefix = segments(dir);
+    return prefix.length > 0 && prefix.every((segment, i) => of[i] === segment);
+  });
 }
 
 /**
@@ -1485,6 +1538,13 @@ async function maskedVaultPaths(
   }
   await platform.mkdirp(VAULTORE_STATE_DIR);
   masked.push(`/workspace/${VAULTORE_STATE_DIR}`);
+  // Created like .vaultore, so that the engine has a folder to mask, and a
+  // cell none to create.
+  const state = await stateDirInVault(platform);
+  if (state !== undefined) {
+    await platform.mkdirp(state);
+    masked.push(`/workspace/${state}`);
+  }
   return masked;
 }
 
@@ -1668,7 +1728,7 @@ function writablePath(
   path: string,
   permissions: Pick<ResolvedPermissions, "vaultRead" | "vaultWrite">,
   runDir: string,
-  configDirs: readonly string[]
+  hiddenDirs: readonly string[]
 ): string {
   if (!permissions.vaultWrite) {
     throw new Error(`Vault write permission denied: ${path}`);
@@ -1680,7 +1740,7 @@ function writablePath(
   if (segments.length === 0 || segments.includes("..")) {
     throw new Error(`Vault write outside the vault refused: ${JSON.stringify(path)}`);
   }
-  const hidden = hiddenDirOf(segments.join("/"), configDirs);
+  const hidden = hiddenDirOf(segments.join("/"), hiddenDirs);
   if (hidden) {
     throw new Error(`Vault write into ${hidden}/ refused: ${path}`);
   }
@@ -1710,10 +1770,10 @@ async function applyVaultWrites(
 ): Promise<void> {
   if (writes.length === 0) return;
 
-  const configDirs = configDirsOf(platform);
+  const hiddenDirs = await hiddenDirsOf(platform);
   const checked = writes.map((write) => ({
     ...write,
-    path: writablePath(write.path, permissions, runContext.runDir, configDirs),
+    path: writablePath(write.path, permissions, runContext.runDir, hiddenDirs),
   }));
 
   // Where each path really leads, before anything is read or written: a cell
@@ -1729,7 +1789,7 @@ async function applyVaultWrites(
         `Vault write refused: ${errorMessage(err)}. None of this cell's writes were applied.`
       );
     }
-    const path = writablePath(real, permissions, runContext.runDir, configDirs);
+    const path = writablePath(real, permissions, runContext.runDir, hiddenDirs);
     if (resolved.some((other) => other.path === path)) {
       throw new Error(
         `Vault write refused: ${write.path} is ${path}, which this cell also writes under another path. ` +
@@ -1903,11 +1963,12 @@ async function executeAICell(
         throw new Error(`Vault read permission denied: {{note:${path}}}`);
       }
       try {
-        // The config folders and .vaultore/ are hidden from cells (#28, #94):
-        // the plugin's settings and the CLI's stored decisions must not reach
-        // a provider either. Checked on the real path, after any link.
+        // The config folders, .vaultore/ and VaultOre's own folder are hidden
+        // from cells (#28, #94, #306): their settings, approvals and answers
+        // must not reach a provider either. Checked on the real path, after
+        // any link.
         const real = await platform.resolveInVault(path);
-        const hidden = hiddenDirOf(real, configDirsOf(platform));
+        const hidden = hiddenDirOf(real, await hiddenDirsOf(platform));
         if (hidden) {
           throw new Error(`${hidden}/ is hidden from cells`);
         }

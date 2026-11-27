@@ -564,6 +564,14 @@ export interface PlatformAdapter {
    */
   readonly configDir: string;
   /**
+   * VaultOre's own folder for this account, absolute: where `schedules.json`,
+   * `answers.json`, the run locks and the schedule record live. Left out, it
+   * is core's `userStateRoot()`, as both desktop runners use; tests pass their
+   * own. When a vault holds it (a vault at the home folder), the executor
+   * hides it from cells and refuses writes into it (#306).
+   */
+  readonly stateDirectory?: string;
+  /**
    * Takes the run lock of the note at `notePath`, vault-relative as
    * `resolveInVault` returns it, and resolves to it: its release, and the
    * holders of a lock left behind it removed (#256). Rejects with
