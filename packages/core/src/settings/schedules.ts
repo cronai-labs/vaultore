@@ -182,6 +182,11 @@ export interface OpenSchedulesOptions extends SchedulesStoreOptions {
 	legacyApprovals?: string;
 	/** Told when they were copied in. */
 	onImported?: (from: string, to: string) => void;
+	/**
+	 * Told, once per change, that the old file changed since it was copied
+	 * (a 0.4.x agent ran again): it is not copied again (#309).
+	 */
+	onLegacyChanged?: (from: string) => void;
 }
 
 /**
@@ -191,7 +196,7 @@ export interface OpenSchedulesOptions extends SchedulesStoreOptions {
  * approval. The old file is left as it is.
  */
 export async function openSchedules(options: OpenSchedulesOptions = {}): Promise<VaultStateStore<VaultSchedules>> {
-	const { legacyApprovals, onImported, ...storeOptions } = options;
+	const { legacyApprovals, onImported, onLegacyChanged, ...storeOptions } = options;
 	const store = schedulesStore(storeOptions);
 	if (legacyApprovals !== undefined) {
 		const { path: _path, ...ops } = storeOptions;
@@ -201,7 +206,7 @@ export async function openSchedules(options: OpenSchedulesOptions = {}): Promise
 				if (Object.prototype.hasOwnProperty.call(into.notes, note)) continue;
 				into.notes[note] = { owner: "agent", hash: approval.hash, schedule: approval.schedule, approvedAt: approval.approvedAt };
 			}
-		});
+		}, onLegacyChanged);
 		if (copied) onImported?.(legacy.file, store.file);
 	}
 	return store;

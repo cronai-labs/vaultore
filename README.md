@@ -338,12 +338,13 @@ More in [docs/interoperability.md](docs/interoperability.md).
 | `settings.json` | "Late after", for your account on this computer | both runners |
 | `answers.json` and `.lock` | Your answers to notes' permission requests, for runs you start, per vault and note, with the content they were given for | both runners |
 | `schedules.json` and `.lock` | **Run scheduled workflows**, and each approved note with who runs it, per vault | both runners |
+| `schedules.json.imports.json` | Which `approvals.json` of an earlier version was copied in, with its SHA-256, so it is copied once | both runners |
 | `agents/` | One lock per vault while `vaultore agent` runs it, which Obsidian reads to say whether it does | the agent |
 | **Elsewhere** | | |
 | Obsidian's secret storage | The API keys you stored there; VaultOre only reads them | you |
 | Your container engine | The images cells ran in (`oven/bun:1-alpine`, and any `runtime.image` a note names) | your engine |
 
-All of it is found from your account's home directory, not from `$HOME` or `$XDG_CONFIG_HOME`, so that no environment can separate the two runners; nothing moves it. The agent's approvals of earlier versions (`approvals.json`, also in `$XDG_CONFIG_HOME/vaultore` when that was set) are copied into `schedules.json` once, as notes the agent runs, by whichever runner starts first; the old file is left as it was and no longer read.
+All of it is found from your account's home directory, not from `$HOME` or `$XDG_CONFIG_HOME`, so that no environment can separate the two runners; nothing moves it. The agent's approvals of earlier versions (`approvals.json`, also in `$XDG_CONFIG_HOME/vaultore` when that was set) are copied into `schedules.json` once, as notes the agent runs, by whichever runner starts first; the old file is left as it was and no longer read, and a change to it afterwards is reported, not copied.
 
 ## Upgrading
 

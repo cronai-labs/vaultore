@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { errorMessage } from "../errors";
@@ -54,8 +54,30 @@ interface StateFile<V> {
 	format: string;
 	version: number;
 	vaults: Record<string, V>;
-	/** The files whose entries were copied in once (`importFrom`), so none is copied twice. */
+	/**
+	 * The files copied in, as written before the marker beside the file
+	 * (#309): still honoured, no longer written.
+	 */
 	imported?: string[];
+}
+
+/**
+ * What was copied in, kept beside the file it was copied into
+ * (`<file>.imports.json`), so that removing that file does not copy it in
+ * again (#309). Each source with the SHA-256 of what was copied, and of the
+ * last changed copy that was reported.
+ */
+interface ImportMarker {
+	format: "vaultore.imports";
+	version: 1;
+	imports: ImportRecord[];
+}
+
+interface ImportRecord {
+	from: string;
+	sha256: string;
+	importedAt: string;
+	reported?: string;
 }
 
 /**
@@ -143,25 +165,48 @@ export class VaultStateStore<V> {
 	}
 
 	/**
-	 * Copies the entries of another file into this one, once per file: this
-	 * file records the other's path when it copies it, decided under its lock,
-	 * so a later call changes nothing, also after every copied entry was taken
-	 * away again. `merge` adds what one vault's entry in the other file holds
-	 * to that vault's entry here; it decides what an entry already here keeps.
-	 * The other file is read and checked as its own store reads it, and left as
-	 * it is. Returns whether anything was copied.
+	 * Copies the entries of another file into this one, once per file. The
+	 * copy is recorded in a marker beside this file, with the other file's
+	 * SHA-256, before anything is copied: removing this file does not copy it
+	 * in again, and a copy cut short leaves it not copied rather than copied
+	 * twice (#309). A file that changed since it was copied is not copied
+	 * again: `onChanged` is told, once per change. Decided under this file's
+	 * lock. `merge` adds what one vault's entry in the other file holds to
+	 * that vault's entry here; it decides what an entry already here keeps.
+	 * The other file is read and checked as its own store reads it, and left
+	 * as it is. Returns whether anything was copied.
 	 */
-	async importFrom<W>(from: VaultStateStore<W>, merge: (into: V, entry: W) => void): Promise<boolean> {
+	async importFrom<W>(
+		from: VaultStateStore<W>,
+		merge: (into: V, entry: W) => void,
+		onChanged?: (file: string) => void
+	): Promise<boolean> {
 		// Checked first without the lock, so that a command that only reads,
 		// once the copy is done or when there is nothing to copy, creates no
 		// folder and takes no lock; decided again under it.
-		if (!(await exists(from.file)) || (await this.hasImported(from.file))) return false;
+		const before = await sha256Of(from.file);
+		if (before === undefined) return false;
+		const known = (await this.readMarker()).imports.find((record) => record.from === from.file);
+		if (known !== undefined && (known.sha256 === before || known.reported === before)) return false;
 		await fs.mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
 		const release = await this.lock();
 		try {
+			const sha256 = await sha256Of(from.file);
+			if (sha256 === undefined) return false;
+			const marker = await this.readMarker();
+			const record = marker.imports.find((entry) => entry.from === from.file);
+			if (record !== undefined) {
+				if (record.sha256 === sha256 || record.reported === sha256) return false;
+				record.reported = sha256;
+				await this.writeMarker(marker);
+				onChanged?.(from.file);
+				return false;
+			}
 			const file = await this.read();
+			marker.imports.push({ from: from.file, sha256, importedAt: new Date().toISOString() });
+			await this.writeMarker(marker);
+			// Copied before the marker existed: the marker now says so.
 			if (file.imported?.includes(from.file)) return false;
-			if (!(await exists(from.file))) return false;
 			const source = await from.readVaults();
 			const vaults: Record<string, V> = Object.assign(Object.create(null) as Record<string, V>, file.vaults);
 			for (const [vault, entry] of Object.entries(source)) {
@@ -174,7 +219,7 @@ export class VaultStateStore<V> {
 				format: this.spec.format,
 				version: this.spec.version,
 				vaults,
-				imported: [...(file.imported ?? []), from.file],
+				...(file.imported ? { imported: file.imported } : {}),
 			});
 			return true;
 		} finally {
@@ -182,13 +227,56 @@ export class VaultStateStore<V> {
 		}
 	}
 
+	/** The marker of what was copied in, beside the file. */
+	get markerFile(): string {
+		return `${this.file}.imports.json`;
+	}
+
+	private async readMarker(): Promise<ImportMarker> {
+		let text: string;
+		try {
+			text = await fs.readFile(this.markerFile, "utf8");
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === "ENOENT") return { format: "vaultore.imports", version: 1, imports: [] };
+			throw this.unusableMarker(errorMessage(err));
+		}
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(text);
+		} catch (err) {
+			throw this.unusableMarker(`it is not JSON (${errorMessage(err)})`);
+		}
+		if (!isRecord(parsed) || parsed["format"] !== "vaultore.imports" || parsed["version"] !== 1 || !Array.isArray(parsed["imports"])) {
+			throw this.unusableMarker("it is not a VaultOre import marker of version 1");
+		}
+		for (const record of parsed["imports"] as unknown[]) {
+			if (
+				!isRecord(record) ||
+				typeof record["from"] !== "string" ||
+				typeof record["sha256"] !== "string" ||
+				typeof record["importedAt"] !== "string" ||
+				(record["reported"] !== undefined && typeof record["reported"] !== "string")
+			) {
+				throw this.unusableMarker("one of its records is incomplete");
+			}
+		}
+		return parsed as unknown as ImportMarker;
+	}
+
+	private unusableMarker(reason: string): VaultStateStoreError {
+		return new VaultStateStoreError(
+			`Cannot use ${this.markerFile}, which records what was copied into ${this.file}: ${reason}. ` +
+				"It was left as it is; repair or remove it"
+		);
+	}
+
+	private async writeMarker(marker: ImportMarker): Promise<void> {
+		await writeAtomically(this.markerFile, JSON.stringify(marker, null, 2) + "\n", this.rename);
+	}
+
 	/** Every vault's entry, as checked when read. */
 	async readVaults(): Promise<Record<string, V>> {
 		return (await this.read()).vaults;
-	}
-
-	private async hasImported(path: string): Promise<boolean> {
-		return (await this.read()).imported?.includes(path) ?? false;
 	}
 
 	private async read(): Promise<StateFile<V>> {
@@ -240,18 +328,7 @@ export class VaultStateStore<V> {
 	}
 
 	private async write(file: StateFile<V>): Promise<void> {
-		const temporary = `${this.file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-		try {
-			await fs.writeFile(temporary, JSON.stringify(file, null, 2) + "\n", {
-				encoding: "utf8",
-				mode: 0o600,
-				flag: "wx",
-			});
-			await this.rename(temporary, this.file);
-		} catch (err) {
-			await fs.rm(temporary, { force: true });
-			throw err;
-		}
+		await writeAtomically(this.file, JSON.stringify(file, null, 2) + "\n", this.rename);
 	}
 
 	/**
@@ -273,12 +350,24 @@ export class VaultStateStore<V> {
 	}
 }
 
-async function exists(path: string): Promise<boolean> {
+/** Writes a temporary file beside `path` and renames it into place. */
+async function writeAtomically(path: string, text: string, rename: (from: string, to: string) => Promise<void>): Promise<void> {
+	const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
 	try {
-		await fs.lstat(path);
-		return true;
+		await fs.writeFile(temporary, text, { encoding: "utf8", mode: 0o600, flag: "wx" });
+		await rename(temporary, path);
 	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+		await fs.rm(temporary, { force: true });
+		throw err;
+	}
+}
+
+/** The SHA-256 of a file's bytes, or undefined when there is no file. */
+async function sha256Of(path: string): Promise<string | undefined> {
+	try {
+		return createHash("sha256").update(await fs.readFile(path)).digest("hex");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw err;
 	}
 }

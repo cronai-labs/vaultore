@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as nodeSetTimeout } from "node:timers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { acquireLock } from "../lock";
@@ -376,7 +376,55 @@ describe("the agent's approvals of 0.4.x", () => {
 			notes: { "Daily.md": { owner: "agent", hash: "h1", schedule: "0 9 * * *", approvedAt: "2026-10-01T00:00:00.000Z" } },
 		});
 		expect(told).toEqual([legacy]);
-		expect(JSON.parse(readFileSync(path, "utf8")).imported).toEqual([legacy]);
+		// Recorded beside the file, with what was copied (#309).
+		const marker = JSON.parse(readFileSync(`${path}.imports.json`, "utf8"));
+		expect(marker).toMatchObject({ format: "vaultore.imports", version: 1, imports: [{ from: legacy, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) }] });
+		expect(JSON.parse(readFileSync(path, "utf8"))).not.toHaveProperty("imported");
+	});
+
+	// #309: the file's own error says to remove it; that must not undo a revoke.
+	it("are not copied in again when schedules.json is removed", async () => {
+		await openSchedules({ path, legacyApprovals: legacy });
+		const store = schedulesStore({ path });
+		await store.update("/v", (entry) => {
+			revokeNote(entry, "Daily.md");
+		});
+		rmSync(path);
+
+		await openSchedules({ path, legacyApprovals: legacy });
+
+		expect((await store.forVault("/v")).notes).toEqual({});
+	});
+
+	it("are not copied again when the old file changed since, and that is said once per change", async () => {
+		await openSchedules({ path, legacyApprovals: legacy });
+		writeFileSync(legacy, readFileSync(legacy, "utf8").replace("h1", "h2"));
+		const changed: string[] = [];
+
+		await openSchedules({ path, legacyApprovals: legacy, onLegacyChanged: (from) => changed.push(from) });
+		await openSchedules({ path, legacyApprovals: legacy, onLegacyChanged: (from) => changed.push(from) });
+
+		expect(changed).toEqual([legacy]);
+		expect((await schedulesStore({ path }).forVault("/v")).notes["Daily.md"]?.hash).toBe("h1");
+	});
+
+	it("are not copied when schedules.json says so the earlier way, and the marker is written", async () => {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ format: "vaultore.schedules", version: 1, vaults: {}, imported: [legacy] }));
+		const told: string[] = [];
+
+		await openSchedules({ path, legacyApprovals: legacy, onImported: (from) => told.push(from) });
+
+		expect(told).toEqual([]);
+		expect((await schedulesStore({ path }).forVault("/v")).notes).toEqual({});
+		expect(JSON.parse(readFileSync(`${path}.imports.json`, "utf8")).imports[0].from).toBe(legacy);
+	});
+
+	it("refuses a marker it cannot read, and copies nothing", async () => {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(`${path}.imports.json`, "{broken");
+
+		await expect(openSchedules({ path, legacyApprovals: legacy })).rejects.toThrow(/imports\.json, which records what was copied/);
 	});
 
 	// Whichever runner opens the file first after the upgrade: an approval
